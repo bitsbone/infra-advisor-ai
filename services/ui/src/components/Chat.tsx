@@ -59,6 +59,20 @@ export interface StreamStep {
   sources?: string[];
 }
 
+// One attachment in the compose box — tracked from the moment a file is
+// picked/recorded (immediate local preview via a blob object URL) through
+// upload completion or failure, so the user always sees *something* rather
+// than waiting on the network round-trip to show anything at all.
+interface PendingUpload {
+  id: string;
+  kind: "image" | "audio";
+  previewUrl: string;
+  status: "uploading" | "done" | "error";
+  attachment?: Attachment;   // set once status is "done"
+  errorMessage?: string;
+  file: File;                // kept for retry
+}
+
 interface Message {
   role: "user" | "assistant";
   content: string;
@@ -587,17 +601,20 @@ export function Chat() {
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  // Multimodal attachments — uploaded (via /media/upload) but not yet sent
-  // as part of a query. Cleared once submit() sends them.
-  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
-  const [uploading, setUploading] = useState(false);
+  // Multimodal attachments — shows a local preview immediately (before the
+  // upload round-trip completes), transitions to "done"/"error" in place.
+  // Cleared once submit() sends the "done" ones.
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [recording, setRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const uploading = pendingUploads.some((u) => u.status === "uploading");
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -679,38 +696,60 @@ export function Chat() {
   }, [conversationId]);
 
   // Shared upload path for both file-picked and recorded attachments — one
-  // upload flow, one RUM tracking call site, regardless of source.
-  async function uploadAndTrack(file: File, kind: "image" | "audio") {
-    setUploading(true);
+  // upload flow, one RUM tracking call site, regardless of source. Shows a
+  // local preview (via a blob object URL) the instant the file is picked/
+  // recorded, then updates that same entry in place to "done" or "error" —
+  // never leaves the user staring at nothing while the network call runs.
+  function startUpload(file: File, kind: "image" | "audio"): string {
+    const id = crypto.randomUUID();
+    const previewUrl = URL.createObjectURL(file);
+    setPendingUploads((prev) => [...prev, { id, kind, previewUrl, status: "uploading", file }]);
     trackUploadStarted(kind);
     const startedAt = Date.now();
-    try {
-      const attachment = await uploadMedia(file);
-      trackUploadCompleted(kind, Date.now() - startedAt);
-      trackAttachmentAdded(kind, attachment.size_bytes);
-      setPendingAttachments((prev) => [...prev, attachment]);
-    } catch (err) {
-      trackUploadFailed(kind, err instanceof Error ? err.message : "Unknown error");
-      setError({
-        message: err instanceof Error ? err.message : "Attachment upload failed",
-        traceId: null,
+
+    uploadMedia(file)
+      .then((attachment) => {
+        trackUploadCompleted(kind, Date.now() - startedAt);
+        trackAttachmentAdded(kind, attachment.size_bytes);
+        setPendingUploads((prev) =>
+          prev.map((u) => (u.id === id ? { ...u, status: "done", attachment } : u)),
+        );
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : "Upload failed";
+        trackUploadFailed(kind, message);
+        setPendingUploads((prev) =>
+          prev.map((u) => (u.id === id ? { ...u, status: "error", errorMessage: message } : u)),
+        );
       });
-    } finally {
-      setUploading(false);
-    }
+
+    return id;
   }
 
-  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = ""; // allow re-selecting the same file later
     for (const file of files) {
-      const kind = file.type.startsWith("audio/") ? "audio" : "image";
-      await uploadAndTrack(file, kind);
+      startUpload(file, file.type.startsWith("audio/") ? "audio" : "image");
     }
   }
 
-  function removePendingAttachment(index: number) {
-    setPendingAttachments((prev) => prev.filter((_, i) => i !== index));
+  function removePendingUpload(id: string) {
+    setPendingUploads((prev) => {
+      const target = prev.find((u) => u.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((u) => u.id !== id);
+    });
+  }
+
+  function retryPendingUpload(id: string) {
+    setPendingUploads((prev) => {
+      const target = prev.find((u) => u.id === id);
+      if (!target) return prev;
+      startUpload(target.file, target.kind);
+      URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((u) => u.id !== id);
+    });
   }
 
   async function startRecording() {
@@ -721,20 +760,24 @@ export function Chat() {
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) recordedChunksRef.current.push(e.data);
       };
-      recorder.onstop = async () => {
+      recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || "audio/webm" });
         const file = new File([blob], `voice-message.${recorder.mimeType?.includes("ogg") ? "ogg" : "webm"}`, {
           type: blob.type,
         });
-        await uploadAndTrack(file, "audio");
+        startUpload(file, "audio");
       };
       mediaRecorderRef.current = recorder;
       recorder.start();
       setRecording(true);
+      setRecordingSeconds(0);
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds((s) => s + 1);
+      }, 1000);
     } catch (err) {
       setError({
-        message: err instanceof Error ? err.message : "Microphone access failed",
+        message: err instanceof Error ? err.message : "Microphone access failed — check browser permissions",
         traceId: null,
       });
     }
@@ -744,6 +787,10 @@ export function Chat() {
     mediaRecorderRef.current?.stop();
     mediaRecorderRef.current = null;
     setRecording(false);
+    if (recordingTimerRef.current !== null) {
+      window.clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
   }
 
   // Core submit logic — accepts query directly so pills can auto-submit without
@@ -778,7 +825,10 @@ export function Chat() {
       return next;
     });
     trackQuerySubmitted(query.length);
-    setPendingAttachments([]);
+    setPendingUploads((prev) => {
+      prev.forEach((u) => URL.revokeObjectURL(u.previewUrl));
+      return [];
+    });
 
     // Mutator helpers — wrap setMessages with the captured assistantIdx so
     // every event lands on the right slot even when React batches updates.
@@ -904,7 +954,10 @@ export function Chat() {
 
   async function handleSubmit(e?: React.FormEvent) {
     e?.preventDefault();
-    await submit(input.trim(), pendingAttachments);
+    const readyAttachments = pendingUploads
+      .filter((u): u is PendingUpload & { attachment: Attachment } => u.status === "done" && !!u.attachment)
+      .map((u) => u.attachment);
+    await submit(input.trim(), readyAttachments);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -1218,7 +1271,7 @@ export function Chat() {
                         {msg.role === "user" && msg.attachments && msg.attachments.length > 0 && (
                           <HStack gap={1.5} flexWrap="wrap" mt={2}>
                             {msg.attachments.map((att, j) => (
-                              <AttachmentChip key={j} attachment={att} />
+                              <AttachmentChip key={j} kind={att.kind} previewUrl={att.url} />
                             ))}
                           </HStack>
                         )}
@@ -1348,11 +1401,28 @@ export function Chat() {
                   </NativeSelect.Root>
                 </HStack>
               </HStack>
-              {pendingAttachments.length > 0 && (
+              {pendingUploads.length > 0 && (
                 <HStack gap={1.5} flexWrap="wrap" data-testid="pending-attachments">
-                  {pendingAttachments.map((att, i) => (
-                    <AttachmentChip key={i} attachment={att} onRemove={() => removePendingAttachment(i)} />
+                  {pendingUploads.map((u) => (
+                    <AttachmentChip
+                      key={u.id}
+                      kind={u.kind}
+                      previewUrl={u.previewUrl}
+                      status={u.status}
+                      errorMessage={u.errorMessage}
+                      onRemove={() => removePendingUpload(u.id)}
+                      onRetry={u.status === "error" ? () => retryPendingUpload(u.id) : undefined}
+                    />
                   ))}
+                </HStack>
+              )}
+              {recording && (
+                <HStack gap={2} data-testid="recording-indicator" color="red.600">
+                  <Spinner size="xs" color="red.500" />
+                  <Text fontSize="xs" fontWeight="medium">
+                    Recording… {String(Math.floor(recordingSeconds / 60)).padStart(2, "0")}:
+                    {String(recordingSeconds % 60).padStart(2, "0")}
+                  </Text>
                 </HStack>
               )}
               <HStack as="form" onSubmit={handleSubmit} gap={2} align="flex-end">
@@ -1421,7 +1491,11 @@ export function Chat() {
                   type="submit"
                   data-testid="send-button"
                   aria-label="Send message"
-                  disabled={loading || uploading || (!input.trim() && pendingAttachments.length === 0)}
+                  disabled={
+                    loading ||
+                    uploading ||
+                    (!input.trim() && !pendingUploads.some((u) => u.status === "done"))
+                  }
                   colorPalette="blue"
                   borderRadius="xl"
                   h="42px"
