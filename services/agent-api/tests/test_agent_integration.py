@@ -154,7 +154,7 @@ def client():
         patch("main.build_mcp_client", return_value=mock_mcp),
         patch("main.build_llm", return_value=mock_llm),
         patch("main.run_agent", new=AsyncMock(return_value=CANNED_RESULT)),
-        patch("main.append_exchange"),
+        patch("main.append_exchange_with_attachments"),
         patch("main.enable_llm_obs"),
         patch("main.start_consumer_thread"),
         # Lifespan unconditionally spawns a background suggestion-pool

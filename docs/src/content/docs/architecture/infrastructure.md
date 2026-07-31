@@ -31,6 +31,17 @@ The 24 GB total RAM supports all workloads with the LocalExecutor Airflow setup.
 
 Deployments are chained sequentially (each `dependsOn` the previous) to avoid Azure provisioning conflicts.
 
+**Whisper account (`eastus2`, separate from the above).** `whisper-001`'s `Standard` deployment SKU is not offered in every region — `eastus` (where the main account above lives) has no deployable SKU for it at all. Since a deployment's region is fixed to its parent Cognitive Services account, transcription for voice chat attachments runs through a second, dedicated account:
+
+| Property | Value |
+|----------|-------|
+| Account name | `oai-infra-advisor-whisper-<env>` |
+| Region | `eastus2` |
+| Deployment | `whisper` (model `whisper`, version `001`), SKU `Standard`, capacity 3 |
+| Consumed by | `agent-api`'s `media.py` (`AZURE_OPENAI_WHISPER_ENDPOINT`/`_API_KEY`) and `agent-api-dotnet`'s `AgentService` (keyed `AzureOpenAIClient` singleton, same env var names) |
+
+See [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for the full cascade design (audio → transcript → text pipeline; images → vision content parts).
+
 ### Azure AI Search (`azure-ai-search.bicep`)
 
 | Property | Value |
@@ -77,6 +88,7 @@ The single index stores all domain knowledge. Documents are tagged with `domain`
 | `raw-data/epa_sdwis/` | EPA SDWIS water system parquet files (monthly) |
 | `raw-data/knowledge-docs/` | Synthetic knowledge base parquet (on-demand) |
 | `raw-data/awards/` | USASpending contract award parquet (weekly) |
+| `chat-media/{session_id}/{uuid}-{filename}` | User-uploaded chat attachments (images, audio) — `publicAccess: 'None'`, addressed to callers via a read-only SAS URL minted at upload time (`agent-api`'s `POST /media/upload`), not a public container path like the rows above |
 
 ### Redis (Kubernetes, not Azure PaaS)
 

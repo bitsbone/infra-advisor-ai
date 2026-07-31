@@ -3,6 +3,8 @@
 //   raw-data       — Airflow ingestion output (NBI, FEMA, EIA, EPA JSON/Parquet)
 //   processed-data — Spark feature engineering output (chunked, embedding-ready)
 //   knowledge-docs — Synthetic + real documents for AI Search knowledge base
+//   chat-media     — User-uploaded chat attachments (images, audio); accessed via
+//                    per-blob read SAS URLs minted at upload time, never public
 // Used by Datadog Storage Monitoring for blob-level observability.
 
 @description('Azure region for the storage account')
@@ -54,6 +56,12 @@ resource processedDataContainer 'Microsoft.Storage/storageAccounts/blobServices/
 resource knowledgeDocsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
   parent: blobService
   name: 'knowledge-docs'
+  properties: { publicAccess: 'None' }
+}
+
+resource chatMediaContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  parent: blobService
+  name: 'chat-media'
   properties: { publicAccess: 'None' }
 }
 

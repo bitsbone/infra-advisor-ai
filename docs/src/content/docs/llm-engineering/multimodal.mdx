@@ -1,0 +1,157 @@
+---
+title: Multimodal input
+description: Image and voice attachments in chat — the cascade design for audio, vision content parts for images, and how each is made visible in Datadog given ddtrace's current (text-only) LLM Obs message schema.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+Datadog Agent Observability added multimodal (voice/image) tracing support, and InfraAdvisor's chat now lets a user attach an image or record a voice message on either backend. This page covers the architecture and, just as importantly, how it's instrumented — the honest answer being "flat tags on a task span," not a `image_parts`/`audio_parts` schema, for reasons explained below.
+
+## Architecture at a glance
+
+```
+UI (Chat.tsx)
+  └─► POST /api/media/upload  (always the Python backend, regardless of chat backend selected)
+        └─► Azure Blob Storage `chat-media` container
+              └─► returns { url, kind, mime_type, size_bytes } — a read-only SAS URL, 7-day expiry
+
+/query or /query/stream body: { query, attachments: [Attachment] }
+  ├─ image attachment  → multi-part vision content on the LLM call (GPT-4.1 sees the image directly)
+  └─ audio attachment  → transcribed via a separate Whisper deployment BEFORE the agent runs;
+                         the transcript is folded into the query text — the chat LLM never sees raw audio
+```
+
+Three decisions shape everything below:
+
+1. **Audio is a cascade, not native audio-in.** Azure OpenAI's chat deployments here (`gpt-4.1-mini`/`gpt-4.1`) don't accept audio input directly. Rather than deploy a realtime/audio-preview model and rebuild the tool-calling loop around it, audio is transcribed via Whisper *before* the existing text pipeline runs. The transcription step gets its own span; the LLM span itself stays 100% text — same shape whether the turn started as typed text or a voice message.
+2. **Attachments live in Blob Storage, not inline.** The UI never sends base64 image/audio bytes in the request body. It uploads first, gets a SAS URL back, and that URL is what flows through the request, Redis conversation history, and the LLM message content. This keeps Redis lean (history is reloaded in full every turn) and matches the `UriContent`/hosted-content pattern both SDKs use for images.
+3. **One shared upload endpoint.** `POST /media/upload` lives only on `agent-api` (Python) — the UI always uploads there even when `agent-api-dotnet` is the active chat backend. Avoids duplicating Blob SDK plumbing and a second nginx location block; the trade-off is that voice/image attachments require the Python pod to be up regardless of which backend is chosen for the chat turn itself.
+
+<Aside type="caution">
+**Attachments only apply to the turn they're submitted in.** Replayed conversation history stays text-only — a past turn's image or audio is never re-sent as multimodal content on subsequent turns. This bounds both token cost (vision content isn't re-billed every turn) and Whisper calls (transcription runs once, not on every history replay).
+</Aside>
+
+## Why Whisper needs its own Azure OpenAI account
+
+`whisper-001`'s `Standard` deployment SKU isn't offered in every region — the main Azure OpenAI account here lives in `eastus`, which has **no deployable SKU for whisper at all** (confirmed via the Cognitive Services models API: `az rest .../locations/eastus/models` returns an empty `skus: []` for the whisper model entry, while `eastus2`, `westeurope`, `northcentralus`, and others return a populated `Standard` SKU). A `GlobalStandard` tier also shows up in a naive search for "whisper" in some regions, but it's actually a different model (`gpt-realtime-whisper`, tied to the Realtime API) — not a substitute for batch transcription via `audio.transcriptions.create()`.
+
+Since a deployment's region is fixed to its parent Cognitive Services account, the fix is a second, dedicated account (`oai-infra-advisor-whisper-<env>`) in `eastus2`. See [Azure Infrastructure](/infra-advisor-ai/architecture/infrastructure/#azure-openai-azure-openaibicep) for the resource details.
+
+## Uploading an attachment
+
+<Tabs syncKey="lang">
+  <TabItem label="Endpoint (shared)">
+
+`services/agent-api/src/main.py`'s `POST /media/upload` — multipart `UploadFile`, behind the same `require_auth` dependency as `/query`, rate-limited tighter (`10/minute` vs `20/minute`) since uploads are heavier. Validates content-type against an allowlist (`image/jpeg`, `image/png`, `image/webp`, `audio/webm`, `audio/wav`, `audio/mpeg`, `audio/ogg`) and a 10 MB size cap — 415 / 413 on rejection.
+
+```python
+# services/agent-api/src/media.py (excerpt)
+def upload_media(file_bytes, filename, content_type, session_id) -> MediaAttachment:
+    kind = _ALLOWED_CONTENT_TYPES.get(content_type.split(";", 1)[0].strip().lower())
+    blob_name = f"{session_id}/{uuid4()}-{safe_filename(filename)}"
+    blob_client = container_client.upload_blob(name=blob_name, data=file_bytes, ...)
+    sas_token = generate_blob_sas(..., permission=BlobSasPermissions(read=True), expiry=...)
+    return MediaAttachment(url=f"{blob_client.url}?{sas_token}", kind=kind, mime_type=..., size_bytes=...)
+```
+
+The returned `{url, kind, mime_type, size_bytes}` — an **Attachment** — is the shared shape used by both backends' request bodies, Redis history, and the UI's `AttachmentChip`.
+
+  </TabItem>
+</Tabs>
+
+## The cascade: audio → transcript → text pipeline
+
+<Tabs syncKey="lang">
+  <TabItem label="Python (LangChain/LangGraph)">
+
+`agent.py`'s `_build_effective_query()` runs inside the `LLMObs.workflow("query-processing")` span, nested as its own `LLMObs.task("transcribe-audio")` — same convention as the existing `load-history`/`extract-sources` tasks:
+
+```python
+# services/agent-api/src/agent.py (excerpt)
+with LLMObs.task("transcribe-audio") as stt_span:
+    transcript, duration_s = transcribe_audio(audio_attachment["url"], audio_attachment["mime_type"])
+    LLMObs.annotate(
+        span=stt_span,
+        output_data={"content": transcript, "role": "assistant"},
+        tags={"audio.mime_type": ..., "audio.blob_url": ..., "audio.duration_s": f"{duration_s:.2f}"},
+    )
+effective_query = f"{query}\n\n[Transcribed voice message]: {transcript}" if query else transcript
+```
+
+The router, specialist executor, and every downstream span then use `effective_query` — domain classification, retrieval, and the final LLM call all see the transcript, exactly as if the user had typed it.
+
+  </TabItem>
+  <TabItem label=".NET (Microsoft Agent Framework)">
+
+`AgentService.cs`'s `TranscribeAudioIfPresentAsync()` is a manual `Activity` (this service has no DD LLM Obs SDK — see [.NET instrumentation](../instrumentation/dotnet/)), tagged so DD's OTLP intake classifies it as a task-kind span, same convention as `ClassifyDomainTraced`:
+
+```csharp
+// services/agent-api-dotnet/Services/AgentService.cs (excerpt)
+using var activity = ActivitySource.StartActivity("transcribe_audio", ActivityKind.Internal);
+activity?.SetTag("gen_ai.operation.name", "transcribe_audio");
+activity?.SetTag("dd.llmobs.span.kind", "task");
+activity?.SetTag("audio.mime_type", audioAttachment.MimeType);
+activity?.SetTag("audio.blob_url", audioAttachment.Url);
+
+var audioClient = _whisperOpenAiClient.GetAudioClient(_whisperDeployment);
+var result = await audioClient.TranscribeAudioAsync(stream, $"audio.{ext}", cancellationToken: ct);
+activity?.SetTag("audio.duration_s", ...);
+```
+
+`_whisperOpenAiClient` is a **keyed** DI singleton (`AddKeyedSingleton("whisper", ...)`), registered only when `AZURE_OPENAI_WHISPER_ENDPOINT`/`_API_KEY` are both set — resolved via `IServiceProvider.GetKeyedService<AzureOpenAIClient>("whisper")`, which returns `null` (not an exception) if unregistered, so transcription degrades to "skipped" rather than failing startup.
+
+  </TabItem>
+</Tabs>
+
+## Images: vision content parts
+
+<Tabs syncKey="lang">
+  <TabItem label="Python (LangChain)">
+
+The image attachment's URL becomes a second content part on the `HumanMessage` sent to `AzureChatOpenAI` — GPT-4.1 receives the image directly, no transcription step involved:
+
+```python
+# services/agent-api/src/agent.py — _build_human_message()
+HumanMessage(content=[
+    {"type": "text", "text": query},
+    {"type": "image_url", "image_url": {"url": image_attachment["url"]}},
+])
+```
+
+  </TabItem>
+  <TabItem label=".NET (Microsoft.Extensions.AI)">
+
+Same shape via `TextContent`/`UriContent` on a `ChatMessage`, passed to `AIAgent.RunAsync(ChatMessage, ...)` (confirmed this overload exists — an `AIAgent.RunAsync(ChatMessage)` overload runs the same as the string-convenience overload used everywhere else in this service, verified against the installed `Microsoft.Agents.AI`/`Microsoft.Extensions.AI` packages before writing this code):
+
+```csharp
+// services/agent-api-dotnet/Services/AgentService.cs — BuildAgentInputMessage()
+new ChatMessage(ChatRole.User, new AIContent[] {
+    new TextContent(text),
+    new UriContent(imageAttachment.Url, imageAttachment.MimeType),
+});
+```
+
+  </TabItem>
+</Tabs>
+
+## Why tags, not an `image_parts`/`audio_parts` schema
+
+<Aside type="note">
+The installed `ddtrace` (4.11.1) has **no multimodal content schema** in `LLMObs.annotate()` — checked directly against `ddtrace/llmobs/_llmobs.py`'s `annotate()` implementation and grepped the whole `llmobs/` package for `image_parts`/`audio_parts`/`ImagePart`/`AudioPart`: zero hits. `input_data`/`output_data` on an LLM-kind span only accept a string or `{"content": str, "role": str, "tool_calls", "tool_results"}` — there's no structured way to attach an image or audio reference to a span's input/output today.
+</Aside>
+
+So multimodal spans here are represented via **flat tags** instead of an invented content-parts shape:
+
+| Tag | Set on | Meaning |
+|-----|--------|---------|
+| `attachments.image_present` / `attachments.audio_present` | workflow span | `"true"`/`"false"` |
+| `image.blob_url`, `image.mime_type` | workflow span | Reference to the attached image, for anyone reading the trace |
+| `audio.blob_url`, `audio.mime_type`, `audio.duration_s` | `transcribe-audio` task span (Python) / `transcribe_audio` Activity (.NET) | Same, plus a best-effort wall-clock duration of the transcription call itself (not the audio's actual playback length) |
+
+`input_data`/`output_data` on the workflow span stay plain text — the *effective* (post-transcription) query, same schema as every other turn. **Re-check this if `ddtrace` is upgraded** — a future version may add a real multimodal schema, at which point these ad-hoc tags should be replaced with whatever the SDK exposes natively.
+
+## What's next
+
+- [Instrumentation](../instrumentation/python/) — the base ddtrace/OTel setup this builds on.
+- [.NET ↔ Python feature parity](/infra-advisor-ai/development/dotnet-python-parity/) — where multimodal sits in the broader parity picture.
+- [Azure Infrastructure](/infra-advisor-ai/architecture/infrastructure/) — the Whisper account and `chat-media` container this feature provisions.

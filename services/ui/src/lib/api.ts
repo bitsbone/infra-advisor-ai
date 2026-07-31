@@ -24,6 +24,14 @@ export function getApiBase(): string {
   return getBackend() === "dotnet" ? "/api-dotnet" : (import.meta.env.VITE_AGENT_API_URL || "/api");
 }
 
+// Chat attachment uploads always go to the Python agent-api's POST
+// /media/upload, regardless of which backend (`getBackend()`) is currently
+// selected for chat — there is one shared upload endpoint, not one per
+// backend. See docs/agent-guides — multimodal media upload architecture note.
+function getUploadApiBase(): string {
+  return import.meta.env.VITE_AGENT_API_URL || "/api";
+}
+
 export class ApiError extends Error {
   status: number;
   traceId: string | null;
@@ -51,6 +59,38 @@ export interface Citation {
   source_url?: string;
   tool_name?: string;
   data_notes?: string;
+}
+
+export interface Attachment {
+  url: string;
+  kind: "image" | "audio";
+  mime_type: string;
+  size_bytes: number;
+}
+
+/** Upload a chat attachment (image or audio) to Blob Storage via the shared
+ * Python agent-api endpoint and return the resulting reference. */
+export async function uploadMedia(file: File): Promise<Attachment> {
+  const sessionId = getRumSessionId() ?? getSessionId();
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${getUploadApiBase()}/media/upload`, {
+    method: "POST",
+    headers: {
+      "X-Session-ID": sessionId,
+      ...authHeader(),
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const { detail } = await extractErrorDetail(response);
+    console.error(`[api] uploadMedia ${response.status}:`, detail);
+    throw new ApiError(detail, response.status, null);
+  }
+
+  return await response.json();
 }
 
 export interface BridgeData {
@@ -142,6 +182,7 @@ export async function sendQuery(
   model?: string,
   conversationId?: string,
   userId?: string,
+  attachments?: Attachment[],
 ): Promise<QueryResponse> {
   // Prefer the Datadog RUM session ID so gen_ai.conversation.id in LLMObs maps
   // directly to the RUM session — enabling LLMObs ↔ RUM correlation in Datadog.
@@ -160,7 +201,12 @@ export async function sendQuery(
     },
     // session_id in the body is the canonical source — headers can be stripped
     // by proxies but the POST body always reaches the backend.
-    body: JSON.stringify({ query, session_id: sessionId, ...(model ? { model } : {}) }),
+    body: JSON.stringify({
+      query,
+      session_id: sessionId,
+      ...(model ? { model } : {}),
+      ...(attachments?.length ? { attachments } : {}),
+    }),
   });
 
   if (!response.ok) {
@@ -221,6 +267,7 @@ export async function* sendQueryStream(
   conversationId?: string,
   userId?: string,
   signal?: AbortSignal,
+  attachments?: Attachment[],
 ): AsyncGenerator<StreamEvent, void, void> {
   const sessionId = getRumSessionId() ?? getSessionId();
   const response = await fetch(`${getApiBase()}/query/stream`, {
@@ -234,7 +281,12 @@ export async function* sendQueryStream(
       ...rumHeaders(),
       ...authHeader(),
     },
-    body: JSON.stringify({ query, session_id: sessionId, ...(model ? { model } : {}) }),
+    body: JSON.stringify({
+      query,
+      session_id: sessionId,
+      ...(model ? { model } : {}),
+      ...(attachments?.length ? { attachments } : {}),
+    }),
     signal,
   });
 

@@ -205,6 +205,7 @@ export default defineConfig({
                     { label: 'Experiments', slug: 'llm-engineering/experiments' },
                     { label: 'Datadog MCP server', slug: 'llm-engineering/datadog-mcp' },
                     { label: 'AI Guard', slug: 'llm-engineering/ai-guard' },
+                    { label: 'Multimodal input', slug: 'llm-engineering/multimodal' },
                     { label: 'Data security & RBAC', slug: 'llm-engineering/security-rbac' },
                     { label: 'Glossary', slug: 'llm-engineering/glossary' },
                 ],

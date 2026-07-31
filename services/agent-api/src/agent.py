@@ -14,6 +14,7 @@ from langchain_openai import AzureChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel
 
+from media import transcribe_audio
 from memory import load_history
 from observability.ai_guard import check_query
 from observability.llm_obs import schedule_faithfulness_score, tag_agent_run
@@ -347,6 +348,77 @@ def _summarize_tool_result(raw: str) -> str | None:
     return None
 
 
+# ─── Multimodal attachment handling ────────────────────────────────────────────
+
+
+def _build_effective_query(
+    query: str, attachments: list[dict[str, Any]] | None
+) -> tuple[str, dict[str, Any] | None, dict[str, str]]:
+    """Fold any audio attachment's transcript into the query text (cascade
+    architecture — the chat LLM never sees raw audio) and surface the image
+    attachment (if any) so the caller can build a multi-part vision message.
+
+    Returns (effective_query, image_attachment_or_none, attachment_tags) where
+    attachment_tags is meant to be merged into the workflow span's tags.
+    """
+    if not attachments:
+        return query, None, {"attachments.image_present": "false", "attachments.audio_present": "false"}
+
+    image_attachment = next((a for a in attachments if a.get("kind") == "image"), None)
+    audio_attachment = next((a for a in attachments if a.get("kind") == "audio"), None)
+
+    tags = {
+        "attachments.image_present": str(bool(image_attachment)).lower(),
+        "attachments.audio_present": str(bool(audio_attachment)).lower(),
+    }
+    if image_attachment:
+        tags["image.blob_url"] = image_attachment["url"]
+        tags["image.mime_type"] = image_attachment["mime_type"]
+
+    effective_query = query
+    if audio_attachment:
+        with LLMObs.task("transcribe-audio") as stt_span:
+            try:
+                transcript, duration_s = transcribe_audio(
+                    audio_attachment["url"], audio_attachment["mime_type"]
+                )
+            except Exception:
+                logger.exception("transcribe_audio failed")
+                transcript, duration_s = "", 0.0
+            LLMObs.annotate(
+                span=stt_span,
+                output_data={"content": transcript, "role": "assistant"},
+                tags={
+                    "audio.mime_type": audio_attachment["mime_type"],
+                    "audio.blob_url": audio_attachment["url"],
+                    "audio.duration_s": f"{duration_s:.2f}",
+                },
+            )
+        tags["audio.mime_type"] = audio_attachment["mime_type"]
+        tags["audio.blob_url"] = audio_attachment["url"]
+        tags["audio.duration_s"] = f"{duration_s:.2f}"
+
+        if transcript:
+            effective_query = (
+                f"{query}\n\n[Transcribed voice message]: {transcript}" if query else transcript
+            )
+
+    return effective_query, image_attachment, tags
+
+
+def _build_human_message(query: str, image_attachment: dict[str, Any] | None) -> HumanMessage:
+    """Plain text HumanMessage, or a multi-part vision message when an image
+    attachment is present — LangChain/Azure OpenAI GPT-4.1 content-part shape."""
+    if image_attachment is None:
+        return HumanMessage(content=query)
+    return HumanMessage(
+        content=[
+            {"type": "text", "text": query},
+            {"type": "image_url", "image_url": {"url": image_attachment["url"]}},
+        ]
+    )
+
+
 # ─── Agent runner ──────────────────────────────────────────────────────────────
 
 
@@ -356,6 +428,7 @@ async def run_agent(
     mcp_client: MultiServerMCPClient,
     deployment: str,
     rum_session_id: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Execute a multi-agent query pipeline with specialist routing.
 
@@ -384,7 +457,6 @@ async def run_agent(
         }
 
     llm = build_llm(deployment)
-    query_domain = _classify_domain(query)
     all_tools = await mcp_client.get_tools()
 
     # session.id drives RUM↔LLM Obs correlation in Datadog — prefer the RUM session ID
@@ -392,14 +464,22 @@ async def run_agent(
     obs_session_id = rum_session_id or session_id
 
     with LLMObs.workflow("query-processing") as workflow_span:
+        # Fold any audio attachment's transcript into the query text and surface
+        # the image attachment (if any) — nested inside the workflow span so the
+        # transcribe-audio task shows up as its child in the trace, matching
+        # load-history/extract-sources. See _build_effective_query docstring.
+        effective_query, image_attachment, attachment_tags = _build_effective_query(query, attachments)
+        query_domain = _classify_domain(effective_query)
+
         LLMObs.annotate(
             span=workflow_span,
-            input_data={"content": query, "role": "user"},
+            input_data={"content": effective_query, "role": "user"},
             tags={
                 "query.domain": query_domain,
                 "session.id": obs_session_id,
                 "session.chat_id": session_id,
                 **({"session.rum_id": rum_session_id} if rum_session_id else {}),
+                **attachment_tags,
             },
         )
 
@@ -415,7 +495,9 @@ async def run_agent(
                 },
             )
 
-        # Build conversation history messages
+        # Build conversation history messages — historical attachments are
+        # never re-sent as multimodal content on later turns, only the
+        # current one (see _build_effective_query docstring).
         history_messages: list[Any] = []
         for entry in raw_history:
             role = entry.get("role", "")
@@ -427,10 +509,10 @@ async def run_agent(
 
         # ── Agent: router ─────────────────────────────────────────────────────
         with LLMObs.agent("router") as router_span:
-            decision = await _run_router(query, llm)
+            decision = await _run_router(effective_query, llm)
             LLMObs.annotate(
                 span=router_span,
-                input_data={"content": query, "role": "user"},
+                input_data={"content": effective_query, "role": "user"},
                 output_data={"content": decision.handoff_context, "role": "assistant"},
                 tags={
                     "router.specialist": decision.specialist,
@@ -456,7 +538,7 @@ async def run_agent(
         system_prompt = _SPECIALIST_SYSTEM_PROMPTS[specialist_name]
 
         # Inject handoff context as a strategy hint when router added useful context
-        if decision.handoff_context and decision.handoff_context != query:
+        if decision.handoff_context and decision.handoff_context != effective_query:
             system_prompt = (
                 f"{system_prompt}\n\n"
                 f"[Routing context]: {decision.handoff_context}"
@@ -469,8 +551,9 @@ async def run_agent(
             MessagesPlaceholder("messages"),
         ])
 
-        # Assemble full message list: history + current query
-        input_messages = history_messages + [HumanMessage(content=query)]
+        # Assemble full message list: history + current query (a multi-part
+        # vision message when an image attachment is present)
+        input_messages = history_messages + [_build_human_message(effective_query, image_attachment)]
 
         executor = create_react_agent(
             model=llm,
@@ -489,7 +572,7 @@ async def run_agent(
 
             tag_agent_run(
                 span=agent_span,
-                query=query,
+                query=effective_query,
                 answer=answer,
                 query_domain=query_domain,
                 tools_called=tools_called,
@@ -536,7 +619,7 @@ async def run_agent(
 
     # Schedule faithfulness scoring outside the workflow — async, zero added latency
     schedule_faithfulness_score(
-        query=query,
+        query=effective_query,
         context_chunks=context_chunks,
         answer=answer,
         session_id=obs_session_id,
@@ -560,6 +643,7 @@ async def run_agent_stream(
     mcp_client: MultiServerMCPClient,
     deployment: str,
     rum_session_id: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Streaming counterpart to run_agent — same router → specialist pipeline,
     but yields SSE-event dicts live as the specialist's LangGraph executor runs,
@@ -599,19 +683,29 @@ async def run_agent_stream(
         return
 
     llm = build_llm(deployment)
-    query_domain = _classify_domain(query)
     obs_session_id = rum_session_id or session_id
+    has_audio = bool(attachments) and any(a.get("kind") == "audio" for a in attachments)
 
     try:
         with LLMObs.workflow("query-processing") as workflow_span:
+            # Nested inside the workflow span so transcribe-audio shows up as
+            # its child in the trace, matching load-history/extract-sources.
+            if has_audio:
+                yield {"event": "step", "step": "transcribe_audio", "status": "running", "detail": None}
+            effective_query, image_attachment, attachment_tags = _build_effective_query(query, attachments)
+            if has_audio:
+                yield {"event": "step", "step": "transcribe_audio", "status": "done", "detail": None}
+            query_domain = _classify_domain(effective_query)
+
             LLMObs.annotate(
                 span=workflow_span,
-                input_data={"content": query, "role": "user"},
+                input_data={"content": effective_query, "role": "user"},
                 tags={
                     "query.domain": query_domain,
                     "session.id": obs_session_id,
                     "session.chat_id": session_id,
                     **({"session.rum_id": rum_session_id} if rum_session_id else {}),
+                    **attachment_tags,
                 },
             )
 
@@ -639,10 +733,10 @@ async def run_agent_stream(
 
             yield {"event": "step", "step": "route_query", "status": "running", "detail": None}
             with LLMObs.agent("router") as router_span:
-                decision = await _run_router(query, llm)
+                decision = await _run_router(effective_query, llm)
                 LLMObs.annotate(
                     span=router_span,
-                    input_data={"content": query, "role": "user"},
+                    input_data={"content": effective_query, "role": "user"},
                     output_data={"content": decision.handoff_context, "role": "assistant"},
                     tags={
                         "router.specialist": decision.specialist,
@@ -670,14 +764,14 @@ async def run_agent_stream(
                 specialist_tools = list(all_tools)
 
             system_prompt = _SPECIALIST_SYSTEM_PROMPTS[specialist_name]
-            if decision.handoff_context and decision.handoff_context != query:
+            if decision.handoff_context and decision.handoff_context != effective_query:
                 system_prompt = f"{system_prompt}\n\n[Routing context]: {decision.handoff_context}"
 
             specialist_prompt = ChatPromptTemplate.from_messages([
                 ("system", system_prompt),
                 MessagesPlaceholder("messages"),
             ])
-            input_messages = history_messages + [HumanMessage(content=query)]
+            input_messages = history_messages + [_build_human_message(effective_query, image_attachment)]
 
             executor = create_react_agent(
                 model=llm,
@@ -757,7 +851,7 @@ async def run_agent_stream(
                 answer = "".join(answer_parts)
                 tag_agent_run(
                     span=agent_span,
-                    query=query,
+                    query=effective_query,
                     answer=answer,
                     query_domain=query_domain,
                     tools_called=tools_called,
@@ -781,7 +875,7 @@ async def run_agent_stream(
             )
 
         schedule_faithfulness_score(
-            query=query,
+            query=effective_query,
             context_chunks=context_chunks,
             answer=answer,
             session_id=obs_session_id,

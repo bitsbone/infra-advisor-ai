@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
+using Azure.AI.OpenAI;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol;
@@ -31,6 +32,13 @@ public class AgentService
     private readonly IReadOnlyList<IResponseEvaluator> _evaluators;
     private readonly DatadogEvalsClient _ddEvals;
     private readonly DatadogAiGuardClient _aiGuard;
+    // Null when AZURE_OPENAI_WHISPER_ENDPOINT/AZURE_OPENAI_WHISPER_API_KEY
+    // aren't both set (Program.cs only registers the keyed "whisper" client
+    // when they are) — voice attachment transcription degrades to "skipped"
+    // rather than failing startup, since it's an additive feature.
+    private readonly AzureOpenAIClient? _whisperOpenAiClient;
+    private readonly HttpClient _mediaHttpClient;
+    private readonly string _whisperDeployment;
     private readonly Histogram<double> _faithfulnessHistogram;
     private readonly Counter<long> _conversationCounter;
     private readonly Counter<long> _toolCounter;
@@ -53,6 +61,8 @@ public class AgentService
         IEnumerable<IResponseEvaluator> evaluators,
         DatadogEvalsClient ddEvals,
         DatadogAiGuardClient aiGuard,
+        IServiceProvider serviceProvider,
+        IHttpClientFactory httpClientFactory,
         IMeterFactory meterFactory,
         ILogger<AgentService> logger)
     {
@@ -63,6 +73,13 @@ public class AgentService
         _evaluators = evaluators.ToList();
         _ddEvals = ddEvals;
         _aiGuard = aiGuard;
+        // GetKeyedService (not GetRequiredKeyedService) so a missing
+        // registration resolves to null instead of throwing at startup —
+        // Program.cs only registers this key when both Whisper env vars
+        // are present.
+        _whisperOpenAiClient = serviceProvider.GetKeyedService<AzureOpenAIClient>("whisper");
+        _mediaHttpClient = httpClientFactory.CreateClient("agent-media-download");
+        _whisperDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_WHISPER_DEPLOYMENT") ?? "whisper";
         _logger = logger;
         _evalSampleRate = double.TryParse(
             Environment.GetEnvironmentVariable("EVAL_SAMPLE_RATE"),
@@ -89,6 +106,7 @@ public class AgentService
         string query,
         string sessionId,
         string deployment,
+        List<AttachmentDto>? attachments = null,
         CancellationToken ct = default)
     {
         // 0. AI Guard pre-flight check on the raw user query. Runs before
@@ -112,20 +130,32 @@ public class AgentService
                 BlockReason: guardResult.Reason ?? $"Blocked by AI Guard ({guardResult.Action})");
         }
 
-        // 1. Task: classify the query domain (manual span — pure CS, no LLM).
-        var domain = ClassifyDomainTraced(query);
+        // 1. Fold any audio attachment's transcript into the query text
+        //    (cascade architecture — the chat LLM never sees raw audio) and
+        //    surface the image attachment, if any, before anything else
+        //    touches the query text — so domain classification + retrieval
+        //    both see the transcript.
+        var (effectiveQuery, imageAttachment) = await BuildEffectiveQueryAsync(query, attachments, ct);
 
-        // 2. Retrieval: vector-search the best-practices corpus. Emits a
+        // 2. Task: classify the query domain (manual span — pure CS, no LLM).
+        var domain = ClassifyDomainTraced(effectiveQuery);
+
+        // 3. Retrieval: vector-search the best-practices corpus. Emits a
         //    retrieval span which wraps a framework-emitted embedding span
         //    (query embedding). Failures degrade silently — the agent still
         //    answers without retrieved context.
-        var retrieved = await _retrieval.RetrieveAsync(query, topK: 3, ct);
+        var retrieved = await _retrieval.RetrieveAsync(effectiveQuery, topK: 3, ct);
 
-        // 3. Inject retrieval context as a system-style preamble. Cheap and
+        // 4. Inject retrieval context as a system-style preamble. Cheap and
         //    keeps the agent prompt unchanged structurally.
         var augmentedQuery = retrieved.Count > 0
-            ? $"Relevant InfraAdvisor best-practice context:\n{string.Join("\n\n", retrieved)}\n\n---\n\nUser question: {query}"
-            : query;
+            ? $"Relevant InfraAdvisor best-practice context:\n{string.Join("\n\n", retrieved)}\n\n---\n\nUser question: {effectiveQuery}"
+            : effectiveQuery;
+
+        // Multi-part vision message when an image attachment is present —
+        // TextContent + UriContent, same shape RunAsync accepts for plain
+        // text via a single TextContent part.
+        var inputMessage = BuildAgentInputMessage(augmentedQuery, imageAttachment);
 
         var agent = await _agentHolder.GetAgentAsync(ct);
 
@@ -135,7 +165,7 @@ public class AgentService
         AgentResponse response;
         try
         {
-            response = await agent.RunAsync(augmentedQuery, session, cancellationToken: ct);
+            response = await agent.RunAsync(inputMessage, session, cancellationToken: ct);
         }
         catch (Exception ex) when (IsMcpSessionExpired(ex))
         {
@@ -155,7 +185,7 @@ public class AgentService
             // from the prior MCP client; recreate fresh against the new
             // agent so the tool call routing wires correctly.
             session = await agent.CreateSessionAsync(ct);
-            response = await agent.RunAsync(augmentedQuery, session, cancellationToken: ct);
+            response = await agent.RunAsync(inputMessage, session, cancellationToken: ct);
         }
         catch (Exception ex)
         {
@@ -185,7 +215,7 @@ public class AgentService
         // span specifically (not the HTTP root) when joining to DD's
         // eval-metric API.
         var toolResults = ExtractToolResultsFromResponse(response);
-        ScheduleEvaluations(query, answer, toolsCalled, toolResults, sources, domain);
+        ScheduleEvaluations(effectiveQuery, answer, toolsCalled, toolResults, sources, domain);
 
         return new AgentResult(
             Answer: answer,
@@ -324,6 +354,96 @@ public class AgentService
         return domain;
     }
 
+    // ── Multimodal attachment handling ────────────────────────────────────────
+    // Cascade architecture (mirrors services/agent-api/src/agent.py): audio is
+    // never sent to the chat LLM — it's transcribed here via Azure OpenAI
+    // Whisper and the transcript text is folded into the effective query.
+    // Images become a UriContent part on the ChatMessage sent to the agent.
+
+    private async Task<(string EffectiveQuery, AttachmentDto? ImageAttachment)> BuildEffectiveQueryAsync(
+        string query, List<AttachmentDto>? attachments, CancellationToken ct)
+    {
+        if (attachments is null || attachments.Count == 0)
+            return (query, null);
+
+        var imageAttachment = attachments.FirstOrDefault(a => a.Kind == "image");
+        var audioAttachment = attachments.FirstOrDefault(a => a.Kind == "audio");
+
+        if (audioAttachment is null)
+            return (query, imageAttachment);
+
+        var transcript = await TranscribeAudioIfPresentAsync(audioAttachment, ct);
+        if (string.IsNullOrEmpty(transcript))
+            return (query, imageAttachment);
+
+        var effectiveQuery = string.IsNullOrEmpty(query)
+            ? transcript
+            : $"{query}\n\n[Transcribed voice message]: {transcript}";
+        return (effectiveQuery, imageAttachment);
+    }
+
+    // Own Activity (not the framework-emitted chat span) — Whisper isn't
+    // called through the M.E.AI IChatClient pipeline, so nothing else would
+    // emit a span for it. Tagged so DD LLMObs renders it as a "task" kind
+    // span, same convention as ClassifyDomainTraced.
+    private async Task<string?> TranscribeAudioIfPresentAsync(AttachmentDto audioAttachment, CancellationToken ct)
+    {
+        if (_whisperOpenAiClient is null)
+        {
+            _logger.LogWarning(
+                "Skipping audio transcription for url={Url} — AZURE_OPENAI_WHISPER_ENDPOINT/AZURE_OPENAI_WHISPER_API_KEY not configured",
+                audioAttachment.Url);
+            return null;
+        }
+
+        using var activity = ActivitySource.StartActivity("transcribe_audio", ActivityKind.Internal);
+        activity?.SetTag("gen_ai.operation.name", "transcribe_audio");
+        activity?.SetTag("dd.llmobs.span.kind", "task");
+        activity?.SetTag("audio.mime_type", audioAttachment.MimeType);
+        activity?.SetTag("audio.blob_url", audioAttachment.Url);
+
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var audioBytes = await _mediaHttpClient.GetByteArrayAsync(audioAttachment.Url, ct);
+            var audioClient = _whisperOpenAiClient.GetAudioClient(_whisperDeployment);
+            var ext = audioAttachment.MimeType switch
+            {
+                "audio/wav" => "wav",
+                "audio/mpeg" => "mp3",
+                "audio/ogg" => "ogg",
+                _ => "webm",
+            };
+            using var stream = new MemoryStream(audioBytes);
+            var result = await audioClient.TranscribeAudioAsync(stream, $"audio.{ext}", cancellationToken: ct);
+            stopwatch.Stop();
+
+            activity?.SetTag("audio.duration_s", (stopwatch.ElapsedMilliseconds / 1000.0).ToString("F2"));
+            activity?.SetTag("output.value", result.Value.Text);
+            return result.Value.Text;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("transcribe_audio failed for url={Url}: {Error}", audioAttachment.Url, ex.Message);
+            activity?.SetTag("error", true);
+            return null;
+        }
+    }
+
+    // Plain text ChatMessage, or a multi-part vision message when an image
+    // attachment is present.
+    private static ChatMessage BuildAgentInputMessage(string text, AttachmentDto? imageAttachment)
+    {
+        if (imageAttachment is null)
+            return new ChatMessage(ChatRole.User, text);
+
+        return new ChatMessage(ChatRole.User, new AIContent[]
+        {
+            new TextContent(text),
+            new UriContent(imageAttachment.Url, imageAttachment.MimeType),
+        });
+    }
+
     // Streaming variant of RunAgentAsync. Yields StreamEvent records the
     // /query/stream endpoint serializes as Server-Sent Events. Same pipeline
     // as the non-streaming version (classify → retrieve → agent.RunStreamingAsync
@@ -337,6 +457,7 @@ public class AgentService
         string query,
         string sessionId,
         string deployment,
+        List<AttachmentDto>? attachments = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
         _logger.LogDebug(
@@ -359,18 +480,27 @@ public class AgentService
             yield break;
         }
 
-        // 1. classify_domain (sync) — instant; report as a completed step.
-        var domain = ClassifyDomainTraced(query);
+        // 1. transcribe_audio (if an audio attachment is present) — folds the
+        //    transcript into the query text before anything else touches it.
+        var hasAudio = attachments?.Any(a => a.Kind == "audio") ?? false;
+        if (hasAudio) yield return new StepEvent("transcribe_audio", "running");
+        var (effectiveQuery, imageAttachment) = await BuildEffectiveQueryAsync(query, attachments, ct);
+        if (hasAudio) yield return new StepEvent("transcribe_audio", "done");
+
+        // 2. classify_domain (sync) — instant; report as a completed step.
+        var domain = ClassifyDomainTraced(effectiveQuery);
         yield return new StepEvent("classify_domain", "done", domain);
 
-        // 2. retrieve_best_practices — let the user see it's happening.
+        // 3. retrieve_best_practices — let the user see it's happening.
         yield return new StepEvent("retrieve_best_practices", "running");
-        var retrieved = await _retrieval.RetrieveAsync(query, topK: 3, ct);
+        var retrieved = await _retrieval.RetrieveAsync(effectiveQuery, topK: 3, ct);
         yield return new StepEvent("retrieve_best_practices", "done", $"{retrieved.Count} docs");
 
         var augmentedQuery = retrieved.Count > 0
-            ? $"Relevant InfraAdvisor best-practice context:\n{string.Join("\n\n", retrieved)}\n\n---\n\nUser question: {query}"
-            : query;
+            ? $"Relevant InfraAdvisor best-practice context:\n{string.Join("\n\n", retrieved)}\n\n---\n\nUser question: {effectiveQuery}"
+            : effectiveQuery;
+
+        var inputMessage = BuildAgentInputMessage(augmentedQuery, imageAttachment);
 
         var agent = await _agentHolder.GetAgentAsync(ct);
         var session = await _sessions.GetOrCreateAsync(agent, sessionId, ct);
@@ -394,7 +524,7 @@ public class AgentService
         var anyStreamed = false;
         var retriedMcpSession = false;
 
-        var updates = agent.RunStreamingAsync(augmentedQuery, session, cancellationToken: ct);
+        var updates = agent.RunStreamingAsync(inputMessage, session, cancellationToken: ct);
         var enumerator = updates.GetAsyncEnumerator(ct);
 
         while (true)
@@ -472,7 +602,7 @@ public class AgentService
         var distinctSources = allSources.Distinct().ToList();
         var distinctTools = toolsCalledOrdered.Distinct().ToList();
 
-        ScheduleEvaluations(query, fullAnswer.ToString(), distinctTools, toolResults, distinctSources, domain);
+        ScheduleEvaluations(effectiveQuery, fullAnswer.ToString(), distinctTools, toolResults, distinctSources, domain);
 
         yield return new DoneEvent(
             TraceId: GetTraceIdDecimal(),

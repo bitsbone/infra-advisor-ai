@@ -88,3 +88,30 @@ export function trackMessageReported(domain?: string): void {
     domain: domain ?? "unknown",
   });
 }
+
+// ─── Multimodal attachment tracking ─────────────────────────────────────────
+
+export function trackAttachmentAdded(kind: "image" | "audio", sizeBytes: number): void {
+  datadogRum.addAction("attachment_added", {
+    kind,
+    size_bytes: sizeBytes,
+  });
+}
+
+export function trackUploadStarted(kind: "image" | "audio"): void {
+  datadogRum.addAction("upload_started", { kind });
+}
+
+export function trackUploadCompleted(kind: "image" | "audio", durationMs: number): void {
+  datadogRum.addAction("upload_completed", {
+    kind,
+    duration_ms: durationMs,
+  });
+}
+
+export function trackUploadFailed(kind: "image" | "audio", error: string): void {
+  datadogRum.addAction("upload_failed", {
+    kind,
+    error,
+  });
+}

@@ -47,9 +47,14 @@ Run the multi-agent pipeline on a user query.
 {
   "query": "What bridges in Harris County have a sufficiency rating below 50?",
   "session_id": "550e8400-e29b-41d4-a716-446655440000",
-  "model": "gpt-4.1-mini"
+  "model": "gpt-4.1-mini",
+  "attachments": [
+    {"url": "https://.../chat-media/...?sig=...", "kind": "image", "mime_type": "image/jpeg", "size_bytes": 84213}
+  ]
 }
 ```
+
+`attachments` is optional — an array of `{url, kind, mime_type, size_bytes}` references returned by `POST /media/upload` (never raw file bytes). An `image` attachment becomes a vision content part on the LLM call; an `audio` attachment is transcribed via Whisper first and the transcript is folded into the effective query. See [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for the full design.
 
 **Headers:**
 - `Authorization: Bearer <jwt>` — Required
@@ -67,6 +72,30 @@ Run the multi-agent pipeline on a user query.
   "model": "gpt-4.1-mini"
 }
 ```
+
+---
+
+### `POST /media/upload`
+
+Upload a chat attachment (image or audio) to Blob Storage and return a read-SAS URL reference. This is the **shared** upload endpoint — the UI always uploads here even when `agent-api-dotnet` is the active chat backend (see [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for why).
+
+**Request:** `multipart/form-data` with a single `file` field. Allowlisted content-types: `image/jpeg`, `image/png`, `image/webp`, `audio/webm`, `audio/wav`, `audio/mpeg`, `audio/ogg`. Max size 10 MB.
+
+**Headers:**
+- `Authorization: Bearer <jwt>` — Required
+- `X-Session-ID: <uuid>` — Used as the Blob path prefix
+
+**Response:**
+```json
+{
+  "url": "https://stinfraadvdev.blob.core.windows.net/chat-media/<session_id>/<uuid>-photo.jpg?sig=...",
+  "kind": "image",
+  "mime_type": "image/jpeg",
+  "size_bytes": 84213
+}
+```
+
+**Errors:** `415` unsupported content-type, `413` file too large, `401` missing/invalid auth, `429` rate limit (`10/minute`, tighter than `/query`'s `20/minute`).
 
 ---
 

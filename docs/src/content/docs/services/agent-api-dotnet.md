@@ -32,7 +32,7 @@ The .NET backend exposes the same endpoint contract as the Python version. See [
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/query` | Run multi-agent pipeline; accepts `X-Conversation-ID` + `X-User-ID` |
+| `POST` | `/query` | Run multi-agent pipeline; accepts `X-Conversation-ID` + `X-User-ID`; body may include `attachments` (see below) |
 | `POST` | `/suggestions` | Contextual follow-up suggestions (LLM-powered) |
 | `GET` | `/suggestions/initial` | Opening suggestions from Redis pool |
 | `GET` | `/models` | Available Azure OpenAI deployments |
@@ -43,6 +43,8 @@ The .NET backend exposes the same endpoint contract as the Python version. See [
 | `DELETE` | `/session/{id}` | Clear Redis session memory |
 | `POST` | `/conversations` | Create conversation record in PostgreSQL |
 | `GET` | `/conversations` | List conversations for user |
+
+**No `/media/upload` here.** Multimodal (image + voice) attachments are uploaded through the Python backend's `POST /media/upload` regardless of which backend is answering the current chat turn — the UI always uploads there, then sends the resulting attachment reference in this service's `/query`/`/query/stream` body. See [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for why (and the trade-off: this backend's demo path depends on the Python pod being up for uploads).
 | `GET` | `/conversations/{id}` | Fetch conversation with message history |
 | `DELETE` | `/conversations/{id}` | Delete conversation |
 

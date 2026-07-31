@@ -25,6 +25,7 @@ if _SRC not in sys.path:
 from memory import (  # noqa: E402
     _WINDOW_SIZE,
     append_exchange,
+    append_exchange_with_attachments,
     clear_session,
     history_to_langchain_messages,
     load_history,
@@ -158,6 +159,56 @@ def test_append_exchange_adds_two_messages():
     assert stored[-2]["content"] == "new question"
     assert stored[-1]["role"] == "ai"
     assert stored[-1]["content"] == "new answer"
+
+
+# ---------------------------------------------------------------------------
+# append_exchange_with_attachments
+# ---------------------------------------------------------------------------
+
+
+def test_append_exchange_with_attachments_stores_attachment_metadata():
+    import json
+
+    mock_redis = _make_redis_mock(stored_value=json.dumps([]))
+    attachments = [
+        {"url": "https://blob/img.jpg?sas=1", "kind": "image", "mime_type": "image/jpeg", "size_bytes": 1234},
+    ]
+    with patch("memory._redis_client", return_value=mock_redis):
+        append_exchange_with_attachments("session-att", "what's in this photo?", "a bridge", attachments)
+
+    call_args = mock_redis.setex.call_args
+    stored = json.loads(call_args.args[2])
+    assert len(stored) == 2
+    assert stored[0]["role"] == "human"
+    assert stored[0]["attachments"] == attachments
+    assert stored[1]["role"] == "ai"
+    assert "attachments" not in stored[1]
+
+
+def test_append_exchange_with_attachments_omits_key_when_none():
+    import json
+
+    mock_redis = _make_redis_mock(stored_value=json.dumps([]))
+    with patch("memory._redis_client", return_value=mock_redis):
+        append_exchange_with_attachments("session-noatt", "hello", "hi", attachments=None)
+
+    call_args = mock_redis.setex.call_args
+    stored = json.loads(call_args.args[2])
+    assert "attachments" not in stored[0]
+
+
+def test_load_history_round_trips_old_format_without_attachments_key():
+    """Sessions written before this feature existed have no "attachments" key
+    on any entry — load_history must still parse them cleanly."""
+    import json
+
+    history = [{"role": "human", "content": "old message"}, {"role": "ai", "content": "old reply"}]
+    mock_redis = _make_redis_mock(stored_value=json.dumps(history))
+    with patch("memory._redis_client", return_value=mock_redis):
+        result = load_history("session-old")
+
+    assert len(result) == 2
+    assert result[0].get("attachments") is None
 
 
 # ---------------------------------------------------------------------------

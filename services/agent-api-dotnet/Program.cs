@@ -63,6 +63,12 @@ var redisHost = EnvOr("REDIS_HOST", "redis.infra-advisor.svc.cluster.local");
 var redisPort = int.Parse(EnvOr("REDIS_PORT", "6379"));
 var redisPassword = Environment.GetEnvironmentVariable("REDIS_PASSWORD");
 var kafkaBootstrapServers = EnvOr("KAFKA_BOOTSTRAP_SERVERS", "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092");
+// Whisper lives on a SEPARATE Cognitive Services account/region — whisper-001's
+// "Standard" deployment SKU isn't offered in every region (confirmed absent in
+// eastus via the Cognitive Services models API), so it has its own account in
+// a region that does support it. See infra/bicep/modules/azure-openai.bicep.
+var azureWhisperEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_WHISPER_ENDPOINT");
+var azureWhisperApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_WHISPER_API_KEY");
 
 Environment.SetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT", azureDeployment);
 Environment.SetEnvironmentVariable("KAFKA_BOOTSTRAP_SERVERS", kafkaBootstrapServers);
@@ -123,6 +129,17 @@ builder.Services.AddSingleton(sp =>
     return new AzureOpenAIClient(new Uri(azureEndpoint), new AzureKeyCredential(azureApiKey), options);
 });
 
+// Second AzureOpenAIClient, keyed "whisper" — separate account/region from
+// the main client above (see azureWhisperEndpoint comment). Registered only
+// when both env vars are present; AgentService treats a missing keyed
+// client as "voice transcription disabled" rather than failing startup,
+// since this is an additive feature, not a core dependency.
+if (!string.IsNullOrWhiteSpace(azureWhisperEndpoint) && !string.IsNullOrWhiteSpace(azureWhisperApiKey))
+{
+    builder.Services.AddKeyedSingleton("whisper", (sp, _) =>
+        new AzureOpenAIClient(new Uri(azureWhisperEndpoint), new AzureKeyCredential(azureWhisperApiKey)));
+}
+
 // ── MCP client holder — lazy connect with reconnect-on-session-expired ─────
 // Previously we did a synchronous McpClient.CreateAsync at startup and
 // registered the resulting client as a singleton. That worked fine until
@@ -145,6 +162,13 @@ builder.Services.AddSingleton(sp =>
 // instead of tying up the streaming pipeline for the full default.
 builder.Services.AddHttpClient("mcp-dotnet")
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(60));
+
+// Downloads chat-attachment audio blobs (already uploaded via the Python
+// agent-api's POST /media/upload) so AgentService can hand the bytes to
+// Azure OpenAI Whisper for transcription. Separate named client from
+// mcp-dotnet since it talks to Azure Blob Storage, not the MCP server.
+builder.Services.AddHttpClient("agent-media-download")
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
 
 builder.Services.AddSingleton(sp => new McpClientHolder(
     serverUrl: mcpServerUrl,
@@ -496,6 +520,7 @@ app.MapPost("/query", async (
             query: body.Query,
             sessionId: agentSessionKey,
             deployment: deployment,
+            attachments: body.Attachments,
             ct: httpContext.RequestAborted);
     }
     catch (Exception ex)
@@ -610,7 +635,11 @@ app.MapPost("/query/stream", async (
     }
 
     await foreach (var evt in agentService.RunAgentStreamingAsync(
-        body.Query, agentSessionKey, deployment, httpContext.RequestAborted))
+        query: body.Query,
+        sessionId: agentSessionKey,
+        deployment: deployment,
+        attachments: body.Attachments,
+        ct: httpContext.RequestAborted))
     {
         // Accumulate side-effects we need post-stream.
         switch (evt)

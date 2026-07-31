@@ -31,16 +31,20 @@ param aksNodeVmSize string = 'Standard_D2s_v3'
 // ---------------------------------------------------------------------------
 // Resource group
 // ---------------------------------------------------------------------------
-// Live resources in rg-tola-infra-advisor-ai (as of 2026-04-19):
+// Live resources in rg-tola-infra-advisor-ai (audited 2026-07-31 via
+// `az resource list` — exactly 5 resources, all managed by this template):
 //   aks-infra-advisor-dev        — managed by this template (aks.bicep)
 //   oai-infra-advisor-dev        — managed by this template (azure-openai.bicep)
 //   srch-infra-advisor-dev       — managed by this template (azure-ai-search.bicep)
 //   law-infra-advisor-dev        — managed by this template (monitoring.bicep)
-//   vnet01                       — manually created, not yet in Bicep
-//   infra-advisor-openai         — ORPHAN: pre-Bicep manual resource, safe to delete
-//   infra-advisor-search         — ORPHAN: pre-Bicep manual resource, safe to delete
+//   stinfraadvdev                — managed by this template (azure-storage.bicep)
+// No manual/orphaned resources remain — the previously-noted vnet01 and the
+// pre-Bicep infra-advisor-openai/infra-advisor-search orphans have since been
+// cleaned up. All deployments in this template use ARM's default Incremental
+// mode (no module sets `mode: 'Complete'`), so `make deploy-infra` only
+// creates/updates resources declared here — it cannot delete anything absent
+// from the template, whether or not this inventory is current.
 //
-// Node resource group: rg-tola-infra-advisor-ai-nodes (on next cluster create)
 // Current live node RG: MC_rg-tola-infra-advisor-ai_aks-infra-advisor-dev_eastus
 //   (immutable for existing cluster — contains VMs, NICs, LB, public IPs)
 
@@ -159,6 +163,9 @@ output searchEndpoint string = search.outputs.endpoint
 
 @description('Azure OpenAI HTTPS endpoint')
 output openAiEndpoint string = openAi.outputs.endpoint
+
+@description('Whisper-only Azure OpenAI account HTTPS endpoint (separate account/region — see azure-openai.bicep)')
+output whisperEndpoint string = openAi.outputs.whisperEndpoint
 
 @description('Kafka bootstrap servers (in-cluster, Strimzi on AKS)')
 output kafkaBootstrapServers string = kafka.outputs.kafkaBootstrapServers

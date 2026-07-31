@@ -30,6 +30,11 @@ data:
   KAFKA_TRACING_ENABLED: "false"
   AZURE_OPENAI_DEPLOYMENT: "gpt-4.1-mini"
   AZURE_OPENAI_EVAL_DEPLOYMENT: "gpt-4.1-mini"
+  # Audio attachments are transcribed directly against this Azure OpenAI Whisper
+  # deployment — the blob URL (already uploaded via the Python agent-api's
+  # /media/upload) is downloaded and passed to the transcription call; this
+  # service does not need AZURE_STORAGE_CONNECTION_STRING itself.
+  AZURE_OPENAI_WHISPER_DEPLOYMENT: "whisper"
   # RetrievalService uses this Azure OpenAI deployment for query + corpus
   # embeddings. Must exist in the Azure OpenAI resource — create via
   # `az cognitiveservices account deployment create` if missing.

@@ -12,7 +12,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
@@ -30,7 +30,14 @@ from conversations import (
     save_messages,
 )
 from kafka_consumer import start_consumer_thread
-from memory import append_exchange, clear_session, get_redis, get_session_model, set_session_model
+from media import MediaTooLarge, UnsupportedMediaType, upload_media
+from memory import (
+    append_exchange_with_attachments,
+    clear_session,
+    get_redis,
+    get_session_model,
+    set_session_model,
+)
 from observability.llm_obs import enable_llm_obs, submit_user_feedback
 from observability.tracing import current_span_id, current_trace_id
 
@@ -153,10 +160,18 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
 # ─── Request / response schemas ───────────────────────────────────────────────
 
 
+class Attachment(BaseModel):
+    url: str
+    kind: str  # "image" | "audio"
+    mime_type: str
+    size_bytes: int
+
+
 class QueryRequest(BaseModel):
     query: str
     session_id: str | None = None
     model: str | None = None
+    attachments: list[Attachment] | None = None
 
 
 class QueryResponse(BaseModel):
@@ -429,6 +444,41 @@ async def list_models() -> dict:
     return {"models": _AVAILABLE_MODELS, "default": _AVAILABLE_MODELS[0] if _AVAILABLE_MODELS else "gpt-4.1-mini"}
 
 
+@app.post("/media/upload", response_model=Attachment)
+@limiter.limit("10/minute")
+async def media_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
+    _user: dict = Depends(require_auth),
+) -> Attachment:
+    """Upload a chat attachment (image or audio) to Blob Storage and return
+    a read-SAS URL. Shared by both the Python and .NET chat backends — the UI
+    always uploads here regardless of which backend is answering the current
+    turn (see docs/agent-guides — media upload architecture note)."""
+    session_id = x_session_id or str(uuid.uuid4())
+    file_bytes = await file.read()
+
+    try:
+        attachment = upload_media(
+            file_bytes=file_bytes,
+            filename=file.filename or "attachment",
+            content_type=file.content_type or "application/octet-stream",
+            session_id=session_id,
+        )
+    except UnsupportedMediaType as exc:
+        raise HTTPException(status_code=415, detail=f"Unsupported content type: {exc}")
+    except MediaTooLarge as exc:
+        raise HTTPException(status_code=413, detail=f"File too large: {exc} bytes")
+
+    return Attachment(
+        url=attachment.url,
+        kind=attachment.kind,
+        mime_type=attachment.mime_type,
+        size_bytes=attachment.size_bytes,
+    )
+
+
 @app.post("/query", response_model=QueryResponse)
 @limiter.limit("20/minute")
 async def query(
@@ -463,9 +513,15 @@ async def query(
         mcp_client=_mcp_client,
         deployment=deployment,
         rum_session_id=x_dd_rum_session_id,
+        attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
     )
 
-    append_exchange(session_id, body.query, result["answer"])
+    append_exchange_with_attachments(
+        session_id,
+        body.query,
+        result["answer"],
+        attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
+    )
     set_session_model(session_id, deployment)
 
     trace_id = current_trace_id()
@@ -551,6 +607,7 @@ async def query_stream(
             mcp_client=_mcp_client,
             deployment=deployment,
             rum_session_id=x_dd_rum_session_id,
+            attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
         ):
             event_name = evt["event"]
 
@@ -610,7 +667,12 @@ async def query_stream(
             yield f"event: {event_name}\ndata: {payload}\n\n"
 
         full_answer = "".join(answer_parts)
-        append_exchange(session_id, body.query, full_answer)
+        append_exchange_with_attachments(
+            session_id,
+            body.query,
+            full_answer,
+            attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
+        )
         set_session_model(session_id, deployment)
 
         if x_conversation_id and x_user_id:

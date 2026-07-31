@@ -17,18 +17,23 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import ReactMarkdown from "react-markdown";
-import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, ChevronLeft, Bug } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, ChevronLeft, Bug, Paperclip, Mic, Square } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { ApiError, BackendType, BridgeData, ConversationDetail, ConversationSummary, FeedbackRating, StoredStepDto, StreamEvent, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQueryStream, setBackend, setModel, setSessionId, submitFeedback } from "../lib/api";
+import { ApiError, Attachment, BackendType, BridgeData, ConversationDetail, ConversationSummary, FeedbackRating, StoredStepDto, StreamEvent, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQueryStream, setBackend, setModel, setSessionId, submitFeedback, uploadMedia } from "../lib/api";
 import {
+  trackAttachmentAdded,
   trackBridgeCardRendered,
   trackMessageCopied,
   trackMessageFeedback,
   trackMessageReported,
   trackQuerySubmitted,
+  trackUploadCompleted,
+  trackUploadFailed,
+  trackUploadStarted,
 } from "../lib/datadog-rum";
 import { AboutModal } from "./AboutModal";
 import { AdminTab } from "./AdminTab";
+import { AttachmentChip } from "./AttachmentChip";
 import { BridgeCard } from "./BridgeCard";
 import { StepKind, StepStatus, ToolDisplayMeta, ToolStepChip } from "./ToolStepChip";
 import { ConversationSidebar } from "./ConversationSidebar";
@@ -62,6 +67,7 @@ interface Message {
   bridges: BridgeData[];
   traceId?: string | null;
   spanId?: string | null;
+  attachments?: Attachment[];
 }
 
 const TOOL_META: Record<string, { label: string; document_type: string; description: string; source_url?: string; data_notes?: string }> = {
@@ -581,8 +587,17 @@ export function Chat() {
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  // Multimodal attachments — uploaded (via /media/upload) but not yet sent
+  // as part of a query. Cleared once submit() sends them.
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [recording, setRecording] = useState(false);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -663,10 +678,78 @@ export function Chat() {
     window.history.replaceState(null, '', url.toString());
   }, [conversationId]);
 
+  // Shared upload path for both file-picked and recorded attachments — one
+  // upload flow, one RUM tracking call site, regardless of source.
+  async function uploadAndTrack(file: File, kind: "image" | "audio") {
+    setUploading(true);
+    trackUploadStarted(kind);
+    const startedAt = Date.now();
+    try {
+      const attachment = await uploadMedia(file);
+      trackUploadCompleted(kind, Date.now() - startedAt);
+      trackAttachmentAdded(kind, attachment.size_bytes);
+      setPendingAttachments((prev) => [...prev, attachment]);
+    } catch (err) {
+      trackUploadFailed(kind, err instanceof Error ? err.message : "Unknown error");
+      setError({
+        message: err instanceof Error ? err.message : "Attachment upload failed",
+        traceId: null,
+      });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ""; // allow re-selecting the same file later
+    for (const file of files) {
+      const kind = file.type.startsWith("audio/") ? "audio" : "image";
+      await uploadAndTrack(file, kind);
+    }
+  }
+
+  function removePendingAttachment(index: number) {
+    setPendingAttachments((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recordedChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const file = new File([blob], `voice-message.${recorder.mimeType?.includes("ogg") ? "ogg" : "webm"}`, {
+          type: blob.type,
+        });
+        await uploadAndTrack(file, "audio");
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+    } catch (err) {
+      setError({
+        message: err instanceof Error ? err.message : "Microphone access failed",
+        traceId: null,
+      });
+    }
+  }
+
+  function stopRecording() {
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
+    setRecording(false);
+  }
+
   // Core submit logic — accepts query directly so pills can auto-submit without
   // relying on `input` state (avoids React batching issues).
-  async function submit(query: string) {
-    if (!query || loading) return;
+  async function submit(query: string, attachments: Attachment[] = []) {
+    if ((!query && attachments.length === 0) || loading) return;
 
     setInput("");
     setError(null);
@@ -677,7 +760,14 @@ export function Chat() {
       setShowStillWorking(Date.now() - lastEventAtRef.current > 4000);
     }, 1000);
 
-    const userMessage: Message = { role: "user", content: query, sources: [], steps: [], bridges: [] };
+    const userMessage: Message = {
+      role: "user",
+      content: query,
+      sources: [],
+      steps: [],
+      bridges: [],
+      attachments: attachments.length > 0 ? attachments : undefined,
+    };
     // Empty assistant placeholder we mutate in place as stream events arrive.
     const placeholder: Message = { role: "assistant", content: "", sources: [], steps: [], bridges: [] };
     let assistantIdx = -1;
@@ -688,6 +778,7 @@ export function Chat() {
       return next;
     });
     trackQuerySubmitted(query.length);
+    setPendingAttachments([]);
 
     // Mutator helpers — wrap setMessages with the captured assistantIdx so
     // every event lands on the right slot even when React batches updates.
@@ -719,7 +810,9 @@ export function Chat() {
         }
       }
 
-      for await (const evt of sendQueryStream(query, selectedModel, convId ?? undefined, user?.id ?? undefined)) {
+      for await (const evt of sendQueryStream(
+        query, selectedModel, convId ?? undefined, user?.id ?? undefined, undefined, attachments,
+      )) {
         handleStreamEvent(evt);
       }
 
@@ -811,7 +904,7 @@ export function Chat() {
 
   async function handleSubmit(e?: React.FormEvent) {
     e?.preventDefault();
-    await submit(input.trim());
+    await submit(input.trim(), pendingAttachments);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -1122,6 +1215,14 @@ export function Chat() {
                           <Text fontSize="sm" lineHeight="tall" whiteSpace="pre-wrap">{msg.content}</Text>
                         )}
 
+                        {msg.role === "user" && msg.attachments && msg.attachments.length > 0 && (
+                          <HStack gap={1.5} flexWrap="wrap" mt={2}>
+                            {msg.attachments.map((att, j) => (
+                              <AttachmentChip key={j} attachment={att} />
+                            ))}
+                          </HStack>
+                        )}
+
                         {msg.bridges.length > 0 && (
                           <VStack mt={3} gap={2} align="stretch">
                             {msg.bridges.map((b, j) => <BridgeCard key={j} bridge={b} />)}
@@ -1247,7 +1348,53 @@ export function Chat() {
                   </NativeSelect.Root>
                 </HStack>
               </HStack>
+              {pendingAttachments.length > 0 && (
+                <HStack gap={1.5} flexWrap="wrap" data-testid="pending-attachments">
+                  {pendingAttachments.map((att, i) => (
+                    <AttachmentChip key={i} attachment={att} onRemove={() => removePendingAttachment(i)} />
+                  ))}
+                </HStack>
+              )}
               <HStack as="form" onSubmit={handleSubmit} gap={2} align="flex-end">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,audio/*"
+                  multiple
+                  hidden
+                  onChange={handleFileSelect}
+                />
+                <IconButton
+                  type="button"
+                  aria-label="Attach image or audio"
+                  data-testid="attach-button"
+                  data-dd-action-name="attach-file"
+                  variant="ghost"
+                  disabled={loading || uploading || recording}
+                  onClick={() => fileInputRef.current?.click()}
+                  borderRadius="xl"
+                  h="42px"
+                  w="42px"
+                  flexShrink={0}
+                >
+                  <Paperclip size={16} />
+                </IconButton>
+                <IconButton
+                  type="button"
+                  aria-label={recording ? "Stop recording" : "Record voice message"}
+                  data-testid="mic-button"
+                  data-dd-action-name="record-voice"
+                  variant="ghost"
+                  colorPalette={recording ? "red" : undefined}
+                  disabled={loading || uploading}
+                  onClick={recording ? stopRecording : startRecording}
+                  borderRadius="xl"
+                  h="42px"
+                  w="42px"
+                  flexShrink={0}
+                >
+                  {recording ? <Square size={14} /> : <Mic size={16} />}
+                </IconButton>
                 <Textarea
                   ref={inputRef}
                   data-testid="chat-input"
@@ -1274,7 +1421,7 @@ export function Chat() {
                   type="submit"
                   data-testid="send-button"
                   aria-label="Send message"
-                  disabled={loading || !input.trim()}
+                  disabled={loading || uploading || (!input.trim() && pendingAttachments.length === 0)}
                   colorPalette="blue"
                   borderRadius="xl"
                   h="42px"

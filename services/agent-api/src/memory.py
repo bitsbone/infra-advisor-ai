@@ -34,7 +34,7 @@ def _memory_key(session_id: str) -> str:
     return f"{_SESSION_PREFIX}:{session_id}:{_MEMORY_SUFFIX}"
 
 
-def load_history(session_id: str) -> list[dict[str, str]]:
+def load_history(session_id: str) -> list[dict[str, Any]]:
     """Return the conversation history list for this session.
 
     Each entry is ``{"role": "human"|"ai", "content": "..."}``
@@ -46,14 +46,14 @@ def load_history(session_id: str) -> list[dict[str, str]]:
         raw = client.get(key)
         if raw is None:
             return []
-        history: list[dict[str, str]] = json.loads(raw)
+        history: list[dict[str, Any]] = json.loads(raw)
         return history[-_WINDOW_SIZE * 2 :]  # keep last N pairs (2 messages per pair)
     except Exception as exc:
         logger.warning("load_history failed for session=%s: %s", session_id, exc)
         return []
 
 
-def save_history(session_id: str, history: list[dict[str, str]]) -> None:
+def save_history(session_id: str, history: list[dict[str, Any]]) -> None:
     """Persist the conversation history and refresh TTL.
 
     Truncates to the last ``_WINDOW_SIZE`` exchange pairs before saving.
@@ -76,6 +76,29 @@ def append_exchange(session_id: str, human_message: str, ai_message: str) -> Non
     save_history(session_id, history)
 
 
+def append_exchange_with_attachments(
+    session_id: str,
+    human_message: str,
+    ai_message: str,
+    attachments: list[dict[str, Any]] | None = None,
+) -> None:
+    """Same as append_exchange, but records attachment metadata (url/kind/
+    mime_type/size_bytes) alongside the human turn — for display purposes
+    only when a conversation is reloaded. Attachments are NOT re-sent as
+    multimodal content on subsequent turns (see agent.py); this is purely a
+    record of what was attached to this specific turn. Old entries without
+    an "attachments" key still round-trip fine — nothing reads it as
+    required.
+    """
+    history = load_history(session_id)
+    human_entry: dict[str, Any] = {"role": "human", "content": human_message}
+    if attachments:
+        human_entry["attachments"] = attachments
+    history.append(human_entry)
+    history.append({"role": "ai", "content": ai_message})
+    save_history(session_id, history)
+
+
 def clear_session(session_id: str) -> bool:
     """Delete session memory from Redis.  Returns True if key was deleted."""
     key = _memory_key(session_id)
@@ -88,7 +111,7 @@ def clear_session(session_id: str) -> bool:
         return False
 
 
-def history_to_langchain_messages(history: list[dict[str, str]]) -> list[Any]:
+def history_to_langchain_messages(history: list[dict[str, Any]]) -> list[Any]:
     """Convert stored history to LangChain HumanMessage/AIMessage objects."""
     from langchain_core.messages import AIMessage, HumanMessage
 

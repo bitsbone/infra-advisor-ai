@@ -22,6 +22,8 @@ dependencies = [
     "python-jose[cryptography]>=3.3.0",
     # Per-IP + per-user rate limiting on expensive LLM endpoints
     "slowapi>=0.1.9",
+    # Chat attachment storage (POST /media/upload) — blob upload + SAS signing
+    "azure-storage-blob>=12.24.0",
 ]
 
 [project.optional-dependencies]

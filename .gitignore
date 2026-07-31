@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.*.local
+*.bak
 
 # Deploy logs contain plaintext secrets from kubectl create secret output
 *.log

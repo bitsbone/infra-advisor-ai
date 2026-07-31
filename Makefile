@@ -114,12 +114,14 @@ create-mcp-server-dotnet-secret: ## Create mcp-server-dotnet-secret K8s Secret (
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ mcp-server-dotnet-secret created in namespace $(NAMESPACE)"
 
-create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI keys + DATABASE_URL + JWT_SECRET + DD_API_KEY/DD_APP_KEY for AI Guard)
+create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI keys + DATABASE_URL + JWT_SECRET + DD_API_KEY/DD_APP_KEY for AI Guard + AZURE_STORAGE_CONNECTION_STRING for chat media uploads)
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
 	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];  then echo "ERROR: AZURE_OPENAI_API_KEY is not set";  exit 1; fi
 	@if [ -z "$(JWT_SECRET)" ]; then echo "ERROR: JWT_SECRET is not set (shared with auth-api for /query auth)"; exit 1; fi
 	@if [ -z "$(DATABASE_URL)" ]; then echo "WARN: DATABASE_URL not set — conversation persistence will be disabled"; fi
 	@if [ -z "$(DD_API_KEY)" ] || [ -z "$(DD_APP_KEY)" ]; then echo "WARN: DD_API_KEY/DD_APP_KEY not both set — AI Guard LangChain auto-integration will be disabled"; fi
+	@if [ -z "$(AZURE_STORAGE_CONNECTION_STRING)" ]; then echo "WARN: AZURE_STORAGE_CONNECTION_STRING not set — chat media upload (image/audio attachments) will be disabled"; fi
+	@if [ -z "$(AZURE_OPENAI_WHISPER_ENDPOINT)" ] || [ -z "$(AZURE_OPENAI_WHISPER_API_KEY)" ]; then echo "WARN: AZURE_OPENAI_WHISPER_ENDPOINT/AZURE_OPENAI_WHISPER_API_KEY not both set — voice attachment transcription will be disabled"; fi
 	kubectl create secret generic agent-api-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
@@ -128,16 +130,20 @@ create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI key
 		$(if $(DATABASE_URL),--from-literal=DATABASE_URL=$(DATABASE_URL),) \
 		$(if $(DD_API_KEY),--from-literal=DD_API_KEY=$(DD_API_KEY),) \
 		$(if $(DD_APP_KEY),--from-literal=DD_APP_KEY=$(DD_APP_KEY),) \
+		$(if $(AZURE_STORAGE_CONNECTION_STRING),--from-literal=AZURE_STORAGE_CONNECTION_STRING=$(AZURE_STORAGE_CONNECTION_STRING),) \
+		$(if $(AZURE_OPENAI_WHISPER_ENDPOINT),--from-literal=AZURE_OPENAI_WHISPER_ENDPOINT=$(AZURE_OPENAI_WHISPER_ENDPOINT),) \
+		$(if $(AZURE_OPENAI_WHISPER_API_KEY),--from-literal=AZURE_OPENAI_WHISPER_API_KEY=$(AZURE_OPENAI_WHISPER_API_KEY),) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ agent-api-secret created in namespace $(NAMESPACE)"
 
-create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Azure OpenAI keys + DATABASE_URL + DD_API_KEY + DD_APPLICATION_KEY + JWT_SECRET)
+create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Azure OpenAI keys + DATABASE_URL + DD_API_KEY + DD_APPLICATION_KEY + JWT_SECRET + Whisper keys)
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
 	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];  then echo "ERROR: AZURE_OPENAI_API_KEY is not set";  exit 1; fi
 	@if [ -z "$(JWT_SECRET)" ]; then echo "ERROR: JWT_SECRET is not set (shared with auth-api for /query auth)"; exit 1; fi
 	@if [ -z "$(DD_API_KEY)" ];            then echo "WARN: DD_API_KEY not set — LLM Observability OTLP export will be disabled"; fi
 	@if [ -z "$(DD_APPLICATION_KEY)" ];    then echo "WARN: DD_APPLICATION_KEY not set — AI Guard HTTP API calls will be disabled"; fi
 	@if [ -z "$(DATABASE_URL)" ]; then echo "WARN: DATABASE_URL not set — conversation persistence will be disabled"; fi
+	@if [ -z "$(AZURE_OPENAI_WHISPER_ENDPOINT)" ] || [ -z "$(AZURE_OPENAI_WHISPER_API_KEY)" ]; then echo "WARN: AZURE_OPENAI_WHISPER_ENDPOINT/AZURE_OPENAI_WHISPER_API_KEY not both set — voice attachment transcription will be disabled"; fi
 	kubectl create secret generic agent-api-dotnet-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
@@ -146,6 +152,8 @@ create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Az
 		$(if $(DD_API_KEY),--from-literal=DD_API_KEY=$(DD_API_KEY),) \
 		$(if $(DD_APPLICATION_KEY),--from-literal=DD_APPLICATION_KEY=$(DD_APPLICATION_KEY),) \
 		$(if $(DATABASE_URL),--from-literal=DATABASE_URL=$(DATABASE_URL),) \
+		$(if $(AZURE_OPENAI_WHISPER_ENDPOINT),--from-literal=AZURE_OPENAI_WHISPER_ENDPOINT=$(AZURE_OPENAI_WHISPER_ENDPOINT),) \
+		$(if $(AZURE_OPENAI_WHISPER_API_KEY),--from-literal=AZURE_OPENAI_WHISPER_API_KEY=$(AZURE_OPENAI_WHISPER_API_KEY),) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ agent-api-dotnet-secret created in namespace $(NAMESPACE)"
 
