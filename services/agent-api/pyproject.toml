@@ -3,8 +3,13 @@ name = "agent-api"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    # ddtrace 4.x bundles all integrations — no separate extras needed
-    "ddtrace>=4.11.1",
+    # ddtrace 4.x bundles all integrations — no separate extras needed.
+    # Pinned EXACTLY to a pre-release: LLMObs.annotate() gained audio_parts
+    # in 4.12.0 (stable) but image_parts only exists in 4.13.0rc3 as of this
+    # writing — no stable 4.13.0 release yet. Chosen deliberately for this
+    # showcase app to demonstrate both; re-pin to the stable 4.13.0 (or
+    # later) release once one exists, verifying the schema hasn't changed.
+    "ddtrace==4.13.0rc3",
     "fastapi>=0.136.0",
     "httpx>=0.28.1",
     "langchain>=1.2.0",

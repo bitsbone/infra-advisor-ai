@@ -137,6 +137,18 @@ def upload_media(
     )
 
 
+def download_media_bytes(url: str) -> bytes:
+    """Download an already-uploaded attachment's bytes from its SAS URL.
+
+    Shared by transcribe_audio (Whisper needs the raw audio) and agent.py's
+    image-description step (needs the raw image to attach as image_parts on
+    its LLMObs span) — one HTTP round-trip helper for both.
+    """
+    resp = httpx.get(url, timeout=30.0)
+    resp.raise_for_status()
+    return resp.content
+
+
 def _whisper_client() -> AzureOpenAI:
     # Whisper lives on a SEPARATE Cognitive Services account/region from the
     # main chat/embedding deployments — whisper-001's "Standard" SKU isn't
@@ -150,21 +162,21 @@ def _whisper_client() -> AzureOpenAI:
     )
 
 
-def transcribe_audio(url: str, mime_type: str) -> tuple[str, float]:
+def transcribe_audio(url: str, mime_type: str) -> tuple[str, float, bytes]:
     """Download the SAS-URL'd audio blob and transcribe it via Azure OpenAI Whisper.
 
-    Returns (transcript, duration_s). duration_s is a best-effort wall-clock
-    measurement of the transcription call itself, not the audio's actual
-    playback length — Whisper's response doesn't reliably include duration
-    for every input format, and decoding the audio just to measure it isn't
-    worth a new dependency for a demo feature.
+    Returns (transcript, duration_s, audio_bytes). duration_s is a best-effort
+    wall-clock measurement of the transcription call itself, not the audio's
+    actual playback length — Whisper's response doesn't reliably include
+    duration for every input format, and decoding the audio just to measure
+    it isn't worth a new dependency for a demo feature. audio_bytes is
+    returned so the caller can attach it as an LLMObs audio_parts entry
+    without a second download.
     """
     deployment = os.environ.get("AZURE_OPENAI_WHISPER_DEPLOYMENT", "whisper")
     ext = mimetypes.guess_extension(mime_type) or ".webm"
 
-    resp = httpx.get(url, timeout=30.0)
-    resp.raise_for_status()
-    audio_bytes = resp.content
+    audio_bytes = download_media_bytes(url)
 
     client = _whisper_client()
     start = time.monotonic()
@@ -174,4 +186,4 @@ def transcribe_audio(url: str, mime_type: str) -> tuple[str, float]:
     )
     duration_s = time.monotonic() - start
 
-    return transcription.text, duration_s
+    return transcription.text, duration_s, audio_bytes

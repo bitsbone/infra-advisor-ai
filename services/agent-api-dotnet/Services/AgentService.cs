@@ -384,8 +384,23 @@ public class AgentService
 
     // Own Activity (not the framework-emitted chat span) — Whisper isn't
     // called through the M.E.AI IChatClient pipeline, so nothing else would
-    // emit a span for it. Tagged so DD LLMObs renders it as a "task" kind
-    // span, same convention as ClassifyDomainTraced.
+    // emit a span for it.
+    //
+    // gen_ai.input.messages / gen_ai.output.messages follow the OTel GenAI
+    // semantic conventions (v1.37+) message-parts schema — the SAME
+    // attributes Microsoft.Extensions.AI's own .UseOpenTelemetry() decorator
+    // emits automatically for chat calls (confirmed empirically: a UriContent
+    // image part on a ChatMessage already serializes as
+    // {"type":"uri","uri":...,"mime_type":...,"modality":"image"} with no
+    // extra code — that's why images need zero changes here). Audio has no
+    // such automatic path since this call goes through Azure.AI.OpenAI's
+    // AudioClient directly, not an IChatClient, so it's built by hand here,
+    // matching the same "uri" part shape with modality "audio" instead of
+    // inline base64 — the audio blob already has a stable SAS URL, so
+    // referencing it avoids embedding a potentially large base64 payload in
+    // a span attribute. dd.llmobs.span.kind=llm (not "task") since this is a
+    // real model call (Whisper), same reasoning as the Python side's switch
+    // from LLMObs.task to LLMObs.llm for this same step.
     private async Task<string?> TranscribeAudioIfPresentAsync(AttachmentDto audioAttachment, CancellationToken ct)
     {
         if (_whisperOpenAiClient is null)
@@ -398,9 +413,22 @@ public class AgentService
 
         using var activity = ActivitySource.StartActivity("transcribe_audio", ActivityKind.Internal);
         activity?.SetTag("gen_ai.operation.name", "transcribe_audio");
-        activity?.SetTag("dd.llmobs.span.kind", "task");
-        activity?.SetTag("audio.mime_type", audioAttachment.MimeType);
-        activity?.SetTag("audio.blob_url", audioAttachment.Url);
+        activity?.SetTag("gen_ai.request.model", _whisperDeployment);
+        activity?.SetTag("gen_ai.provider.name", "azure.ai.openai");
+        activity?.SetTag("dd.llmobs.span.kind", "llm");
+
+        var inputMessages = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                role = "user",
+                parts = new object[]
+                {
+                    new { type = "uri", uri = audioAttachment.Url, mime_type = audioAttachment.MimeType, modality = "audio" },
+                },
+            },
+        });
+        activity?.SetTag("gen_ai.input.messages", inputMessages);
 
         var stopwatch = Stopwatch.StartNew();
         try
@@ -418,8 +446,16 @@ public class AgentService
             var result = await audioClient.TranscribeAudioAsync(stream, $"audio.{ext}", cancellationToken: ct);
             stopwatch.Stop();
 
+            var outputMessages = JsonSerializer.Serialize(new[]
+            {
+                new
+                {
+                    role = "assistant",
+                    parts = new object[] { new { type = "text", content = result.Value.Text } },
+                },
+            });
+            activity?.SetTag("gen_ai.output.messages", outputMessages);
             activity?.SetTag("audio.duration_s", (stopwatch.ElapsedMilliseconds / 1000.0).ToString("F2"));
-            activity?.SetTag("output.value", result.Value.Text);
             return result.Value.Text;
         }
         catch (Exception ex)

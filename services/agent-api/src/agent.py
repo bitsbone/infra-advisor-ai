@@ -1,5 +1,6 @@
 import ddtrace.auto  # must be first import — auto-instruments LangChain, LangGraph, OpenAI, MCP, httpx, Redis, Kafka
 
+import base64
 import json
 import logging
 import os
@@ -14,7 +15,7 @@ from langchain_openai import AzureChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel
 
-from media import transcribe_audio
+from media import download_media_bytes, transcribe_audio
 from memory import load_history
 from observability.ai_guard import check_query
 from observability.llm_obs import schedule_faithfulness_score, tag_agent_run
@@ -349,20 +350,127 @@ def _summarize_tool_result(raw: str) -> str | None:
 
 
 # ─── Multimodal attachment handling ────────────────────────────────────────────
+#
+# Both modalities cascade to plain text BEFORE the specialist agent ever runs
+# — audio via Whisper transcription, images via a dedicated vision-description
+# call — so the specialist's HumanMessage is always plain text (see
+# _build_human_message below) and the ReAct tool-calling loop is unaffected
+# by whichever modality the turn started as.
+#
+# Why a vision pre-step instead of sending the image inline in the specialist
+# call: ddtrace's LangChain/OpenAI integration auto-instruments the specialist's
+# chat model call, but auto-instrumentation does not populate LLMObs's
+# audio_parts/image_parts fields (verified against the installed ddtrace
+# 4.13.0rc3 — grepped ddtrace/contrib/internal/{openai,langchain}/ for
+# audio_parts/image_parts; the only auto-population is OpenAI's Realtime API
+# integration, which this app doesn't use). Wrapping the image in its own
+# LLMObs.llm() span we control is the only way to attach image_parts so it
+# renders as an inline image in the trace view, mirroring the same reasoning
+# for audio → LLMObs.llm() below.
 
 
-def _build_effective_query(
-    query: str, attachments: list[dict[str, Any]] | None
-) -> tuple[str, dict[str, Any] | None, dict[str, str]]:
-    """Fold any audio attachment's transcript into the query text (cascade
-    architecture — the chat LLM never sees raw audio) and surface the image
-    attachment (if any) so the caller can build a multi-part vision message.
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("utf-8")
 
-    Returns (effective_query, image_attachment_or_none, attachment_tags) where
-    attachment_tags is meant to be merged into the workflow span's tags.
+
+async def _transcribe_and_annotate(audio_attachment: dict[str, Any]) -> str:
+    """Whisper transcription wrapped as an LLMObs "llm" span (not "task") so
+    input_data can carry audio_parts — that field is only rendered specially
+    on llm-kind spans, per the ddtrace LLMObs.annotate() docstring. Returns
+    the transcript ("" on failure, non-fatal — falls back to the typed query
+    text if any)."""
+    whisper_deployment = os.environ.get("AZURE_OPENAI_WHISPER_DEPLOYMENT", "whisper")
+    with LLMObs.llm(model_name=whisper_deployment, model_provider="azure", name="transcribe-audio") as stt_span:
+        try:
+            transcript, duration_s, audio_bytes = transcribe_audio(
+                audio_attachment["url"], audio_attachment["mime_type"]
+            )
+        except Exception:
+            logger.exception("transcribe_audio failed")
+            LLMObs.annotate(span=stt_span, tags={"error": "true"})
+            return ""
+
+        LLMObs.annotate(
+            span=stt_span,
+            input_data=[{
+                "role": "user",
+                "content": "(voice message)",
+                "audio_parts": [{
+                    "mime_type": audio_attachment["mime_type"],
+                    "content": _b64(audio_bytes),
+                }],
+            }],
+            output_data=[{"role": "assistant", "content": transcript}],
+            tags={
+                "audio.mime_type": audio_attachment["mime_type"],
+                "audio.blob_url": audio_attachment["url"],
+                "audio.duration_s": f"{duration_s:.2f}",
+            },
+        )
+        return transcript
+
+
+_IMAGE_DESCRIPTION_PROMPT = (
+    "Describe this image factually and concisely, focusing on any infrastructure, "
+    "engineering, or asset-condition details visible (structural damage, signage, "
+    "equipment, environmental conditions, visible defects). This description will "
+    "be used as context for a technical analysis, not shown to the user directly."
+)
+
+
+async def _describe_image_and_annotate(image_attachment: dict[str, Any], llm: AzureChatOpenAI) -> str:
+    """Vision-capable LLM call wrapped as its own LLMObs "llm" span so
+    input_data can carry image_parts, same reasoning as _transcribe_and_annotate.
+    Runs BEFORE the specialist agent — its output (a text description) is what
+    gets folded into the effective query, not the raw image. Returns "" on
+    failure (non-fatal)."""
+    with LLMObs.llm(model_name=llm.deployment_name, model_provider="azure", name="describe-image") as vision_span:
+        try:
+            image_bytes = download_media_bytes(image_attachment["url"])
+            vision_message = HumanMessage(content=[
+                {"type": "text", "text": _IMAGE_DESCRIPTION_PROMPT},
+                {"type": "image_url", "image_url": {"url": image_attachment["url"]}},
+            ])
+            response = await llm.ainvoke([vision_message])
+            description = response.content if isinstance(response.content, str) else str(response.content)
+        except Exception:
+            logger.exception("describe_image failed")
+            LLMObs.annotate(span=vision_span, tags={"error": "true"})
+            return ""
+
+        LLMObs.annotate(
+            span=vision_span,
+            input_data=[{
+                "role": "user",
+                "content": _IMAGE_DESCRIPTION_PROMPT,
+                "image_parts": [{
+                    "mime_type": image_attachment["mime_type"],
+                    "content": _b64(image_bytes),
+                }],
+            }],
+            output_data=[{"role": "assistant", "content": description}],
+            tags={
+                "image.mime_type": image_attachment["mime_type"],
+                "image.blob_url": image_attachment["url"],
+            },
+        )
+        return description
+
+
+async def _build_effective_query(
+    query: str, attachments: list[dict[str, Any]] | None, llm: AzureChatOpenAI
+) -> tuple[str, dict[str, str]]:
+    """Cascade both modalities to plain text before anything else touches the
+    query — audio via Whisper transcription, images via a dedicated vision
+    description call. The chat LLM never receives raw audio or image bytes
+    directly; the specialist agent always gets plain text (see
+    _build_human_message).
+
+    Returns (effective_query, attachment_tags) where attachment_tags is meant
+    to be merged into the workflow span's tags.
     """
     if not attachments:
-        return query, None, {"attachments.image_present": "false", "attachments.audio_present": "false"}
+        return query, {"attachments.image_present": "false", "attachments.audio_present": "false"}
 
     image_attachment = next((a for a in attachments if a.get("kind") == "image"), None)
     audio_attachment = next((a for a in attachments if a.get("kind") == "audio"), None)
@@ -371,52 +479,36 @@ def _build_effective_query(
         "attachments.image_present": str(bool(image_attachment)).lower(),
         "attachments.audio_present": str(bool(audio_attachment)).lower(),
     }
-    if image_attachment:
-        tags["image.blob_url"] = image_attachment["url"]
-        tags["image.mime_type"] = image_attachment["mime_type"]
 
     effective_query = query
+
     if audio_attachment:
-        with LLMObs.task("transcribe-audio") as stt_span:
-            try:
-                transcript, duration_s = transcribe_audio(
-                    audio_attachment["url"], audio_attachment["mime_type"]
-                )
-            except Exception:
-                logger.exception("transcribe_audio failed")
-                transcript, duration_s = "", 0.0
-            LLMObs.annotate(
-                span=stt_span,
-                output_data={"content": transcript, "role": "assistant"},
-                tags={
-                    "audio.mime_type": audio_attachment["mime_type"],
-                    "audio.blob_url": audio_attachment["url"],
-                    "audio.duration_s": f"{duration_s:.2f}",
-                },
-            )
+        transcript = await _transcribe_and_annotate(audio_attachment)
         tags["audio.mime_type"] = audio_attachment["mime_type"]
         tags["audio.blob_url"] = audio_attachment["url"]
-        tags["audio.duration_s"] = f"{duration_s:.2f}"
-
         if transcript:
             effective_query = (
-                f"{query}\n\n[Transcribed voice message]: {transcript}" if query else transcript
+                f"{effective_query}\n\n[Transcribed voice message]: {transcript}"
+                if effective_query else transcript
             )
 
-    return effective_query, image_attachment, tags
+    if image_attachment:
+        description = await _describe_image_and_annotate(image_attachment, llm)
+        tags["image.blob_url"] = image_attachment["url"]
+        tags["image.mime_type"] = image_attachment["mime_type"]
+        if description:
+            effective_query = (
+                f"{effective_query}\n\n[Attached image]: {description}"
+                if effective_query else f"[Attached image]: {description}"
+            )
+
+    return effective_query, tags
 
 
-def _build_human_message(query: str, image_attachment: dict[str, Any] | None) -> HumanMessage:
-    """Plain text HumanMessage, or a multi-part vision message when an image
-    attachment is present — LangChain/Azure OpenAI GPT-4.1 content-part shape."""
-    if image_attachment is None:
-        return HumanMessage(content=query)
-    return HumanMessage(
-        content=[
-            {"type": "text", "text": query},
-            {"type": "image_url", "image_url": {"url": image_attachment["url"]}},
-        ]
-    )
+def _build_human_message(query: str) -> HumanMessage:
+    """Always plain text — both modalities are folded into query text before
+    this is called (see module docstring above)."""
+    return HumanMessage(content=query)
 
 
 # ─── Agent runner ──────────────────────────────────────────────────────────────
@@ -464,11 +556,11 @@ async def run_agent(
     obs_session_id = rum_session_id or session_id
 
     with LLMObs.workflow("query-processing") as workflow_span:
-        # Fold any audio attachment's transcript into the query text and surface
-        # the image attachment (if any) — nested inside the workflow span so the
-        # transcribe-audio task shows up as its child in the trace, matching
-        # load-history/extract-sources. See _build_effective_query docstring.
-        effective_query, image_attachment, attachment_tags = _build_effective_query(query, attachments)
+        # Cascade both modalities to plain text — nested inside the workflow
+        # span so transcribe-audio/describe-image show up as its children in
+        # the trace, matching load-history/extract-sources. See
+        # _build_effective_query docstring.
+        effective_query, attachment_tags = await _build_effective_query(query, attachments, llm)
         query_domain = _classify_domain(effective_query)
 
         LLMObs.annotate(
@@ -551,9 +643,9 @@ async def run_agent(
             MessagesPlaceholder("messages"),
         ])
 
-        # Assemble full message list: history + current query (a multi-part
-        # vision message when an image attachment is present)
-        input_messages = history_messages + [_build_human_message(effective_query, image_attachment)]
+        # Assemble full message list: history + current (always-text) query —
+        # any image/audio attachment has already cascaded to text above.
+        input_messages = history_messages + [_build_human_message(effective_query)]
 
         executor = create_react_agent(
             model=llm,
@@ -685,16 +777,22 @@ async def run_agent_stream(
     llm = build_llm(deployment)
     obs_session_id = rum_session_id or session_id
     has_audio = bool(attachments) and any(a.get("kind") == "audio" for a in attachments)
+    has_image = bool(attachments) and any(a.get("kind") == "image" for a in attachments)
 
     try:
         with LLMObs.workflow("query-processing") as workflow_span:
-            # Nested inside the workflow span so transcribe-audio shows up as
-            # its child in the trace, matching load-history/extract-sources.
+            # Nested inside the workflow span so transcribe-audio/describe-image
+            # show up as its children in the trace, matching
+            # load-history/extract-sources.
             if has_audio:
                 yield {"event": "step", "step": "transcribe_audio", "status": "running", "detail": None}
-            effective_query, image_attachment, attachment_tags = _build_effective_query(query, attachments)
+            if has_image:
+                yield {"event": "step", "step": "describe_image", "status": "running", "detail": None}
+            effective_query, attachment_tags = await _build_effective_query(query, attachments, llm)
             if has_audio:
                 yield {"event": "step", "step": "transcribe_audio", "status": "done", "detail": None}
+            if has_image:
+                yield {"event": "step", "step": "describe_image", "status": "done", "detail": None}
             query_domain = _classify_domain(effective_query)
 
             LLMObs.annotate(
@@ -771,7 +869,7 @@ async def run_agent_stream(
                 ("system", system_prompt),
                 MessagesPlaceholder("messages"),
             ])
-            input_messages = history_messages + [_build_human_message(effective_query, image_attachment)]
+            input_messages = history_messages + [_build_human_message(effective_query)]
 
             executor = create_react_agent(
                 model=llm,
