@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [agent-api-dotnet, mcp-server-dotnet]
+        service: [agent-api-dotnet, mcp-server-dotnet, aca-agentic-poc-dotnet]
     defaults:
       run:
         working-directory: services/${{ matrix.service }}

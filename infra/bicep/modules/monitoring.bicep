@@ -66,3 +66,6 @@ output workspaceId string = logAnalyticsWorkspace.id
 
 @description('Log Analytics workspace Customer ID (used for AKS diagnostics binding)')
 output workspaceCustomerId string = logAnalyticsWorkspace.properties.customerId
+
+@description('Log Analytics workspace primary shared key — reused by aca-agentic-poc.bicep for its Container Apps Environment (appLogsConfiguration requires a workspace; this repo provisions one workspace, not one per consumer). Flows through Bicep module outputs only, never into a .bicepparam file.')
+output workspaceSharedKey string = logAnalyticsWorkspace.listKeys().primarySharedKey

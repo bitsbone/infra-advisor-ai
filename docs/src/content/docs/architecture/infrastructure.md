@@ -110,6 +110,24 @@ Auth API user accounts are stored in a PostgreSQL 16 Deployment in the `infra-ad
 | Storage | PVC, ReadWriteOnce, 5Gi (cluster default storage class) |
 | Port | 5432 (ClusterIP only) |
 
+### ACA Agentic POC (`aca-agentic-poc.bicep`)
+
+A separate, opt-in proof-of-concept — not part of the main InfraAdvisor product — built for a customer conversation about running a .NET agentic AI app on Azure Container Apps (ACA) with Datadog observability via OpenTelemetry. It reuses this resource group and the existing Azure OpenAI account (`azure-openai.bicep`'s `gpt-4.1-mini` deployment) rather than provisioning a new Azure OpenAI resource, and reuses the existing Log Analytics workspace (`monitoring.bicep`) for the Container Apps Environment's required `appLogsConfiguration`.
+
+The **same** minimal .NET 9 agentic app (`services/aca-agentic-poc-dotnet/` — one `/run` endpoint, one Azure OpenAI chat call, one trivial tool) is deployed **twice**, as two separate Container Apps sharing one Container Apps Environment, to directly compare two different OTel-to-Datadog integration paths:
+
+| Property | `aca-agentic-poc-managed` | `aca-agentic-poc-sidecar` |
+|----------|---------------------------|---------------------------|
+| OTel path | ACA's built-in managed OpenTelemetry agent (environment-level) | Datadog `serverless-init` sidecar container, in-revision |
+| Containers per revision | 1 (`app`) | 2 (`app` + `datadog-sidecar`) |
+| Export protocol | gRPC only (platform requirement) | HTTP/protobuf to `localhost:4318` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Auto-injected by the platform (not set in Bicep) | Explicitly set to `http://localhost:4318`, overriding the platform default |
+| Where Datadog config lives | Environment's `openTelemetryConfiguration.destinationsConfiguration.dataDogConfiguration` | `datadog-sidecar` container's `DD_API_KEY`/`DD_SITE`/`DD_OTLP_CONFIG_*` env vars |
+
+Both apps' Container Apps Environment secrets (Azure OpenAI key, GHCR registry password, Datadog API key) are passed via CLI `--parameters` at deploy time — **never** committed to a `.bicepparam` file (unlike every other Azure resource in this repo, this module's secrets flow through Bicep at all, since ACA has no equivalent to a K8s `secretKeyRef` sourced from an out-of-band resource). The module is gated behind `deployAcaAgenticPoc` (default `false`) in `main.bicep` so a routine `make deploy-infra` run doesn't require these secrets.
+
+**Status**: Bicep module and application code are written and locally verified (unit build, container boot, `/health` check); the actual Azure deployment, Datadog wiring, and side-by-side span comparison are pending — this section should be updated with what each path actually captured (span completeness, setup complexity) once that verification is complete.
+
 ## Deploying infrastructure
 
 ```bash

@@ -29,6 +29,41 @@ param aksNodeCount int = 3
 param aksNodeVmSize string = 'Standard_D2s_v3'
 
 // ---------------------------------------------------------------------------
+// ACA agentic POC params — all secrets here (openAiApiKey, registryPassword,
+// datadogApiKey) have NO default and must be passed via CLI --parameters at
+// deploy time. Unlike every other secret in this repo (which lives in a K8s
+// Secret, created separately via `make create-*-secret`, never touching
+// Bicep), these three flow through Bicep because Microsoft.App/containerApps
+// has no equivalent to a K8s secretKeyRef sourced from an out-of-band
+// resource — see infra/bicep/modules/aca-agentic-poc.bicep for why. Never
+// add these to a .bicepparam file.
+// ---------------------------------------------------------------------------
+
+@description('Container image reference for the ACA agentic POC apps (services/aca-agentic-poc-dotnet) — build and push before deploying')
+param acaContainerImage string = ''
+
+@description('GHCR username for the ACA agentic POC image pull')
+param acaRegistryUsername string = ''
+
+@description('GHCR PAT for the ACA agentic POC image pull — pass via CLI --parameters, never commit')
+@secure()
+param acaRegistryPassword string = ''
+
+@description('Azure OpenAI API key for the ACA agentic POC apps (reuses the existing account) — pass via CLI --parameters, never commit')
+@secure()
+param acaOpenAiApiKey string = ''
+
+@description('Datadog API key for the ACA agentic POC apps — pass via CLI --parameters, never commit')
+@secure()
+param acaDatadogApiKey string = ''
+
+@description('Datadog site for the ACA agentic POC apps')
+param acaDatadogSite string = 'us3.datadoghq.com'
+
+@description('Deploy the ACA agentic POC module — false by default so a routine `make deploy-infra` run does not require the four secrets above; set true (and pass the secrets) explicitly when actually deploying this POC')
+param deployAcaAgenticPoc bool = false
+
+// ---------------------------------------------------------------------------
 // Resource group
 // ---------------------------------------------------------------------------
 // Live resources in rg-tola-infra-advisor-ai (audited 2026-07-31 via
@@ -146,6 +181,28 @@ module monitoring 'modules/monitoring.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
+// Module: ACA agentic POC (opt-in — see deployAcaAgenticPoc above)
+// ---------------------------------------------------------------------------
+
+module acaAgenticPoc 'modules/aca-agentic-poc.bicep' = if (deployAcaAgenticPoc) {
+  name: 'deploy-aca-agentic-poc'
+  scope: resourceGroup
+  params: {
+    location: location
+    environment: environment
+    openAiEndpoint: openAi.outputs.endpoint
+    openAiApiKey: acaOpenAiApiKey
+    logAnalyticsCustomerId: monitoring.outputs.workspaceCustomerId
+    logAnalyticsSharedKey: monitoring.outputs.workspaceSharedKey
+    containerImage: acaContainerImage
+    registryUsername: acaRegistryUsername
+    registryPassword: acaRegistryPassword
+    datadogApiKey: acaDatadogApiKey
+    datadogSite: acaDatadogSite
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 
@@ -181,3 +238,9 @@ output storageAccountName string = storage.outputs.storageAccountName
 
 @description('Azure Blob Storage primary endpoint')
 output storageBlobEndpoint string = storage.outputs.blobEndpoint
+
+@description('ACA agentic POC — managed-OTel-agent-path Container App FQDN (empty unless deployAcaAgenticPoc=true)')
+output acaManagedAppFqdn string = deployAcaAgenticPoc ? acaAgenticPoc.outputs.managedAppFqdn : ''
+
+@description('ACA agentic POC — Datadog-sidecar-path Container App FQDN (empty unless deployAcaAgenticPoc=true)')
+output acaSidecarAppFqdn string = deployAcaAgenticPoc ? acaAgenticPoc.outputs.sidecarAppFqdn : ''

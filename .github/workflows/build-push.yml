@@ -30,6 +30,7 @@ jobs:
       ui:                 ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.ui == 'true' }}
       airflow:            ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.airflow == 'true' }}
       datadog:            ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.datadog == 'true' }}
+      aca-agentic-poc-dotnet: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.aca-agentic-poc-dotnet == 'true' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -63,6 +64,8 @@ jobs:
               - 'services/ingestion/**'
             datadog:
               - 'datadog/datadog-agent.yaml'
+            aca-agentic-poc-dotnet:
+              - 'services/aca-agentic-poc-dotnet/**'
 
   # ── Build and push each changed service ────────────────────────────────────
   build:
@@ -89,6 +92,8 @@ jobs:
             changed: ${{ needs.changes.outputs.load-generator }}
           - service: ui
             changed: ${{ needs.changes.outputs.ui }}
+          - service: aca-agentic-poc-dotnet
+            changed: ${{ needs.changes.outputs.aca-agentic-poc-dotnet }}
     steps:
       - uses: actions/checkout@v6
 
@@ -181,6 +186,11 @@ jobs:
     runs-on: ubuntu-latest
     # Only deploy when at least one of the three long-running services changed.
     # load-generator is a CronJob — it picks up :latest on its next scheduled run.
+    # aca-agentic-poc-dotnet is DELIBERATELY excluded — it deploys to Azure
+    # Container Apps (see infra/bicep/modules/aca-agentic-poc.bicep), not AKS,
+    # so there's no `kubectl set image` step for it here. Rolling out a new
+    # image to its two Container Apps is a separate `az containerapp update`
+    # step, not wired into CI yet (this is a POC, not a permanent service).
     if: |
       github.ref == 'refs/heads/main' && (
         needs.changes.outputs.mcp-server        == 'true' ||
