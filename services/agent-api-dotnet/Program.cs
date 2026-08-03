@@ -546,7 +546,7 @@ app.MapPost("/query", async (
     {
         await conversationSvc.SaveMessagesAsync(
             conversationId, body.Query, result.Answer,
-            result.Sources, traceId, spanId);
+            result.Sources, traceId, spanId, attachments: body.Attachments);
     }
 
     return Results.Ok(new QueryResponse(
@@ -688,7 +688,7 @@ app.MapPost("/query/stream", async (
     {
         await conversationSvc.SaveMessagesAsync(
             conversationId, body.Query, fullAnswer.ToString(),
-            doneSources, finalTraceId, finalSpanId, stepRecords);
+            doneSources, finalTraceId, finalSpanId, stepRecords, body.Attachments);
     }
 
     return Results.Empty;

@@ -299,7 +299,6 @@ Return ONLY valid JSON, no markdown fences, no explanation:
 _POOL_KEY = "infra-advisor:suggestions:pool"
 _POOL_MAX = 80   # max items retained in pool
 _POOL_MIN = 20   # trigger async refill below this count
-_POOL_REFILL_INTERVAL = 1800  # seconds between background top-ups (30 min)
 
 # Four rotating prompts — one per AEC/O&M practice area focus — so the pool
 # accumulates diverse content across disciplines over time.
@@ -396,7 +395,18 @@ async def _fill_pool(llm: Any) -> None:
 
 
 async def _pool_maintenance_loop(llm: Any) -> None:
-    """Background task: seed pool on startup, then top it up every 30 minutes."""
+    """One-time startup seed only — top-ups happen reactively from real
+    traffic (GET /suggestions/initial calls asyncio.create_task(_fill_pool)
+    when the pool drops below _POOL_MIN), matching .NET's SuggestionService,
+    which has no background timer either.
+
+    This used to also run an unconditional `while True: sleep(1800)` loop
+    that called the LLM every 30 minutes regardless of whether the pool
+    actually needed it or anyone was using the app — showing up as
+    unexplained, unlabeled LLM trace noise (no workflow/agent span wrapping
+    it) on a schedule with no relation to real usage. Removed: the reactive
+    top-up path already covers pool health.
+    """
     if _pool_size() < 4:
         # Curated golden-path queries first, so the very first user sees
         # hand-verified suggestions rather than waiting on an LLM call —
@@ -404,13 +414,6 @@ async def _pool_maintenance_loop(llm: Any) -> None:
         _pool_add(_SEED_POOL)
         logger.info("suggestion pool seeded with %d curated golden-path queries", len(_SEED_POOL))
         await _fill_pool(llm)
-    while True:
-        await asyncio.sleep(_POOL_REFILL_INTERVAL)
-        try:
-            if _pool_size() < _POOL_MIN:
-                await _fill_pool(llm)
-        except Exception as exc:
-            logger.warning("pool maintenance iteration failed: %s", exc)
 
 
 def _parse_suggestions(text: str) -> list[SuggestionItem]:
@@ -537,6 +540,7 @@ async def query(
                 sources=result["tools_called"],
                 trace_id=trace_id,
                 span_id=span_id,
+                attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
             )
         except Exception as exc:
             logger.warning("save_messages failed (non-fatal): %s", exc)
@@ -685,6 +689,7 @@ async def query_stream(
                     trace_id=current_trace_id(),
                     span_id=current_span_id(),
                     steps=steps,
+                    attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
                 )
             except Exception as exc:
                 logger.warning("save_messages failed (non-fatal): %s", exc)

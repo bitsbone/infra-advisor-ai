@@ -69,6 +69,12 @@ class MessageRow(Base):
     # saw live. Shape: {kind: "tool"|"internal", id, name, status, args_json,
     # result_summary, sources, duration_ms, detail}.
     steps = Column(JSON, nullable=False, default=list)
+    # Chat attachments (image/audio) sent on this turn — {url, kind,
+    # mime_type, size_bytes} per media.py's Attachment shape. Only ever
+    # non-empty on "user" rows. Persisted so a reloaded conversation still
+    # shows what was attached (the Redis session-memory copy is a separate,
+    # shorter-lived concern — see memory.py).
+    attachments = Column(JSON, nullable=False, default=list)
     trace_id = Column(Text, nullable=True)
     span_id = Column(Text, nullable=True)
     created_at = Column(
@@ -112,6 +118,9 @@ def init_db() -> None:
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'"
         ))
         conn.execute(text(
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'"
+        ))
+        conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id)"
         ))
         conn.execute(text(
@@ -148,6 +157,7 @@ def _msg_to_dict(row: MessageRow) -> dict:
         "content": row.content,
         "sources": row.sources or [],
         "steps": row.steps or [],
+        "attachments": row.attachments or [],
         "trace_id": row.trace_id,
         "span_id": row.span_id,
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -243,6 +253,7 @@ def save_messages(
     trace_id: str | None,
     span_id: str | None,
     steps: list[dict] | None = None,
+    attachments: list[dict] | None = None,
 ) -> None:
     """Save a user+assistant exchange to the messages table (non-fatal)."""
     db = _get_db()
@@ -255,6 +266,7 @@ def save_messages(
             content=user_query,
             sources=[],
             steps=[],
+            attachments=attachments or [],
         ))
         db.add(MessageRow(
             conversation_id=uuid.UUID(conv_id),

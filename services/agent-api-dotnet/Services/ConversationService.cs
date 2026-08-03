@@ -1,3 +1,4 @@
+using InfraAdvisor.AgentApi.Models;
 using InfraAdvisor.AgentApi.Observability;
 using Npgsql;
 
@@ -35,7 +36,8 @@ public record StoredMessage(
     string? TraceId,
     string? SpanId,
     string? CreatedAt,
-    IReadOnlyList<StoredStep> Steps
+    IReadOnlyList<StoredStep> Steps,
+    IReadOnlyList<AttachmentDto> Attachments
 );
 
 // Persisted tool-call / pipeline-step reasoning for an assistant message —
@@ -116,6 +118,7 @@ public sealed class ConversationService
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 ALTER TABLE messages ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]';
+                ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]';
                 CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
                 """);
@@ -222,7 +225,7 @@ public sealed class ConversationService
 
         var messages = new List<StoredMessage>();
         await using (var cmd = conn.CreateCommand("""
-            SELECT id, conversation_id, role, content, sources, trace_id, span_id, created_at, steps
+            SELECT id, conversation_id, role, content, sources, trace_id, span_id, created_at, steps, attachments
             FROM messages
             WHERE conversation_id = $1
             ORDER BY created_at ASC
@@ -236,6 +239,8 @@ public sealed class ConversationService
                 var sources = System.Text.Json.JsonSerializer.Deserialize<List<string>>(sourcesJson) ?? [];
                 var stepsJson = reader.IsDBNull(8) ? "[]" : reader.GetString(8);
                 var steps = System.Text.Json.JsonSerializer.Deserialize<List<StoredStep>>(stepsJson) ?? [];
+                var attachmentsJson = reader.IsDBNull(9) ? "[]" : reader.GetString(9);
+                var attachments = System.Text.Json.JsonSerializer.Deserialize<List<AttachmentDto>>(attachmentsJson) ?? [];
                 messages.Add(new StoredMessage(
                     Id: reader.GetGuid(0).ToString(),
                     ConversationId: reader.GetGuid(1).ToString(),
@@ -245,7 +250,8 @@ public sealed class ConversationService
                     TraceId: reader.IsDBNull(5) ? null : reader.GetString(5),
                     SpanId: reader.IsDBNull(6) ? null : reader.GetString(6),
                     CreatedAt: reader.GetDateTime(7).ToString("o"),
-                    Steps: steps
+                    Steps: steps,
+                    Attachments: attachments
                 ));
             }
         }
@@ -277,13 +283,15 @@ public sealed class ConversationService
     public async Task SaveMessagesAsync(
         string convId, string userQuery, string aiAnswer,
         IReadOnlyList<string> sources, string? traceId, string? spanId,
-        IReadOnlyList<StoredStep>? steps = null)
+        IReadOnlyList<StoredStep>? steps = null,
+        IReadOnlyList<AttachmentDto>? attachments = null)
     {
         if (_ds is null) return;
         try
         {
             var sourcesJson = System.Text.Json.JsonSerializer.Serialize(sources);
             var stepsJson = System.Text.Json.JsonSerializer.Serialize(steps ?? []);
+            var attachmentsJson = System.Text.Json.JsonSerializer.Serialize(attachments ?? []);
             var convGuid = Guid.Parse(convId);
             await using var conn = await _ds.OpenDbmConnectionAsync();
 
@@ -292,9 +300,10 @@ public sealed class ConversationService
             await using var batch = conn.CreateBatch();
 
             var insertUser = conn.CreateBatchCommand(
-                "INSERT INTO messages (conversation_id, role, content, sources) VALUES ($1, 'user', $2, '[]'::jsonb)");
+                "INSERT INTO messages (conversation_id, role, content, sources, attachments) VALUES ($1, 'user', $2, '[]'::jsonb, $3::jsonb)");
             insertUser.Parameters.AddWithValue(convGuid);
             insertUser.Parameters.AddWithValue(userQuery);
+            insertUser.Parameters.AddWithValue(attachmentsJson);
             batch.BatchCommands.Add(insertUser);
 
             var insertAssistant = conn.CreateBatchCommand(

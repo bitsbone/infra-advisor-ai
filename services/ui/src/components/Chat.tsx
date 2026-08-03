@@ -34,6 +34,7 @@ import {
 import { AboutModal } from "./AboutModal";
 import { AdminTab } from "./AdminTab";
 import { AttachmentChip } from "./AttachmentChip";
+import { AttachmentViewerModal } from "./AttachmentViewerModal";
 import { BridgeCard } from "./BridgeCard";
 import { StepKind, StepStatus, ToolDisplayMeta, ToolStepChip } from "./ToolStepChip";
 import { ConversationSidebar } from "./ConversationSidebar";
@@ -608,6 +609,11 @@ export function Chat() {
   const [recording, setRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const uploading = pendingUploads.some((u) => u.status === "uploading");
+  // Attachment currently open in the full-size viewer modal (image/audio) —
+  // null means closed. Set by clicking any "done" AttachmentChip, whether
+  // pending or already sent (including ones reloaded from a persisted
+  // conversation).
+  const [viewingAttachment, setViewingAttachment] = useState<Attachment | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -664,6 +670,7 @@ export function Chat() {
       bridges: [],
       traceId: m.trace_id,
       spanId: m.span_id,
+      attachments: m.attachments,
     }));
     setMessages(loaded);
 
@@ -985,6 +992,7 @@ export function Chat() {
       bridges: [],
       traceId: m.trace_id,
       spanId: m.span_id,
+      attachments: m.attachments,
     }));
     setMessages(loaded);
 
@@ -1271,7 +1279,12 @@ export function Chat() {
                         {msg.role === "user" && msg.attachments && msg.attachments.length > 0 && (
                           <HStack gap={1.5} flexWrap="wrap" mt={2}>
                             {msg.attachments.map((att, j) => (
-                              <AttachmentChip key={j} kind={att.kind} previewUrl={att.url} />
+                              <AttachmentChip
+                                key={j}
+                                kind={att.kind}
+                                previewUrl={att.url}
+                                onClick={() => setViewingAttachment(att)}
+                              />
                             ))}
                           </HStack>
                         )}
@@ -1412,6 +1425,7 @@ export function Chat() {
                       errorMessage={u.errorMessage}
                       onRemove={() => removePendingUpload(u.id)}
                       onRetry={u.status === "error" ? () => retryPendingUpload(u.id) : undefined}
+                      onClick={u.status === "done" && u.attachment ? () => setViewingAttachment(u.attachment!) : undefined}
                     />
                   ))}
                 </HStack>
@@ -1512,6 +1526,7 @@ export function Chat() {
           </Box>
         </Flex>
       </Flex>
+      <AttachmentViewerModal attachment={viewingAttachment} onClose={() => setViewingAttachment(null)} />
     </Flex>
   );
 }

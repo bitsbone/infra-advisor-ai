@@ -9,12 +9,18 @@ interface AttachmentChipProps {
   errorMessage?: string;
   onRemove?: () => void;
   onRetry?: () => void;
+  /** When set (and status is "done"), the chip becomes clickable — opens
+   * the full-size image viewer / audio player (AttachmentViewerModal). */
+  onClick?: () => void;
 }
 
 /** Small chip showing an image thumbnail or an audio icon — used both for
  * attachments pending in the compose box (with upload status) and for
  * attachments already sent on a rendered message (status omitted = "done"). */
-export function AttachmentChip({ kind, previewUrl, status = "done", errorMessage, onRemove, onRetry }: AttachmentChipProps) {
+export function AttachmentChip({
+  kind, previewUrl, status = "done", errorMessage, onRemove, onRetry, onClick,
+}: AttachmentChipProps) {
+  const clickable = status === "done" && !!onClick;
   return (
     <HStack
       gap={1.5}
@@ -23,6 +29,9 @@ export function AttachmentChip({ kind, previewUrl, status = "done", errorMessage
       px={2}
       py={1}
       fontSize="xs"
+      cursor={clickable ? "pointer" : undefined}
+      _hover={clickable ? { bg: "blackAlpha.200" } : undefined}
+      onClick={clickable ? onClick : undefined}
       data-testid="attachment-chip"
       data-status={status}
     >
@@ -46,7 +55,12 @@ export function AttachmentChip({ kind, previewUrl, status = "done", errorMessage
         </IconButton>
       )}
       {onRemove && (
-        <IconButton aria-label="Remove attachment" size="2xs" variant="ghost" onClick={onRemove}>
+        <IconButton
+          aria-label="Remove attachment"
+          size="2xs"
+          variant="ghost"
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+        >
           <X size={12} />
         </IconButton>
       )}

@@ -478,6 +478,7 @@ export interface ConversationMessage {
   content: string;
   sources: string[];
   steps?: StoredStepDto[];
+  attachments?: Attachment[];
   trace_id: string | null;
   span_id: string | null;
   created_at: string;
