@@ -5,8 +5,14 @@ on:
     branches: [main]
     paths:
       # Only trigger when service code or this workflow changes.
-      # README, docs/, infra/, .claude/ etc. never trigger a build.
+      # README, docs/, infra/, .claude/ etc. never trigger a build — except
+      # the ACA agentic POC's own Bicep module, since that app deploys via
+      # `az deployment sub create`, not `kubectl`, so infra-only changes
+      # (env vars, secrets wiring) need to trigger a redeploy too, not just
+      # app-code changes. Deliberately narrow (not all of infra/bicep/**) so
+      # unrelated infra changes (e.g. AKS node count) don't trigger this.
       - 'services/**'
+      - 'infra/bicep/modules/aca-agentic-poc.bicep'
       - '.github/workflows/build-push.yml'
   workflow_dispatch: # manual full rebuild — always builds all services
 
@@ -31,6 +37,7 @@ jobs:
       airflow:            ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.airflow == 'true' }}
       datadog:            ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.datadog == 'true' }}
       aca-agentic-poc-dotnet: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.aca-agentic-poc-dotnet == 'true' }}
+      aca-bicep:          ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.aca-bicep == 'true' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -66,6 +73,8 @@ jobs:
               - 'datadog/datadog-agent.yaml'
             aca-agentic-poc-dotnet:
               - 'services/aca-agentic-poc-dotnet/**'
+            aca-bicep:
+              - 'infra/bicep/modules/aca-agentic-poc.bicep'
 
   # ── Build and push each changed service ────────────────────────────────────
   build:
@@ -188,9 +197,8 @@ jobs:
     # load-generator is a CronJob — it picks up :latest on its next scheduled run.
     # aca-agentic-poc-dotnet is DELIBERATELY excluded — it deploys to Azure
     # Container Apps (see infra/bicep/modules/aca-agentic-poc.bicep), not AKS,
-    # so there's no `kubectl set image` step for it here. Rolling out a new
-    # image to its two Container Apps is a separate `az containerapp update`
-    # step, not wired into CI yet (this is a POC, not a permanent service).
+    # so there's no `kubectl set image` step for it here. See the deploy-aca
+    # job below for its actual deploy path (az deployment sub create).
     if: |
       github.ref == 'refs/heads/main' && (
         needs.changes.outputs.mcp-server        == 'true' ||
@@ -304,6 +312,48 @@ jobs:
           for pid in "${pids[@]:-}"; do
             wait "$pid" || true
           done
+
+  # ── ACA agentic POC deploy (Azure Container Apps, not AKS) ─────────────────
+  deploy-aca:
+    needs: [changes, build]
+    runs-on: ubuntu-latest
+    if: |
+      github.ref == 'refs/heads/main' && (
+        needs.changes.outputs.aca-agentic-poc-dotnet == 'true' ||
+        needs.changes.outputs.aca-bicep == 'true'
+      )
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy ACA agentic POC
+        # acaContainerImage/acaRevisionSuffix are left at their Bicep
+        # defaults — :latest (just pushed by the build job above) and a
+        # fresh utcNow() timestamp respectively. The suffix is what actually
+        # forces a new revision each run; without it ACA sees no diff in
+        # the container template (same :latest string every time) and
+        # silently skips creating one (confirmed this session).
+        run: |
+          az deployment sub create \
+            --location eastus \
+            --template-file infra/bicep/main.bicep \
+            --parameters infra/bicep/parameters/dev.bicepparam \
+            --parameters deployAcaAgenticPoc=true \
+            --parameters acaRegistryUsername="${{ github.actor }}" \
+            --parameters acaRegistryPassword="${{ secrets.GHCR_PAT }}" \
+            --parameters acaOpenAiApiKey="${{ secrets.AZURE_OPENAI_API_KEY }}" \
+            --parameters acaDatadogApiKey="${{ secrets.DD_API_KEY }}" \
+            --parameters acaUiUsername="${{ secrets.ACA_UI_USERNAME }}" \
+            --parameters acaUiPassword="${{ secrets.ACA_UI_PASSWORD }}" \
+            --parameters acaDdRumApplicationId="${{ secrets.VITE_DD_RUM_APP_ID }}" \
+            --parameters acaDdRumClientToken="${{ secrets.VITE_DD_RUM_CLIENT_TOKEN }}" \
+            --parameters acaDdRumSite="${{ secrets.VITE_DD_RUM_SITE }}"
 
   # ── Airflow Helm upgrade (values.yaml or ingestion DAG changes) ─────────────
   upgrade-airflow:
