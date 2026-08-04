@@ -40,7 +40,17 @@
         trackResources: true,
         trackLongTasks: true,
         defaultPrivacyLevel: "mask-user-input",
-        allowedTracingUrls: [(url) => url.includes(window.location.origin)],
+        // propagatorTypes defaults to ["datadog"] (x-datadog-trace-id etc.)
+        // if unspecified — the backend here is pure OpenTelemetry with no
+        // dd-trace-dotnet, so its ASP.NET Core instrumentation only reads
+        // the OTel SDK's default W3C traceparent/tracestate headers.
+        // Without "tracecontext" here, RUM and APM would never link up.
+        allowedTracingUrls: [
+          {
+            match: (url) => url.includes(window.location.origin),
+            propagatorTypes: ["tracecontext"],
+          },
+        ],
       });
       window.DD_RUM.startSessionReplayRecording();
     }
