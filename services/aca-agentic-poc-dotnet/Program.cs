@@ -24,12 +24,20 @@ var builder = WebApplication.CreateBuilder(args);
 
 TelemetrySetup.Configure(builder);
 
-// ── Agent: one Azure OpenAI chat client + exactly one trivial tool ─────────
+// ── Agent: one Azure OpenAI chat client + two trivial tools ────────────────
 // Deliberately minimal — no MCP, no Redis-backed session, no tool refresh
 // machinery. This app exists to demonstrate the OTel span tree
 // (invoke_agent → execute_tool → chat), not to be a real product surface.
+// Two tools (not one) so multi-tool-call span trees can be exercised.
 [Description("Returns the current UTC date and time. Use this whenever the user asks what time or date it is.")]
 static string GetCurrentTimeUtc() => DateTimeOffset.UtcNow.ToString("u");
+
+// Stub, not a real search provider — this POC has no search API key wired
+// up. Good enough to exercise a second execute_tool span for testing.
+[Description("Searches the web for the given query. Use this whenever the user asks to look something up or search for information.")]
+static string SearchWeb(string query) =>
+    $"[stub search result] No live search provider is configured for this demo. " +
+    $"Query received: \"{query}\".";
 
 var chatClient = new AzureOpenAIClient(new Uri(azureEndpoint), new AzureKeyCredential(azureApiKey))
     .GetChatClient(azureDeployment)
@@ -47,8 +55,9 @@ var agent = new ChatClientAgent(
             ChatOptions = new ChatOptions
             {
                 Instructions = "You are a minimal demo agent. Answer concisely. " +
-                    "Use the get_current_time_utc tool whenever the user asks about the current time or date.",
-                Tools = [AIFunctionFactory.Create(GetCurrentTimeUtc)],
+                    "Use the get_current_time_utc tool whenever the user asks about the current time or date. " +
+                    "Use the search_web tool whenever the user asks to look something up or search for information.",
+                Tools = [AIFunctionFactory.Create(GetCurrentTimeUtc), AIFunctionFactory.Create(SearchWeb)],
             },
         })
     .AsBuilder()

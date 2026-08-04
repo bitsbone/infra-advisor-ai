@@ -16,35 +16,19 @@
 </head>
 <body>
   <h1>ACA Agentic POC</h1>
-  <p id="status">Ask the agent something — it has one tool: current UTC time.</p>
+  <p id="status">Ask the agent something — it can check the current UTC time or search the web.</p>
   <form id="chat-form">
     <input type="text" id="query" placeholder="What time is it?" autocomplete="off" required />
     <button type="submit">Send</button>
   </form>
   <div id="answer"></div>
 
-  <script src="/rum-config.js"></script>
-  <script src="https://www.datadoghq-browser-agent.com/datadog-rum.js"></script>
+  <!-- Chat handling lives in its own script, independent of RUM below, so a
+       RUM load/init failure can never break the chat UI (this bit us once:
+       an old blocking <script src> + inline init in one block meant an
+       uncaught RUM error aborted the form listener setup too, silently
+       falling back to a native form POST/page-reload). -->
   <script>
-    if (window.DD_RUM_CONFIG && window.DD_RUM) {
-      window.DD_RUM.init({
-        applicationId: window.DD_RUM_CONFIG.applicationId,
-        clientToken: window.DD_RUM_CONFIG.clientToken,
-        site: window.DD_RUM_CONFIG.site,
-        service: window.DD_RUM_CONFIG.service,
-        env: window.DD_RUM_CONFIG.env,
-        version: window.DD_RUM_CONFIG.version,
-        sessionSampleRate: 100,
-        sessionReplaySampleRate: 100,
-        trackUserInteractions: true,
-        trackResources: true,
-        trackLongTasks: true,
-        defaultPrivacyLevel: "mask-user-input",
-        allowedTracingUrls: [(url) => url.includes(window.location.origin)],
-      });
-      window.DD_RUM.startSessionReplayRecording();
-    }
-
     const form = document.getElementById("chat-form");
     const answerEl = document.getElementById("answer");
     const statusEl = document.getElementById("status");
@@ -67,6 +51,33 @@
       } catch (err) {
         statusEl.textContent = "Error: " + err.message;
       }
+    });
+  </script>
+
+  <script src="/rum-config.js"></script>
+  <script>
+    (function(h,o,u,n,d) {
+      h=h[d]=h[d]||{q:[],onReady:function(c){h.q.push(c)}}
+      d=o.createElement(u);d.async=1;d.src=n;d.crossOrigin=''
+      n=o.getElementsByTagName(u)[0];n.parentNode.insertBefore(d,n)
+    })(window,document,'script','https://www.datadoghq-browser-agent.com/us3/v7/datadog-rum.js','DD_RUM')
+    window.DD_RUM.onReady(function() {
+      if (!window.DD_RUM_CONFIG) return;
+      window.DD_RUM.init({
+        applicationId: window.DD_RUM_CONFIG.applicationId,
+        clientToken: window.DD_RUM_CONFIG.clientToken,
+        site: window.DD_RUM_CONFIG.site,
+        service: window.DD_RUM_CONFIG.service,
+        env: window.DD_RUM_CONFIG.env,
+        version: window.DD_RUM_CONFIG.version,
+        sessionSampleRate: 100,
+        sessionReplaySampleRate: 100,
+        trackResources: true,
+        trackUserInteractions: true,
+        trackLongTasks: true,
+        defaultPrivacyLevel: "mask-user-input",
+        allowedTracingUrls: [window.location.origin],
+      });
     });
   </script>
 </body>
