@@ -229,6 +229,12 @@ resource sidecarApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
             // points straight at the datadog-sidecar container below over
             // localhost (same revision, same network namespace).
             { name: 'OTEL_EXPORTER_OTLP_ENDPOINT', value: 'http://localhost:4318' }
+            // .NET's OTLP exporter defaults to protocol=grpc when this is
+            // unset (OTel spec default) — without this, the exporter would
+            // try to gRPC-handshake against the sidecar's HTTP/protobuf
+            // receiver on :4318 and fail silently (batch exporter swallows
+            // the error; nothing shows up in console logs or Datadog).
+            { name: 'OTEL_EXPORTER_OTLP_PROTOCOL', value: 'http/protobuf' }
             { name: 'OTEL_SERVICE_NAME', value: sidecarAppName }
             { name: 'DD_ENV', value: environment }
             { name: 'DD_VERSION', value: 'latest' }

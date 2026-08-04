@@ -11,21 +11,22 @@ namespace AcaAgenticPoc.Observability;
 // way: this app is deployed twice, side by side, comparing two different
 // OTel-to-Datadog paths (see infra/bicep/modules/aca-agentic-poc.bicep):
 //
-//   - aca-agentic-poc-managed: ACA's platform-managed OTel agent auto-injects
-//     OTEL_EXPORTER_OTLP_ENDPOINT (gRPC-only, no path suffix).
+//   - aca-agentic-poc-managed: ACA's platform-managed OTel agent does NOT
+//     inject the standard OTEL_EXPORTER_OTLP_ENDPOINT — verified empirically
+//     against a live deployment (az containerapp exec + `export` inside the
+//     container). It instead injects Azure-specific per-signal vars
+//     (CONTAINERAPP_OTEL_TRACING_GRPC_ENDPOINT,
+//     CONTAINERAPP_OTEL_METRIC_GRPC_ENDPOINT), which standard OTel SDKs have
+//     no built-in knowledge of.
 //   - aca-agentic-poc-sidecar: Bicep explicitly sets
 //     OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 (HTTP/protobuf,
 //     the datadog-sidecar container's OTLP receiver).
 //
-// Since the exact same container image runs both, the exporter must pick its
-// protocol/endpoint from environment variables at the OTel SDK level rather
-// than a hardcoded choice — calling AddOtlpExporter() with NO configuration
-// delegate lets the SDK read OTEL_EXPORTER_OTLP_ENDPOINT/_PROTOCOL/_HEADERS
-// directly per the OpenTelemetry spec, instead of this app assuming one
-// protocol or manually appending a signal-specific path suffix the way
-// agent-api-dotnet's TelemetrySetup.cs does (that service only ever talks to
-// one destination, so it can hardcode HttpProtobuf + explicit /v1/traces —
-// this app can't make that assumption).
+// Since the exact same container image runs both, Configure() below prefers
+// the standard OTEL_EXPORTER_OTLP_ENDPOINT when explicitly set (the sidecar
+// path always sets it), and falls back to the Azure-specific
+// CONTAINERAPP_OTEL_*_GRPC_ENDPOINT vars otherwise (only present/needed for
+// the managed path) — one shared code path, no per-deployment branching.
 public static class TelemetrySetup
 {
     // Passed to Microsoft.Agents.AI's .UseOpenTelemetry(sourceName:) call on
@@ -39,6 +40,13 @@ public static class TelemetrySetup
             ?? "aca-agentic-poc-dotnet";
         var ddEnv = Environment.GetEnvironmentVariable("DD_ENV") ?? "dev";
         var ddVersion = Environment.GetEnvironmentVariable("DD_VERSION") ?? "latest";
+
+        // See class doc comment above for why this fallback exists.
+        var explicitOtlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
+        var tracesEndpoint = explicitOtlpEndpoint
+            ?? Environment.GetEnvironmentVariable("CONTAINERAPP_OTEL_TRACING_GRPC_ENDPOINT");
+        var metricsEndpoint = explicitOtlpEndpoint
+            ?? Environment.GetEnvironmentVariable("CONTAINERAPP_OTEL_METRIC_GRPC_ENDPOINT");
 
         builder.Services.AddOpenTelemetry()
             .ConfigureResource(r => r
@@ -58,18 +66,22 @@ public static class TelemetrySetup
                 .AddSource("Experimental.Microsoft.Extensions.AI")
                 .AddSource(ActivitySourceName)
                 .SetSampler(new AlwaysOnSampler())
-                // No configure delegate — see class doc comment. Reads
-                // OTEL_EXPORTER_OTLP_ENDPOINT / _PROTOCOL / _HEADERS from
-                // the environment per the OTel spec.
-                .AddOtlpExporter())
+                .AddOtlpExporter(o =>
+                {
+                    if (tracesEndpoint is not null) o.Endpoint = new Uri(tracesEndpoint);
+                }))
             .WithMetrics(metrics => metrics
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
-                .AddOtlpExporter());
+                .AddOtlpExporter(o =>
+                {
+                    if (metricsEndpoint is not null) o.Endpoint = new Uri(metricsEndpoint);
+                }));
 
         Console.WriteLine(
             "[otel] tracing sources: AspNetCore, Http, " +
             "Experimental.Microsoft.Extensions.AI, " + ActivitySourceName +
-            " | exporter endpoint/protocol read from OTEL_EXPORTER_OTLP_* env vars");
+            " | traces endpoint: " + (tracesEndpoint ?? "(SDK default)") +
+            " | metrics endpoint: " + (metricsEndpoint ?? "(SDK default)"));
     }
 }

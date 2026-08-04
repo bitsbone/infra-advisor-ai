@@ -39,6 +39,9 @@ param aksNodeVmSize string = 'Standard_D2s_v3'
 // add these to a .bicepparam file.
 // ---------------------------------------------------------------------------
 
+@description('Azure region for the ACA agentic POC — deliberately separate from the shared `location` param. Azure Container Apps Consumption-plan environments run on hidden, Microsoft-managed AKS capacity; eastus (this repo\'s default region) returned AKSCapacityHeavyUsage on first deploy attempt, so this POC defaults to eastus2 instead, same mitigation Azure\'s own error message suggests ("consider creating new AKS clusters in a different region") — same reasoning as azure-openai.bicep\'s separate whisper account/region.')
+param acaLocation string = 'eastus2'
+
 @description('Container image reference for the ACA agentic POC apps (services/aca-agentic-poc-dotnet) — build and push before deploying')
 param acaContainerImage string = ''
 
@@ -188,7 +191,7 @@ module acaAgenticPoc 'modules/aca-agentic-poc.bicep' = if (deployAcaAgenticPoc) 
   name: 'deploy-aca-agentic-poc'
   scope: resourceGroup
   params: {
-    location: location
+    location: acaLocation
     environment: environment
     openAiEndpoint: openAi.outputs.endpoint
     openAiApiKey: acaOpenAiApiKey
