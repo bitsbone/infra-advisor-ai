@@ -63,7 +63,26 @@ param acaDatadogApiKey string = ''
 @description('Datadog site for the ACA agentic POC apps')
 param acaDatadogSite string = 'us3.datadoghq.com'
 
-@description('Deploy the ACA agentic POC module — false by default so a routine `make deploy-infra` run does not require the four secrets above; set true (and pass the secrets) explicitly when actually deploying this POC')
+@description('Basic Auth username gating the ACA agentic POC demo UI — pass via CLI --parameters, never commit')
+@secure()
+param acaUiUsername string = ''
+
+@description('Basic Auth password gating the ACA agentic POC demo UI — pass via CLI --parameters, never commit')
+@secure()
+param acaUiPassword string = ''
+
+@description('Datadog RUM Application ID for the ACA agentic POC demo UI — reuses the same RUM Application as services/ui. Pass via CLI --parameters, never commit')
+@secure()
+param acaDdRumApplicationId string = ''
+
+@description('Datadog RUM Client Token for the ACA agentic POC demo UI — see acaDdRumApplicationId. Pass via CLI --parameters, never commit')
+@secure()
+param acaDdRumClientToken string = ''
+
+@description('Datadog RUM site for the ACA agentic POC demo UI')
+param acaDdRumSite string = 'us3.datadoghq.com'
+
+@description('Deploy the ACA agentic POC module — false by default so a routine `make deploy-infra` run does not require the secrets above; set true (and pass the secrets) explicitly when actually deploying this POC')
 param deployAcaAgenticPoc bool = false
 
 // ---------------------------------------------------------------------------
@@ -202,6 +221,11 @@ module acaAgenticPoc 'modules/aca-agentic-poc.bicep' = if (deployAcaAgenticPoc) 
     registryPassword: acaRegistryPassword
     datadogApiKey: acaDatadogApiKey
     datadogSite: acaDatadogSite
+    uiUsername: acaUiUsername
+    uiPassword: acaUiPassword
+    ddRumApplicationId: acaDdRumApplicationId
+    ddRumClientToken: acaDdRumClientToken
+    ddRumSite: acaDdRumSite
   }
 }
 

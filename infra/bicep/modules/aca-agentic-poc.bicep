@@ -76,6 +76,25 @@ param datadogApiKey string
 @description('Datadog site, e.g. us3.datadoghq.com — match this repo\'s existing DD_SITE value')
 param datadogSite string = 'us3.datadoghq.com'
 
+@description('Basic Auth username gating the demo UI on both Container Apps — pass at deploy time, never commit')
+@secure()
+param uiUsername string
+
+@description('Basic Auth password gating the demo UI on both Container Apps — pass at deploy time, never commit')
+@secure()
+param uiPassword string
+
+@description('Datadog RUM Application ID — reuses the SAME RUM Application as services/ui (infra-advisor-ui), just with a distinct `service` tag per app (set in-app from OTEL_SERVICE_NAME). Pass at deploy time, never commit.')
+@secure()
+param ddRumApplicationId string
+
+@description('Datadog RUM Client Token — see ddRumApplicationId. Pass at deploy time, never commit.')
+@secure()
+param ddRumClientToken string
+
+@description('Datadog RUM site, e.g. us3.datadoghq.com')
+param ddRumSite string = 'us3.datadoghq.com'
+
 var envName = 'cae-agentic-poc-${environment}'
 var managedAppName = 'aca-agentic-poc-managed'
 var sidecarAppName = 'aca-agentic-poc-sidecar'
@@ -146,6 +165,10 @@ resource managedApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
       secrets: [
         { name: 'registry-password', value: registryPassword }
         { name: 'openai-api-key', value: openAiApiKey }
+        { name: 'ui-username', value: uiUsername }
+        { name: 'ui-password', value: uiPassword }
+        { name: 'dd-rum-application-id', value: ddRumApplicationId }
+        { name: 'dd-rum-client-token', value: ddRumClientToken }
       ]
     }
     template: {
@@ -173,6 +196,11 @@ resource managedApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'OTEL_EXPORTER_OTLP_PROTOCOL', value: 'grpc' } // managed agent is gRPC-only
             { name: 'DD_ENV', value: environment }
             { name: 'DD_VERSION', value: 'latest' }
+            { name: 'POC_UI_USERNAME', secretRef: 'ui-username' }
+            { name: 'POC_UI_PASSWORD', secretRef: 'ui-password' }
+            { name: 'DD_RUM_APPLICATION_ID', secretRef: 'dd-rum-application-id' }
+            { name: 'DD_RUM_CLIENT_TOKEN', secretRef: 'dd-rum-client-token' }
+            { name: 'DD_RUM_SITE', value: ddRumSite }
           ]
         }
       ]
@@ -209,6 +237,10 @@ resource sidecarApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
         { name: 'registry-password', value: registryPassword }
         { name: 'openai-api-key', value: openAiApiKey }
         { name: 'datadog-api-key', value: datadogApiKey }
+        { name: 'ui-username', value: uiUsername }
+        { name: 'ui-password', value: uiPassword }
+        { name: 'dd-rum-application-id', value: ddRumApplicationId }
+        { name: 'dd-rum-client-token', value: ddRumClientToken }
       ]
     }
     template: {
@@ -238,6 +270,11 @@ resource sidecarApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'OTEL_SERVICE_NAME', value: sidecarAppName }
             { name: 'DD_ENV', value: environment }
             { name: 'DD_VERSION', value: 'latest' }
+            { name: 'POC_UI_USERNAME', secretRef: 'ui-username' }
+            { name: 'POC_UI_PASSWORD', secretRef: 'ui-password' }
+            { name: 'DD_RUM_APPLICATION_ID', secretRef: 'dd-rum-application-id' }
+            { name: 'DD_RUM_CLIENT_TOKEN', secretRef: 'dd-rum-client-token' }
+            { name: 'DD_RUM_SITE', value: ddRumSite }
           ]
         }
         {

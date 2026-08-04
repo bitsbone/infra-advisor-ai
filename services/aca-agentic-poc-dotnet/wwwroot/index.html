@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>ACA Agentic POC</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.25rem; }
+  form { display: flex; gap: 0.5rem; margin: 1.5rem 0; }
+  input[type=text] { flex: 1; padding: 0.5rem; font-size: 1rem; }
+  button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
+  #answer { white-space: pre-wrap; padding: 1rem; background: #f4f4f4; border-radius: 4px; min-height: 2rem; }
+  #status { color: #666; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+  <h1>ACA Agentic POC</h1>
+  <p id="status">Ask the agent something — it has one tool: current UTC time.</p>
+  <form id="chat-form">
+    <input type="text" id="query" placeholder="What time is it?" autocomplete="off" required />
+    <button type="submit">Send</button>
+  </form>
+  <div id="answer"></div>
+
+  <script src="/rum-config.js"></script>
+  <script src="https://www.datadoghq-browser-agent.com/datadog-rum.js"></script>
+  <script>
+    if (window.DD_RUM_CONFIG && window.DD_RUM) {
+      window.DD_RUM.init({
+        applicationId: window.DD_RUM_CONFIG.applicationId,
+        clientToken: window.DD_RUM_CONFIG.clientToken,
+        site: window.DD_RUM_CONFIG.site,
+        service: window.DD_RUM_CONFIG.service,
+        env: window.DD_RUM_CONFIG.env,
+        version: window.DD_RUM_CONFIG.version,
+        sessionSampleRate: 100,
+        sessionReplaySampleRate: 100,
+        trackUserInteractions: true,
+        trackResources: true,
+        trackLongTasks: true,
+        defaultPrivacyLevel: "mask-user-input",
+        allowedTracingUrls: [(url) => url.includes(window.location.origin)],
+      });
+      window.DD_RUM.startSessionReplayRecording();
+    }
+
+    const form = document.getElementById("chat-form");
+    const answerEl = document.getElementById("answer");
+    const statusEl = document.getElementById("status");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const query = document.getElementById("query").value;
+      statusEl.textContent = "Thinking...";
+      answerEl.textContent = "";
+      try {
+        const res = await fetch("/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        answerEl.textContent = data.answer;
+        statusEl.textContent = "";
+      } catch (err) {
+        statusEl.textContent = "Error: " + err.message;
+      }
+    });
+  </script>
+</body>
+</html>
