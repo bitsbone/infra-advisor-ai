@@ -12,6 +12,8 @@
   button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
   #answer { white-space: pre-wrap; padding: 1rem; background: #f4f4f4; border-radius: 4px; min-height: 2rem; }
   #status { color: #666; font-size: 0.9rem; }
+  #trace-link { display: inline-flex; align-items: center; gap: 0.35rem; margin-top: 0.75rem; font-size: 0.85rem; color: #632ca6; text-decoration: none; }
+  #trace-link:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -22,6 +24,14 @@
     <button type="submit">Send</button>
   </form>
   <div id="answer"></div>
+  <a id="trace-link" href="#" target="_blank" rel="noopener" style="display: none;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+    View APM trace
+  </a>
 
   <!-- Chat handling lives in its own script, independent of RUM below, so a
        RUM load/init failure can never break the chat UI (this bit us once:
@@ -32,12 +42,14 @@
     const form = document.getElementById("chat-form");
     const answerEl = document.getElementById("answer");
     const statusEl = document.getElementById("status");
+    const traceLinkEl = document.getElementById("trace-link");
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const query = document.getElementById("query").value;
       statusEl.textContent = "Thinking...";
       answerEl.textContent = "";
+      traceLinkEl.style.display = "none";
       try {
         const res = await fetch("/run", {
           method: "POST",
@@ -48,6 +60,10 @@
         const data = await res.json();
         answerEl.textContent = data.answer;
         statusEl.textContent = "";
+        if (data.traceUrl) {
+          traceLinkEl.href = data.traceUrl;
+          traceLinkEl.style.display = "inline-flex";
+        }
       } catch (err) {
         statusEl.textContent = "Error: " + err.message;
       }

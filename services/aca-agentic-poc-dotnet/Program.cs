@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
 using AcaAgenticPoc.Observability;
 using Azure;
@@ -125,10 +126,20 @@ app.MapGet("/rum-config.js", () =>
 app.MapPost("/run", async (RunRequest body, CancellationToken ct) =>
 {
     var response = await agent.RunAsync(body.Query, cancellationToken: ct);
-    return Results.Ok(new RunResponse(response.Text ?? ""));
+
+    // Activity.Current here is the ASP.NET Core instrumentation's root span
+    // for this request — its TraceId is the same 128-bit W3C trace ID Datadog
+    // indexes for OTel-sourced spans, so it's directly usable in an APM
+    // trace URL (Datadog accepts the hex W3C trace ID, not just its own
+    // 64-bit format, for traces ingested via OTLP).
+    var traceId = Activity.Current?.TraceId.ToHexString();
+    var site = EnvOr("DD_RUM_SITE", "us3.datadoghq.com");
+    var traceUrl = traceId is not null ? $"https://{site}/apm/trace/{traceId}" : null;
+
+    return Results.Ok(new RunResponse(response.Text ?? "", traceId, traceUrl));
 });
 
 app.Run();
 
 record RunRequest(string Query);
-record RunResponse(string Answer);
+record RunResponse(string Answer, string? TraceId, string? TraceUrl);

@@ -299,6 +299,13 @@ resource sidecarApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT', value: '0.0.0.0:4317' }
             { name: 'DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT', value: '0.0.0.0:4318' }
             { name: 'DD_OTLP_CONFIG_TRACES_ENABLED', value: 'true' }
+            // Datadog Agent 7.61.0+ has a known Docker-runtime issue where
+            // the OTLP pipeline fails to start ("failed to register process
+            // metrics: process does not exist") unless HOST_PROC is set —
+            // ACA containers run on a containerd/K8s-like runtime with
+            // similar /proc-mount behavior to Docker, and this may explain
+            // the intermittent/missing traces observed from this app.
+            { name: 'HOST_PROC', value: '/proc' }
           ]
         }
       ]
