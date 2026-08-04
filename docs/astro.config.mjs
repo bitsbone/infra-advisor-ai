@@ -129,6 +129,7 @@ export default defineConfig({
                     { label: 'System Overview', slug: 'architecture/overview' },
                     { label: 'Data Flow', slug: 'architecture/data-flow' },
                     { label: 'Azure Infrastructure', slug: 'architecture/infrastructure' },
+                    { label: 'OTel on ACA: Managed vs. Sidecar', slug: 'architecture/aca-otel-datadog' },
                 ],
             },
             {
