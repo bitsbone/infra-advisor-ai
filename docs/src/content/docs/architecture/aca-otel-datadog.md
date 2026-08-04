@@ -3,7 +3,7 @@ title: "OTel on Azure Container Apps: Managed Agent vs. Datadog Sidecar"
 description: A working, verified reference for instrumenting a .NET agentic app on ACA with OpenTelemetry and Datadog, covering both integration paths and the real bugs each one hides.
 ---
 
-This is a reference for anyone wiring OpenTelemetry into a .NET app on Azure Container Apps (ACA) with Datadog as the backend. It's derived from a live, working proof-of-concept in this repo (`services/aca-agentic-poc-dotnet/`, deployed as `aca-agentic-poc-managed` and `aca-agentic-poc-sidecar` — see [Azure Infrastructure](/architecture/infrastructure/#aca-agentic-poc-aca-agentic-pocbicep) for the Bicep/deployment side). Both paths are confirmed producing full trace trees in Datadog, including the specific bugs that silently broke each one and how they were found.
+This is a reference for anyone wiring OpenTelemetry into a .NET app on Azure Container Apps (ACA) with Datadog as the backend. It's derived from a live, working proof-of-concept in this repo ([`services/aca-agentic-poc-dotnet/`](https://github.com/kyletaylored/infra-advisor-ai/tree/main/services/aca-agentic-poc-dotnet), deployed as `aca-agentic-poc-managed` and `aca-agentic-poc-sidecar` — see [Azure Infrastructure](/architecture/infrastructure/#aca-agentic-poc-aca-agentic-pocbicep) for the Bicep/deployment side). Both paths are confirmed producing full trace trees in Datadog, including the specific bugs that silently broke each one and how they were found.
 
 **TL;DR**: both paths work, but the sidecar path is more reliable and far easier to debug. If you just need something working today, start there.
 
@@ -23,7 +23,7 @@ If you're deciding which to implement: the sidecar path is [Datadog's documented
 
 ## Path 1: the managed OpenTelemetry agent
 
-Enabled once per Container Apps Environment in Bicep:
+Enabled once per Container Apps Environment in Bicep ([full module](https://github.com/kyletaylored/infra-advisor-ai/blob/main/infra/bicep/modules/aca-agentic-poc.bicep)):
 
 ```bicep
 properties: {
@@ -64,7 +64,7 @@ This failed **silently** in every other diagnostic surface (console, `az contain
 
 ## Path 2: the Datadog serverless-init sidecar
 
-A second container in the same revision, with its OTLP receiver enabled the same way you'd enable it on any Datadog Agent:
+A second container in the same revision, with its OTLP receiver enabled the same way you'd enable it on any Datadog Agent ([full module](https://github.com/kyletaylored/infra-advisor-ai/blob/main/infra/bicep/modules/aca-agentic-poc.bicep)):
 
 ```bicep
 {
@@ -126,7 +126,7 @@ static string? NormalizeEndpoint(string? endpoint, bool isGrpc, string httpPathS
 }
 ```
 
-Full working version: `services/aca-agentic-poc-dotnet/Observability/TelemetrySetup.cs`.
+Full working version: [`TelemetrySetup.cs`](https://github.com/kyletaylored/infra-advisor-ai/blob/main/services/aca-agentic-poc-dotnet/Observability/TelemetrySetup.cs).
 
 ## Debugging OTel export failures
 
@@ -161,7 +161,7 @@ if (Environment.GetEnvironmentVariable("OTEL_TRACE_DEBUG") == "true")
     _diagnosticsListener = new OtelDiagnosticsListener();
 ```
 
-This is what actually found both bugs above — `az containerapp logs show` immediately surfaced `ExportFailure`/`HttpRequestFailed` events with exact status codes and messages, in both cases within seconds of a test request. Full version: `services/aca-agentic-poc-dotnet/Observability/OtelDiagnosticsListener.cs`.
+This is what actually found both bugs above — `az containerapp logs show` immediately surfaced `ExportFailure`/`HttpRequestFailed` events with exact status codes and messages, in both cases within seconds of a test request. Full version: [`OtelDiagnosticsListener.cs`](https://github.com/kyletaylored/infra-advisor-ai/blob/main/services/aca-agentic-poc-dotnet/Observability/OtelDiagnosticsListener.cs).
 
 ## RUM → APM trace correlation
 
@@ -186,15 +186,18 @@ Datadog accepts the 32-character hex W3C trace ID directly in `/apm/trace/<id>` 
 
 - **`:latest` tag + revision suffix.** If you pin the Container App's image to a fixed `:latest` tag for simplicity, `az containerapp update --image ...:latest` (same string every time) does **not** reliably create a new revision — ACA sees no diff in the container template and skips it, silently leaving the old image running even after a new one is pushed. Force a new revision every deploy with a changing `revisionSuffix` (a Bicep param defaulting to `utcNow('yyyyMMddHHmmss')` works well for this).
 - **`HOST_PROC=/proc` on the sidecar.** Datadog Agent 7.61.0+ has a known Docker-runtime issue where the OTLP pipeline fails to start (`failed to register process metrics: process does not exist`) unless this is set. ACA's containerd/Kubernetes-like runtime has similar `/proc`-mount behavior to Docker, so this is a cheap hedge worth setting proactively.
-- **Empty-poll or other high-frequency background work.** Not ACA-specific, but worth flagging alongside this: if your app has a polling loop (Kafka, queue consumers, health checks), check whether your tracing library has a knob to suppress spans for no-op iterations before it floods your trace volume — e.g. ddtrace's Kafka integration defaults to tracing every `poll()` call including empty ones (`DD_KAFKA_EMPTY_POLL_ENABLED`, default `true`).
+- **Empty-poll or other high-frequency background work.** Not ACA-specific, but worth flagging alongside this: if your app has a polling loop (Kafka, queue consumers, health checks), check whether your tracing library has a knob to suppress spans for no-op iterations before it floods your trace volume — e.g. ddtrace's Kafka integration defaults to tracing every `poll()` call including empty ones (`DD_KAFKA_EMPTY_POLL_ENABLED`, default `true`; see this repo's [`k8s/agent-api/configmap.yaml`](https://github.com/kyletaylored/infra-advisor-ai/blob/main/k8s/agent-api/configmap.yaml) for a real fix).
 
 ## Working example
 
 The full source for both paths is in this repo:
 
-- `infra/bicep/modules/aca-agentic-poc.bicep` — both Container Apps, the shared environment, secrets wiring
-- `services/aca-agentic-poc-dotnet/Observability/TelemetrySetup.cs` — the endpoint-normalization logic
-- `services/aca-agentic-poc-dotnet/Observability/OtelDiagnosticsListener.cs` — the stdout diagnostics bridge
-- `services/aca-agentic-poc-dotnet/Program.cs` — the agent, Basic Auth middleware, trace-link response
+- [`infra/bicep/modules/aca-agentic-poc.bicep`](https://github.com/kyletaylored/infra-advisor-ai/blob/main/infra/bicep/modules/aca-agentic-poc.bicep) — both Container Apps, the shared environment, secrets wiring
+- [`infra/bicep/main.bicep`](https://github.com/kyletaylored/infra-advisor-ai/blob/main/infra/bicep/main.bicep) — subscription-scope params (`acaContainerImage`, `acaRevisionSuffix`, etc.) and the module invocation
+- [`services/aca-agentic-poc-dotnet/Observability/TelemetrySetup.cs`](https://github.com/kyletaylored/infra-advisor-ai/blob/main/services/aca-agentic-poc-dotnet/Observability/TelemetrySetup.cs) — the endpoint-normalization logic
+- [`services/aca-agentic-poc-dotnet/Observability/OtelDiagnosticsListener.cs`](https://github.com/kyletaylored/infra-advisor-ai/blob/main/services/aca-agentic-poc-dotnet/Observability/OtelDiagnosticsListener.cs) — the stdout diagnostics bridge
+- [`services/aca-agentic-poc-dotnet/Program.cs`](https://github.com/kyletaylored/infra-advisor-ai/blob/main/services/aca-agentic-poc-dotnet/Program.cs) — the agent, Basic Auth middleware, trace-link response
+- [`services/aca-agentic-poc-dotnet/wwwroot/index.html`](https://github.com/kyletaylored/infra-advisor-ai/blob/main/services/aca-agentic-poc-dotnet/wwwroot/index.html) — the RUM init and trace-link UI
+- [`.github/workflows/build-push.yml`](https://github.com/kyletaylored/infra-advisor-ai/blob/main/.github/workflows/build-push.yml) — the `deploy-aca` CI job that redeploys this automatically on change
 
 See [Azure Infrastructure](/architecture/infrastructure/#aca-agentic-poc-aca-agentic-pocbicep) for deployment details and current status.
