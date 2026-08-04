@@ -110,6 +110,7 @@ var tags = {
   environment: environment
   project: 'infra-advisor-ai'
   purpose: 'aca-otel-datadog-poc'
+  'ese-tola': 'true'
 }
 
 // ─── Shared Container Apps Environment ────────────────────────────────────
