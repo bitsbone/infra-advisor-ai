@@ -42,8 +42,11 @@ param aksNodeVmSize string = 'Standard_D2s_v3'
 @description('Azure region for the ACA agentic POC — deliberately separate from the shared `location` param. Azure Container Apps Consumption-plan environments run on hidden, Microsoft-managed AKS capacity; eastus (this repo\'s default region) returned AKSCapacityHeavyUsage on first deploy attempt, so this POC defaults to eastus2 instead, same mitigation Azure\'s own error message suggests ("consider creating new AKS clusters in a different region") — same reasoning as azure-openai.bicep\'s separate whisper account/region.')
 param acaLocation string = 'eastus2'
 
-@description('Container image reference for the ACA agentic POC apps (services/aca-agentic-poc-dotnet) — build and push before deploying')
-param acaContainerImage string = ''
+@description('Container image reference for the ACA agentic POC apps (services/aca-agentic-poc-dotnet) — defaults to the :latest tag pushed by build-push.yml on every merge to main')
+param acaContainerImage string = 'ghcr.io/kyletaylored/infra-advisor-ai/aca-agentic-poc-dotnet:latest'
+
+@description('Revision suffix for both ACA agentic POC Container Apps. Defaults to a fresh timestamp on every deployment — needed because :latest is a fixed string, so without a changing suffix ACA sees no diff in the container template and skips creating a new revision (confirmed: az containerapp update --image ...:latest alone did not roll a new revision), leaving the OLD image running even after a new one is pushed.')
+param acaRevisionSuffix string = utcNow('yyyyMMddHHmmss')
 
 @description('GHCR username for the ACA agentic POC image pull')
 param acaRegistryUsername string = ''
@@ -217,6 +220,7 @@ module acaAgenticPoc 'modules/aca-agentic-poc.bicep' = if (deployAcaAgenticPoc) 
     logAnalyticsCustomerId: monitoring.outputs.workspaceCustomerId
     logAnalyticsSharedKey: monitoring.outputs.workspaceSharedKey
     containerImage: acaContainerImage
+    revisionSuffix: acaRevisionSuffix
     registryUsername: acaRegistryUsername
     registryPassword: acaRegistryPassword
     datadogApiKey: acaDatadogApiKey

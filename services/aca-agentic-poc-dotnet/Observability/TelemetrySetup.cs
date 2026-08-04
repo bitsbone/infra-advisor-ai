@@ -53,10 +53,13 @@ public static class TelemetrySetup
 
         // See class doc comment above for why this fallback exists.
         var explicitOtlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
-        var tracesEndpoint = explicitOtlpEndpoint
-            ?? Environment.GetEnvironmentVariable("CONTAINERAPP_OTEL_TRACING_GRPC_ENDPOINT");
-        var metricsEndpoint = explicitOtlpEndpoint
-            ?? Environment.GetEnvironmentVariable("CONTAINERAPP_OTEL_METRIC_GRPC_ENDPOINT");
+        var isGrpc = (Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL") ?? "grpc") == "grpc";
+        var tracesEndpoint = NormalizeEndpoint(
+            explicitOtlpEndpoint ?? Environment.GetEnvironmentVariable("CONTAINERAPP_OTEL_TRACING_GRPC_ENDPOINT"),
+            isGrpc, "/v1/traces");
+        var metricsEndpoint = NormalizeEndpoint(
+            explicitOtlpEndpoint ?? Environment.GetEnvironmentVariable("CONTAINERAPP_OTEL_METRIC_GRPC_ENDPOINT"),
+            isGrpc, "/v1/metrics");
 
         builder.Services.AddOpenTelemetry()
             .ConfigureResource(r => r
@@ -93,5 +96,38 @@ public static class TelemetrySetup
             "Experimental.Microsoft.Extensions.AI, " + ActivitySourceName +
             " | traces endpoint: " + (tracesEndpoint ?? "(SDK default)") +
             " | metrics endpoint: " + (metricsEndpoint ?? "(SDK default)"));
+    }
+
+    // Setting AddOtlpExporter's o.Endpoint explicitly in code (required here
+    // since one binary must pick between two different endpoint sources —
+    // see class doc comment) bypasses the SDK's normal env-var-driven
+    // per-signal path handling entirely, for BOTH protocols:
+    //
+    //   - gRPC: channel targets must be bare scheme+host+port — the exporter
+    //     appends the fixed gRPC service path itself
+    //     (/opentelemetry.proto.collector.trace.v1.TraceService/Export).
+    //     Azure's CONTAINERAPP_OTEL_TRACING_GRPC_ENDPOINT/_METRIC_GRPC_ENDPOINT
+    //     vars include a "/v1/traces"-style path suffix, which — left in
+    //     place — produced a doubled path the managed collector rejected as
+    //     unknown ("Unimplemented", "unknown service v1/traces/...
+    //     TraceService"), silently dropping every export.
+    //   - HTTP/protobuf: normally the SDK auto-appends /v1/traces or
+    //     /v1/metrics when OTEL_EXPORTER_OTLP_ENDPOINT is read directly from
+    //     env, but that auto-suffixing does NOT happen once o.Endpoint is set
+    //     explicitly in code — every request went to the bare
+    //     http://localhost:4318/ instead, which the sidecar's OTLP receiver
+    //     404'd (it only serves /v1/traces and /v1/metrics).
+    //
+    // Both confirmed via the OTel SDK diagnostics this class wires up
+    // (OTEL_TRACE_DEBUG=true).
+    private static string? NormalizeEndpoint(string? endpoint, bool isGrpc, string httpPathSuffix)
+    {
+        if (endpoint is null) return null;
+        if (isGrpc)
+        {
+            var uri = new Uri(endpoint);
+            return $"{uri.Scheme}://{uri.Authority}";
+        }
+        return endpoint.TrimEnd('/') + httpPathSuffix;
     }
 }

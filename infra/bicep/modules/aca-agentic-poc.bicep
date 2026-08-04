@@ -59,6 +59,9 @@ param logAnalyticsSharedKey string
 @description('Container image reference for BOTH Container Apps — same image, only Bicep/env-var config differs between them')
 param containerImage string
 
+@description('Revision suffix for both Container Apps — must change on every deploy that should actually roll a new revision, since containerImage is pinned to a fixed :latest tag (see main.bicep param doc for why this matters)')
+param revisionSuffix string
+
 @description('Container registry server (this repo\'s existing convention is GHCR)')
 param registryServer string = 'ghcr.io'
 
@@ -177,6 +180,7 @@ resource managedApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
       ]
     }
     template: {
+      revisionSuffix: revisionSuffix
       containers: [
         {
           name: 'app'
@@ -253,6 +257,7 @@ resource sidecarApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
       ]
     }
     template: {
+      revisionSuffix: revisionSuffix
       containers: [
         {
           name: 'app'
