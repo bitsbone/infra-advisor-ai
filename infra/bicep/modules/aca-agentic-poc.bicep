@@ -108,6 +108,13 @@ var sidecarAppName = 'aca-agentic-poc-sidecar'
 var imageTag = split(containerImage, ':')[1]
 var tags = {
   environment: environment
+  // Datadog's native Azure integration (and specifically the ACA
+  // serverless/APM correlation view) reads the Azure resource tag `env`
+  // by Unified Service Tagging convention — a different key than this
+  // repo's existing `environment` tag, which nothing in Datadog's Azure
+  // integration recognizes. Both kept: `environment` for this repo's own
+  // convention, `env` for Datadog's.
+  env: environment
   project: 'infra-advisor-ai'
   purpose: 'aca-otel-datadog-poc'
   'ese-tola': 'true'
