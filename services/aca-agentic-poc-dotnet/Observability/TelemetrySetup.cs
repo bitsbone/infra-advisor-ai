@@ -34,8 +34,18 @@ public static class TelemetrySetup
     // invoke_agent span is exported.
     public const string ActivitySourceName = "aca-agentic-poc-dotnet";
 
+    // Must be rooted for the process lifetime — an unreferenced EventListener
+    // is eligible for GC, which silently stops the diagnostics stream.
+    private static OtelDiagnosticsListener? _diagnosticsListener;
+
     public static void Configure(WebApplicationBuilder builder)
     {
+        if (Environment.GetEnvironmentVariable("OTEL_TRACE_DEBUG") == "true")
+        {
+            _diagnosticsListener = new OtelDiagnosticsListener();
+            Console.WriteLine("[otel] OTEL_TRACE_DEBUG=true — verbose OpenTelemetry SDK diagnostics enabled (see OtelDiagnosticsListener.cs)");
+        }
+
         var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME")
             ?? "aca-agentic-poc-dotnet";
         var ddEnv = Environment.GetEnvironmentVariable("DD_ENV") ?? "dev";

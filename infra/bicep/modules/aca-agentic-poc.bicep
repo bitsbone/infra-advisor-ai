@@ -201,6 +201,10 @@ resource managedApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'OTEL_EXPORTER_OTLP_PROTOCOL', value: 'grpc' } // managed agent is gRPC-only
             { name: 'DD_ENV', value: environment }
             { name: 'DD_VERSION', value: imageTag }
+            // Verbose OTel SDK diagnostics to stdout — see
+            // Observability/OtelDiagnosticsListener.cs. Temporary, while
+            // diagnosing why this path produces no signal in Datadog.
+            { name: 'OTEL_TRACE_DEBUG', value: 'true' }
             { name: 'POC_UI_USERNAME', secretRef: 'ui-username' }
             { name: 'POC_UI_PASSWORD', secretRef: 'ui-password' }
             { name: 'DD_RUM_APPLICATION_ID', secretRef: 'dd-rum-application-id' }
@@ -275,6 +279,10 @@ resource sidecarApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'OTEL_SERVICE_NAME', value: sidecarAppName }
             { name: 'DD_ENV', value: environment }
             { name: 'DD_VERSION', value: imageTag }
+            // Verbose OTel SDK diagnostics to stdout — see
+            // Observability/OtelDiagnosticsListener.cs. Temporary, while
+            // diagnosing intermittent trace loss on this path.
+            { name: 'OTEL_TRACE_DEBUG', value: 'true' }
             { name: 'POC_UI_USERNAME', secretRef: 'ui-username' }
             { name: 'POC_UI_PASSWORD', secretRef: 'ui-password' }
             { name: 'DD_RUM_APPLICATION_ID', secretRef: 'dd-rum-application-id' }
