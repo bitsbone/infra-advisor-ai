@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <title>ACA Agentic POC</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23632ca6'/%3E%3Ctext x='16' y='23' font-family='system-ui,sans-serif' font-size='18' font-weight='700' fill='%23fff' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E" />
 <style>
   body { font-family: system-ui, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1rem; }
   h1 { font-size: 1.25rem; }
@@ -14,6 +15,7 @@
   #status { color: #666; font-size: 0.9rem; }
   #trace-link { display: inline-flex; align-items: center; gap: 0.35rem; margin-top: 0.75rem; font-size: 0.85rem; color: #632ca6; text-decoration: none; }
   #trace-link:hover { text-decoration: underline; }
+  #build-info { margin-top: 3rem; padding-top: 0.75rem; border-top: 1px solid #e0e0e0; font-size: 0.75rem; color: #999; }
 </style>
 </head>
 <body>
@@ -32,6 +34,8 @@
     </svg>
     View APM trace
   </a>
+
+  <footer id="build-info"></footer>
 
   <!-- Chat handling lives in its own script, independent of RUM below, so a
        RUM load/init failure can never break the chat UI (this bit us once:
@@ -71,6 +75,14 @@
   </script>
 
   <script src="/rum-config.js"></script>
+  <script>
+    // Independent of the RUM loader below — shows build info even if the
+    // RUM CDN script fails to load.
+    if (window.DD_RUM_CONFIG) {
+      document.getElementById("build-info").textContent =
+        `${window.DD_RUM_CONFIG.service} · v${window.DD_RUM_CONFIG.version} · ${window.DD_RUM_CONFIG.env}`;
+    }
+  </script>
   <script>
     (function(h,o,u,n,d) {
       h=h[d]=h[d]||{q:[],onReady:function(c){h.q.push(c)}}

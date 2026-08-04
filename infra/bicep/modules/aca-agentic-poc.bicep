@@ -98,6 +98,11 @@ param ddRumSite string = 'us3.datadoghq.com'
 var envName = 'cae-agentic-poc-${environment}'
 var managedAppName = 'aca-agentic-poc-managed'
 var sidecarAppName = 'aca-agentic-poc-sidecar'
+// Reflects the actual deployed image tag (this repo tags images with the
+// short git SHA — see build-push.yml) as DD_VERSION, rather than a static
+// 'latest' string that never changes and isn't useful for the UI's
+// "deployed version" display.
+var imageTag = split(containerImage, ':')[1]
 var tags = {
   environment: environment
   project: 'infra-advisor-ai'
@@ -195,7 +200,7 @@ resource managedApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'OTEL_LOGS_EXPORTER', value: 'otlp' }
             { name: 'OTEL_EXPORTER_OTLP_PROTOCOL', value: 'grpc' } // managed agent is gRPC-only
             { name: 'DD_ENV', value: environment }
-            { name: 'DD_VERSION', value: 'latest' }
+            { name: 'DD_VERSION', value: imageTag }
             { name: 'POC_UI_USERNAME', secretRef: 'ui-username' }
             { name: 'POC_UI_PASSWORD', secretRef: 'ui-password' }
             { name: 'DD_RUM_APPLICATION_ID', secretRef: 'dd-rum-application-id' }
@@ -269,7 +274,7 @@ resource sidecarApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'OTEL_EXPORTER_OTLP_PROTOCOL', value: 'http/protobuf' }
             { name: 'OTEL_SERVICE_NAME', value: sidecarAppName }
             { name: 'DD_ENV', value: environment }
-            { name: 'DD_VERSION', value: 'latest' }
+            { name: 'DD_VERSION', value: imageTag }
             { name: 'POC_UI_USERNAME', secretRef: 'ui-username' }
             { name: 'POC_UI_PASSWORD', secretRef: 'ui-password' }
             { name: 'DD_RUM_APPLICATION_ID', secretRef: 'dd-rum-application-id' }
@@ -291,7 +296,7 @@ resource sidecarApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
             { name: 'DD_AZURE_RESOURCE_GROUP', value: resourceGroup().name }
             { name: 'DD_SERVICE', value: sidecarAppName }
             { name: 'DD_ENV', value: environment }
-            { name: 'DD_VERSION', value: 'latest' }
+            { name: 'DD_VERSION', value: imageTag }
             // OTLP receiver — verified against the installed serverless-init
             // image in the Phase 0 spike before this config is trusted; see
             // the PRD's flagged risk (public reports of OTLP-over-
