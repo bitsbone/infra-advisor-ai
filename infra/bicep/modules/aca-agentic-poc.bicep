@@ -207,6 +207,17 @@ resource managedApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
             // managed collector, which forwards to Datadog per this
             // environment's openTelemetryConfiguration above.
             { name: 'OTEL_SERVICE_NAME', value: managedAppName }
+            // cloud.* resource attributes — needed on the managed-agent path
+            // specifically for Datadog to correlate this app's APM service
+            // with the actual Azure Container App resource. The OTel .NET
+            // SDK's default resource detector reads OTEL_RESOURCE_ATTRIBUTES
+            // automatically (ResourceBuilder.CreateDefault(), which
+            // .ConfigureResource() builds on top of in TelemetrySetup.cs) —
+            // no code change needed, just this env var.
+            {
+              name: 'OTEL_RESOURCE_ATTRIBUTES'
+              value: 'cloud.provider=azure,cloud.platform=azure.container_apps,cloud.resource_id=/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup().name}/providers/Microsoft.App/containerApps/${managedAppName},cloud.region=${location}'
+            }
             { name: 'OTEL_TRACES_EXPORTER', value: 'otlp' }
             { name: 'OTEL_METRICS_EXPORTER', value: 'otlp' }
             { name: 'OTEL_LOGS_EXPORTER', value: 'otlp' }
