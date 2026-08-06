@@ -61,7 +61,7 @@ create-airflow-secret: ## Create airflow-azure-secret K8s Secret in airflow name
 	@if [ -z "$(EIA_API_KEY)" ]; then echo "ERROR: EIA_API_KEY is not set"; exit 1; fi
 	@if [ -z "$(DD_API_KEY)" ]; then echo "ERROR: DD_API_KEY is not set (required for DJM OpenLineage transport)"; exit 1; fi
 	@if [ -z "$(AIRFLOW_WEBSERVER_SECRET_KEY)" ]; then echo "ERROR: AIRFLOW_WEBSERVER_SECRET_KEY is not set — generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""; exit 1; fi
-	kubectl create secret generic airflow-azure-secret \
+	@kubectl create secret generic airflow-azure-secret \
 		--namespace airflow \
 		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
 		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
@@ -82,7 +82,7 @@ create-mcp-server-secret: ## Create mcp-server-secret K8s Secret (Azure, EIA, ER
 	@if [ -z "$(EIA_API_KEY)" ];            then echo "ERROR: EIA_API_KEY is not set";            exit 1; fi
 	@if [ -z "$(ERCOT_API_KEY)" ];          then echo "WARN: ERCOT_API_KEY is not set — ERCOT tool will be disabled"; fi
 	@if [ -z "$(SAMGOV_API_KEY)" ];         then echo "WARN: SAMGOV_API_KEY is not set — procurement opportunities tool will be disabled"; fi
-	kubectl create secret generic mcp-server-secret \
+	@kubectl create secret generic mcp-server-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_SEARCH_ENDPOINT=$(AZURE_SEARCH_ENDPOINT) \
 		--from-literal=AZURE_SEARCH_API_KEY=$(AZURE_SEARCH_API_KEY) \
@@ -102,7 +102,7 @@ create-mcp-server-dotnet-secret: ## Create mcp-server-dotnet-secret K8s Secret (
 	@if [ -z "$(EIA_API_KEY)" ];            then echo "WARN: EIA_API_KEY is not set — EIA tool will be disabled"; fi
 	@if [ -z "$(ERCOT_API_KEY)" ];          then echo "WARN: ERCOT_API_KEY is not set — ERCOT tool will be disabled"; fi
 	@if [ -z "$(SAMGOV_API_KEY)" ];         then echo "WARN: SAMGOV_API_KEY is not set — SAM.gov tool will be disabled"; fi
-	kubectl create secret generic mcp-server-dotnet-secret \
+	@kubectl create secret generic mcp-server-dotnet-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_SEARCH_ENDPOINT=$(AZURE_SEARCH_ENDPOINT) \
 		--from-literal=AZURE_SEARCH_API_KEY=$(AZURE_SEARCH_API_KEY) \
@@ -122,7 +122,7 @@ create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI key
 	@if [ -z "$(DD_API_KEY)" ] || [ -z "$(DD_APP_KEY)" ]; then echo "WARN: DD_API_KEY/DD_APP_KEY not both set — AI Guard LangChain auto-integration will be disabled"; fi
 	@if [ -z "$(AZURE_STORAGE_CONNECTION_STRING)" ]; then echo "WARN: AZURE_STORAGE_CONNECTION_STRING not set — chat media upload (image/audio attachments) will be disabled"; fi
 	@if [ -z "$(AZURE_OPENAI_WHISPER_ENDPOINT)" ] || [ -z "$(AZURE_OPENAI_WHISPER_API_KEY)" ]; then echo "WARN: AZURE_OPENAI_WHISPER_ENDPOINT/AZURE_OPENAI_WHISPER_API_KEY not both set — voice attachment transcription will be disabled"; fi
-	kubectl create secret generic agent-api-secret \
+	@kubectl create secret generic agent-api-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
 		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
@@ -144,7 +144,7 @@ create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Az
 	@if [ -z "$(DD_APPLICATION_KEY)" ];    then echo "WARN: DD_APPLICATION_KEY not set — AI Guard HTTP API calls will be disabled"; fi
 	@if [ -z "$(DATABASE_URL)" ]; then echo "WARN: DATABASE_URL not set — conversation persistence will be disabled"; fi
 	@if [ -z "$(AZURE_OPENAI_WHISPER_ENDPOINT)" ] || [ -z "$(AZURE_OPENAI_WHISPER_API_KEY)" ]; then echo "WARN: AZURE_OPENAI_WHISPER_ENDPOINT/AZURE_OPENAI_WHISPER_API_KEY not both set — voice attachment transcription will be disabled"; fi
-	kubectl create secret generic agent-api-dotnet-secret \
+	@kubectl create secret generic agent-api-dotnet-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
 		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
@@ -159,7 +159,7 @@ create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Az
 
 create-load-generator-secret: ## Create load-generator-secret K8s Secret (Datadog API key)
 	@if [ -z "$(DD_API_KEY)" ]; then echo "ERROR: DD_API_KEY is not set"; exit 1; fi
-	kubectl create secret generic load-generator-secret \
+	@kubectl create secret generic load-generator-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=DD_API_KEY=$(DD_API_KEY) \
 		--dry-run=client -o yaml | kubectl apply -f -
@@ -167,7 +167,7 @@ create-load-generator-secret: ## Create load-generator-secret K8s Secret (Datado
 
 create-redis-secret: ## Create redis-secret K8s Secret (REDIS_PASSWORD)
 	@if [ -z "$(REDIS_PASSWORD)" ]; then echo "ERROR: REDIS_PASSWORD is not set — generate with: openssl rand -base64 24"; exit 1; fi
-	kubectl create secret generic redis-secret \
+	@kubectl create secret generic redis-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=REDIS_PASSWORD=$(REDIS_PASSWORD) \
 		--dry-run=client -o yaml | kubectl apply -f -
@@ -177,7 +177,7 @@ create-postgres-secret: ## Create postgres-secret K8s Secret
 	@if [ -z "$(POSTGRES_USER)" ]; then echo "ERROR: POSTGRES_USER is not set"; exit 1; fi
 	@if [ -z "$(POSTGRES_PASSWORD)" ]; then echo "ERROR: POSTGRES_PASSWORD is not set"; exit 1; fi
 	@if [ -z "$(POSTGRES_DB)" ]; then echo "ERROR: POSTGRES_DB is not set"; exit 1; fi
-	kubectl create secret generic postgres-secret \
+	@kubectl create secret generic postgres-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=POSTGRES_USER=$(POSTGRES_USER) \
 		--from-literal=POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
@@ -192,7 +192,7 @@ create-auth-api-secret: ## Create auth-api-secret K8s Secret (DATABASE_URL, JWT_
 		echo "WARN: BOOTSTRAP_ADMIN_EMAIL/PASSWORD not set — auth-api will start without a bootstrap admin"; \
 		echo "      (existing admin users keep working; only matters on a fresh DB)"; \
 	fi
-	kubectl create secret generic auth-api-secret \
+	@kubectl create secret generic auth-api-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=DATABASE_URL=$(DATABASE_URL) \
 		--from-literal=JWT_SECRET=$(JWT_SECRET) \
@@ -203,7 +203,7 @@ create-auth-api-secret: ## Create auth-api-secret K8s Secret (DATABASE_URL, JWT_
 
 create-dd-postgres-secret: ## Create dd-postgres-secret K8s Secret in datadog namespace (referenced by DatadogAgent CR)
 	@if [ -z "$(DD_POSTGRES_PASSWORD)" ]; then echo "ERROR: DD_POSTGRES_PASSWORD is not set"; exit 1; fi
-	kubectl create secret generic dd-postgres-secret \
+	@kubectl create secret generic dd-postgres-secret \
 		--namespace datadog \
 		--from-literal=DD_POSTGRES_PASSWORD=$(DD_POSTGRES_PASSWORD) \
 		--dry-run=client -o yaml | kubectl apply -f -
@@ -216,7 +216,7 @@ create-mailpit-secret: ## Create mailpit-secret with bcrypt-hashed MP_UI_AUTH fo
 	@# `htpasswd -nbB` emits user:$2y$10$... — Mailpit's MP_UI_AUTH accepts the
 	@# same bcrypt prefix variants ($2a / $2b / $2y), so no rewriting needed.
 	@AUTH="$$(htpasswd -nbB -C 10 "$(MAILPIT_UI_USERNAME)" "$(MAILPIT_UI_PASSWORD)")"; \
-	kubectl create secret generic mailpit-secret \
+	@kubectl create secret generic mailpit-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=MP_UI_AUTH="$$AUTH" \
 		--dry-run=client -o yaml | kubectl apply -f -
@@ -265,7 +265,7 @@ setup-postgres-dbm: ## Create Datadog monitoring user + grants in Postgres (run 
 create-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in infra-advisor namespace
 	@if [ -z "$(GHCR_PAT)" ]; then echo "ERROR: GHCR_PAT is not set"; exit 1; fi
 	@if [ -z "$(GITHUB_EMAIL)" ]; then echo "ERROR: GITHUB_EMAIL is not set"; exit 1; fi
-	kubectl create secret docker-registry ghcr-pull-secret \
+	@kubectl create secret docker-registry ghcr-pull-secret \
 		--namespace $(NAMESPACE) \
 		--docker-server=ghcr.io \
 		--docker-username=kyletaylored \
