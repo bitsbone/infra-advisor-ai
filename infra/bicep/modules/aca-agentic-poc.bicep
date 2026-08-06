@@ -62,16 +62,6 @@ param containerImage string
 @description('Revision suffix for both Container Apps — must change on every deploy that should actually roll a new revision, since containerImage is pinned to a fixed :latest tag (see main.bicep param doc for why this matters)')
 param revisionSuffix string
 
-@description('Container registry server (this repo\'s existing convention is GHCR)')
-param registryServer string = 'ghcr.io'
-
-@description('Registry username for image pull')
-param registryUsername string
-
-@description('Registry password/PAT for image pull — pass at deploy time, never commit')
-@secure()
-param registryPassword string
-
 @description('Datadog API key — pass at deploy time, never commit. Backs BOTH the managed agent\'s dataDogConfiguration.key and the sidecar\'s DD_API_KEY')
 @secure()
 param datadogApiKey string
@@ -171,15 +161,7 @@ resource managedApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
         targetPort: 8080
         transport: 'auto'
       }
-      registries: [
-        {
-          server: registryServer
-          username: registryUsername
-          passwordSecretRef: 'registry-password'
-        }
-      ]
       secrets: [
-        { name: 'registry-password', value: registryPassword }
         { name: 'openai-api-key', value: openAiApiKey }
         { name: 'ui-username', value: uiUsername }
         { name: 'ui-password', value: uiPassword }
@@ -258,15 +240,7 @@ resource sidecarApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
         targetPort: 8080
         transport: 'auto'
       }
-      registries: [
-        {
-          server: registryServer
-          username: registryUsername
-          passwordSecretRef: 'registry-password'
-        }
-      ]
       secrets: [
-        { name: 'registry-password', value: registryPassword }
         { name: 'openai-api-key', value: openAiApiKey }
         { name: 'datadog-api-key', value: datadogApiKey }
         { name: 'ui-username', value: uiUsername }

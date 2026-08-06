@@ -29,8 +29,9 @@ param aksNodeCount int = 3
 param aksNodeVmSize string = 'Standard_D2s_v3'
 
 // ---------------------------------------------------------------------------
-// ACA agentic POC params — all secrets here (openAiApiKey, registryPassword,
-// datadogApiKey) have NO default and must be passed via CLI --parameters at
+// ACA agentic POC params — the secrets here (openAiApiKey, datadogApiKey,
+// uiUsername/uiPassword, ddRum*) have NO default and must be passed via
+// CLI --parameters at
 // deploy time. Unlike every other secret in this repo (which lives in a K8s
 // Secret, created separately via `make create-*-secret`, never touching
 // Bicep), these three flow through Bicep because Microsoft.App/containerApps
@@ -48,12 +49,10 @@ param acaContainerImage string = 'ghcr.io/kyletaylored/infra-advisor-ai/aca-agen
 @description('Revision suffix for both ACA agentic POC Container Apps. Defaults to a fresh timestamp on every deployment — needed because :latest is a fixed string, so without a changing suffix ACA sees no diff in the container template and skips creating a new revision (confirmed: az containerapp update --image ...:latest alone did not roll a new revision), leaving the OLD image running even after a new one is pushed.')
 param acaRevisionSuffix string = utcNow('yyyyMMddHHmmss')
 
-@description('GHCR username for the ACA agentic POC image pull')
-param acaRegistryUsername string = ''
-
-@description('GHCR PAT for the ACA agentic POC image pull — pass via CLI --parameters, never commit')
-@secure()
-param acaRegistryPassword string = ''
+// No registry credentials needed — the aca-agentic-poc-dotnet GHCR package
+// is public (verified via an anonymous pull test), independent of the
+// source repo's own visibility. If that ever changes, registryUsername/
+// registryPassword params would need to come back on the module.
 
 @description('Azure OpenAI API key for the ACA agentic POC apps (reuses the existing account) — pass via CLI --parameters, never commit')
 @secure()
@@ -221,8 +220,6 @@ module acaAgenticPoc 'modules/aca-agentic-poc.bicep' = if (deployAcaAgenticPoc) 
     logAnalyticsSharedKey: monitoring.outputs.workspaceSharedKey
     containerImage: acaContainerImage
     revisionSuffix: acaRevisionSuffix
-    registryUsername: acaRegistryUsername
-    registryPassword: acaRegistryPassword
     datadogApiKey: acaDatadogApiKey
     datadogSite: acaDatadogSite
     uiUsername: acaUiUsername

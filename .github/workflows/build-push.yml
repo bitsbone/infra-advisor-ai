@@ -345,8 +345,6 @@ jobs:
             --template-file infra/bicep/main.bicep \
             --parameters infra/bicep/parameters/dev.bicepparam \
             --parameters deployAcaAgenticPoc=true \
-            --parameters acaRegistryUsername="${{ github.actor }}" \
-            --parameters acaRegistryPassword="${{ secrets.GHCR_PAT }}" \
             --parameters acaOpenAiApiKey="${{ secrets.AZURE_OPENAI_API_KEY }}" \
             --parameters acaDatadogApiKey="${{ secrets.DD_API_KEY }}" \
             --parameters acaUiUsername="${{ secrets.ACA_UI_USERNAME }}" \
