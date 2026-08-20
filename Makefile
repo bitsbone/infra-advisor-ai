@@ -63,14 +63,14 @@ create-airflow-secret: ## Create airflow-azure-secret K8s Secret in airflow name
 	@if [ -z "$(AIRFLOW_WEBSERVER_SECRET_KEY)" ]; then echo "ERROR: AIRFLOW_WEBSERVER_SECRET_KEY is not set — generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""; exit 1; fi
 	@kubectl create secret generic airflow-azure-secret \
 		--namespace airflow \
-		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
-		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
-		--from-literal=AZURE_SEARCH_ENDPOINT=$(AZURE_SEARCH_ENDPOINT) \
-		--from-literal=AZURE_SEARCH_API_KEY=$(AZURE_SEARCH_API_KEY) \
+		--from-literal=AZURE_OPENAI_ENDPOINT="$(AZURE_OPENAI_ENDPOINT)" \
+		--from-literal=AZURE_OPENAI_API_KEY="$(AZURE_OPENAI_API_KEY)" \
+		--from-literal=AZURE_SEARCH_ENDPOINT="$(AZURE_SEARCH_ENDPOINT)" \
+		--from-literal=AZURE_SEARCH_API_KEY="$(AZURE_SEARCH_API_KEY)" \
 		--from-literal=AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=placeholder;AccountKey=placeholder;EndpointSuffix=core.windows.net" \
-		--from-literal=EIA_API_KEY=$(EIA_API_KEY) \
-		--from-literal=DD_API_KEY=$(DD_API_KEY) \
-		--from-literal=webserver-secret-key=$(AIRFLOW_WEBSERVER_SECRET_KEY) \
+		--from-literal=EIA_API_KEY="$(EIA_API_KEY)" \
+		--from-literal=DD_API_KEY="$(DD_API_KEY)" \
+		--from-literal=webserver-secret-key="$(AIRFLOW_WEBSERVER_SECRET_KEY)" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ airflow-azure-secret created in namespace airflow"
 
@@ -84,13 +84,13 @@ create-mcp-server-secret: ## Create mcp-server-secret K8s Secret (Azure, EIA, ER
 	@if [ -z "$(SAMGOV_API_KEY)" ];         then echo "WARN: SAMGOV_API_KEY is not set — procurement opportunities tool will be disabled"; fi
 	@kubectl create secret generic mcp-server-secret \
 		--namespace $(NAMESPACE) \
-		--from-literal=AZURE_SEARCH_ENDPOINT=$(AZURE_SEARCH_ENDPOINT) \
-		--from-literal=AZURE_SEARCH_API_KEY=$(AZURE_SEARCH_API_KEY) \
-		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
-		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
-		--from-literal=EIA_API_KEY=$(EIA_API_KEY) \
-		--from-literal=ERCOT_API_KEY=$(ERCOT_API_KEY) \
-		--from-literal=SAMGOV_API_KEY=$(SAMGOV_API_KEY) \
+		--from-literal=AZURE_SEARCH_ENDPOINT="$(AZURE_SEARCH_ENDPOINT)" \
+		--from-literal=AZURE_SEARCH_API_KEY="$(AZURE_SEARCH_API_KEY)" \
+		--from-literal=AZURE_OPENAI_ENDPOINT="$(AZURE_OPENAI_ENDPOINT)" \
+		--from-literal=AZURE_OPENAI_API_KEY="$(AZURE_OPENAI_API_KEY)" \
+		--from-literal=EIA_API_KEY="$(EIA_API_KEY)" \
+		--from-literal=ERCOT_API_KEY="$(ERCOT_API_KEY)" \
+		--from-literal=SAMGOV_API_KEY="$(SAMGOV_API_KEY)" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ mcp-server-secret created in namespace $(NAMESPACE)"
 
@@ -104,13 +104,13 @@ create-mcp-server-dotnet-secret: ## Create mcp-server-dotnet-secret K8s Secret (
 	@if [ -z "$(SAMGOV_API_KEY)" ];         then echo "WARN: SAMGOV_API_KEY is not set — SAM.gov tool will be disabled"; fi
 	@kubectl create secret generic mcp-server-dotnet-secret \
 		--namespace $(NAMESPACE) \
-		--from-literal=AZURE_SEARCH_ENDPOINT=$(AZURE_SEARCH_ENDPOINT) \
-		--from-literal=AZURE_SEARCH_API_KEY=$(AZURE_SEARCH_API_KEY) \
-		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
-		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
-		$(if $(EIA_API_KEY),--from-literal=EIA_API_KEY=$(EIA_API_KEY),) \
-		$(if $(ERCOT_API_KEY),--from-literal=ERCOT_API_KEY=$(ERCOT_API_KEY),) \
-		$(if $(SAMGOV_API_KEY),--from-literal=SAMGOV_API_KEY=$(SAMGOV_API_KEY),) \
+		--from-literal=AZURE_SEARCH_ENDPOINT="$(AZURE_SEARCH_ENDPOINT)" \
+		--from-literal=AZURE_SEARCH_API_KEY="$(AZURE_SEARCH_API_KEY)" \
+		--from-literal=AZURE_OPENAI_ENDPOINT="$(AZURE_OPENAI_ENDPOINT)" \
+		--from-literal=AZURE_OPENAI_API_KEY="$(AZURE_OPENAI_API_KEY)" \
+		$(if $(EIA_API_KEY),--from-literal=EIA_API_KEY="$(EIA_API_KEY)",) \
+		$(if $(ERCOT_API_KEY),--from-literal=ERCOT_API_KEY="$(ERCOT_API_KEY)",) \
+		$(if $(SAMGOV_API_KEY),--from-literal=SAMGOV_API_KEY="$(SAMGOV_API_KEY)",) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ mcp-server-dotnet-secret created in namespace $(NAMESPACE)"
 
@@ -124,36 +124,38 @@ create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI key
 	@if [ -z "$(AZURE_OPENAI_WHISPER_ENDPOINT)" ] || [ -z "$(AZURE_OPENAI_WHISPER_API_KEY)" ]; then echo "WARN: AZURE_OPENAI_WHISPER_ENDPOINT/AZURE_OPENAI_WHISPER_API_KEY not both set — voice attachment transcription will be disabled"; fi
 	@kubectl create secret generic agent-api-secret \
 		--namespace $(NAMESPACE) \
-		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
-		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
-		--from-literal=JWT_SECRET=$(JWT_SECRET) \
-		$(if $(DATABASE_URL),--from-literal=DATABASE_URL=$(DATABASE_URL),) \
-		$(if $(DD_API_KEY),--from-literal=DD_API_KEY=$(DD_API_KEY),) \
-		$(if $(DD_APP_KEY),--from-literal=DD_APP_KEY=$(DD_APP_KEY),) \
-		$(if $(AZURE_STORAGE_CONNECTION_STRING),--from-literal=AZURE_STORAGE_CONNECTION_STRING=$(AZURE_STORAGE_CONNECTION_STRING),) \
-		$(if $(AZURE_OPENAI_WHISPER_ENDPOINT),--from-literal=AZURE_OPENAI_WHISPER_ENDPOINT=$(AZURE_OPENAI_WHISPER_ENDPOINT),) \
-		$(if $(AZURE_OPENAI_WHISPER_API_KEY),--from-literal=AZURE_OPENAI_WHISPER_API_KEY=$(AZURE_OPENAI_WHISPER_API_KEY),) \
+		--from-literal=AZURE_OPENAI_ENDPOINT="$(AZURE_OPENAI_ENDPOINT)" \
+		--from-literal=AZURE_OPENAI_API_KEY="$(AZURE_OPENAI_API_KEY)" \
+		--from-literal=JWT_SECRET="$(JWT_SECRET)" \
+		$(if $(DATABASE_URL),--from-literal=DATABASE_URL="$(DATABASE_URL)",) \
+		$(if $(DD_API_KEY),--from-literal=DD_API_KEY="$(DD_API_KEY)",) \
+		$(if $(DD_APP_KEY),--from-literal=DD_APP_KEY="$(DD_APP_KEY)",) \
+		$(if $(AZURE_STORAGE_CONNECTION_STRING),--from-literal=AZURE_STORAGE_CONNECTION_STRING="$(AZURE_STORAGE_CONNECTION_STRING)",) \
+		$(if $(AZURE_OPENAI_WHISPER_ENDPOINT),--from-literal=AZURE_OPENAI_WHISPER_ENDPOINT="$(AZURE_OPENAI_WHISPER_ENDPOINT)",) \
+		$(if $(AZURE_OPENAI_WHISPER_API_KEY),--from-literal=AZURE_OPENAI_WHISPER_API_KEY="$(AZURE_OPENAI_WHISPER_API_KEY)",) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ agent-api-secret created in namespace $(NAMESPACE)"
 
-create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Azure OpenAI keys + DATABASE_URL + DD_API_KEY + DD_APPLICATION_KEY + JWT_SECRET + Whisper keys)
+create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Azure OpenAI keys + DATABASE_URL + DD_API_KEY + DD_APPLICATION_KEY + JWT_SECRET + Whisper keys + AZURE_STORAGE_CONNECTION_STRING for chat media uploads)
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
 	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];  then echo "ERROR: AZURE_OPENAI_API_KEY is not set";  exit 1; fi
 	@if [ -z "$(JWT_SECRET)" ]; then echo "ERROR: JWT_SECRET is not set (shared with auth-api for /query auth)"; exit 1; fi
 	@if [ -z "$(DD_API_KEY)" ];            then echo "WARN: DD_API_KEY not set — LLM Observability OTLP export will be disabled"; fi
 	@if [ -z "$(DD_APPLICATION_KEY)" ];    then echo "WARN: DD_APPLICATION_KEY not set — AI Guard HTTP API calls will be disabled"; fi
 	@if [ -z "$(DATABASE_URL)" ]; then echo "WARN: DATABASE_URL not set — conversation persistence will be disabled"; fi
+	@if [ -z "$(AZURE_STORAGE_CONNECTION_STRING)" ]; then echo "WARN: AZURE_STORAGE_CONNECTION_STRING not set — chat media upload (image/audio attachments) will be disabled"; fi
 	@if [ -z "$(AZURE_OPENAI_WHISPER_ENDPOINT)" ] || [ -z "$(AZURE_OPENAI_WHISPER_API_KEY)" ]; then echo "WARN: AZURE_OPENAI_WHISPER_ENDPOINT/AZURE_OPENAI_WHISPER_API_KEY not both set — voice attachment transcription will be disabled"; fi
 	@kubectl create secret generic agent-api-dotnet-secret \
 		--namespace $(NAMESPACE) \
-		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
-		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
-		--from-literal=JWT_SECRET=$(JWT_SECRET) \
-		$(if $(DD_API_KEY),--from-literal=DD_API_KEY=$(DD_API_KEY),) \
-		$(if $(DD_APPLICATION_KEY),--from-literal=DD_APPLICATION_KEY=$(DD_APPLICATION_KEY),) \
-		$(if $(DATABASE_URL),--from-literal=DATABASE_URL=$(DATABASE_URL),) \
-		$(if $(AZURE_OPENAI_WHISPER_ENDPOINT),--from-literal=AZURE_OPENAI_WHISPER_ENDPOINT=$(AZURE_OPENAI_WHISPER_ENDPOINT),) \
-		$(if $(AZURE_OPENAI_WHISPER_API_KEY),--from-literal=AZURE_OPENAI_WHISPER_API_KEY=$(AZURE_OPENAI_WHISPER_API_KEY),) \
+		--from-literal=AZURE_OPENAI_ENDPOINT="$(AZURE_OPENAI_ENDPOINT)" \
+		--from-literal=AZURE_OPENAI_API_KEY="$(AZURE_OPENAI_API_KEY)" \
+		--from-literal=JWT_SECRET="$(JWT_SECRET)" \
+		$(if $(DD_API_KEY),--from-literal=DD_API_KEY="$(DD_API_KEY)",) \
+		$(if $(DD_APPLICATION_KEY),--from-literal=DD_APPLICATION_KEY="$(DD_APPLICATION_KEY)",) \
+		$(if $(DATABASE_URL),--from-literal=DATABASE_URL="$(DATABASE_URL)",) \
+		$(if $(AZURE_STORAGE_CONNECTION_STRING),--from-literal=AZURE_STORAGE_CONNECTION_STRING="$(AZURE_STORAGE_CONNECTION_STRING)",) \
+		$(if $(AZURE_OPENAI_WHISPER_ENDPOINT),--from-literal=AZURE_OPENAI_WHISPER_ENDPOINT="$(AZURE_OPENAI_WHISPER_ENDPOINT)",) \
+		$(if $(AZURE_OPENAI_WHISPER_API_KEY),--from-literal=AZURE_OPENAI_WHISPER_API_KEY="$(AZURE_OPENAI_WHISPER_API_KEY)",) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ agent-api-dotnet-secret created in namespace $(NAMESPACE)"
 
@@ -161,7 +163,7 @@ create-load-generator-secret: ## Create load-generator-secret K8s Secret (Datado
 	@if [ -z "$(DD_API_KEY)" ]; then echo "ERROR: DD_API_KEY is not set"; exit 1; fi
 	@kubectl create secret generic load-generator-secret \
 		--namespace $(NAMESPACE) \
-		--from-literal=DD_API_KEY=$(DD_API_KEY) \
+		--from-literal=DD_API_KEY="$(DD_API_KEY)" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ load-generator-secret created in namespace $(NAMESPACE)"
 
@@ -169,7 +171,7 @@ create-redis-secret: ## Create redis-secret K8s Secret (REDIS_PASSWORD)
 	@if [ -z "$(REDIS_PASSWORD)" ]; then echo "ERROR: REDIS_PASSWORD is not set — generate with: openssl rand -base64 24"; exit 1; fi
 	@kubectl create secret generic redis-secret \
 		--namespace $(NAMESPACE) \
-		--from-literal=REDIS_PASSWORD=$(REDIS_PASSWORD) \
+		--from-literal=REDIS_PASSWORD="$(REDIS_PASSWORD)" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ redis-secret created"
 
@@ -179,9 +181,9 @@ create-postgres-secret: ## Create postgres-secret K8s Secret
 	@if [ -z "$(POSTGRES_DB)" ]; then echo "ERROR: POSTGRES_DB is not set"; exit 1; fi
 	@kubectl create secret generic postgres-secret \
 		--namespace $(NAMESPACE) \
-		--from-literal=POSTGRES_USER=$(POSTGRES_USER) \
-		--from-literal=POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
-		--from-literal=POSTGRES_DB=$(POSTGRES_DB) \
+		--from-literal=POSTGRES_USER="$(POSTGRES_USER)" \
+		--from-literal=POSTGRES_PASSWORD="$(POSTGRES_PASSWORD)" \
+		--from-literal=POSTGRES_DB="$(POSTGRES_DB)" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ postgres-secret created"
 
@@ -194,10 +196,10 @@ create-auth-api-secret: ## Create auth-api-secret K8s Secret (DATABASE_URL, JWT_
 	fi
 	@kubectl create secret generic auth-api-secret \
 		--namespace $(NAMESPACE) \
-		--from-literal=DATABASE_URL=$(DATABASE_URL) \
-		--from-literal=JWT_SECRET=$(JWT_SECRET) \
-		$(if $(BOOTSTRAP_ADMIN_EMAIL),--from-literal=BOOTSTRAP_ADMIN_EMAIL=$(BOOTSTRAP_ADMIN_EMAIL),) \
-		$(if $(BOOTSTRAP_ADMIN_PASSWORD),--from-literal=BOOTSTRAP_ADMIN_PASSWORD=$(BOOTSTRAP_ADMIN_PASSWORD),) \
+		--from-literal=DATABASE_URL="$(DATABASE_URL)" \
+		--from-literal=JWT_SECRET="$(JWT_SECRET)" \
+		$(if $(BOOTSTRAP_ADMIN_EMAIL),--from-literal=BOOTSTRAP_ADMIN_EMAIL="$(BOOTSTRAP_ADMIN_EMAIL)",) \
+		$(if $(BOOTSTRAP_ADMIN_PASSWORD),--from-literal=BOOTSTRAP_ADMIN_PASSWORD="$(BOOTSTRAP_ADMIN_PASSWORD)",) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ auth-api-secret created"
 
@@ -205,7 +207,7 @@ create-dd-postgres-secret: ## Create dd-postgres-secret K8s Secret in datadog na
 	@if [ -z "$(DD_POSTGRES_PASSWORD)" ]; then echo "ERROR: DD_POSTGRES_PASSWORD is not set"; exit 1; fi
 	@kubectl create secret generic dd-postgres-secret \
 		--namespace datadog \
-		--from-literal=DD_POSTGRES_PASSWORD=$(DD_POSTGRES_PASSWORD) \
+		--from-literal=DD_POSTGRES_PASSWORD="$(DD_POSTGRES_PASSWORD)" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ dd-postgres-secret created in namespace datadog"
 

@@ -31,10 +31,15 @@ data:
   AZURE_OPENAI_DEPLOYMENT: "gpt-4.1-mini"
   AZURE_OPENAI_EVAL_DEPLOYMENT: "gpt-4.1-mini"
   # Audio attachments are transcribed directly against this Azure OpenAI Whisper
-  # deployment — the blob URL (already uploaded via the Python agent-api's
-  # /media/upload) is downloaded and passed to the transcription call; this
-  # service does not need AZURE_STORAGE_CONNECTION_STRING itself.
+  # deployment — the blob URL (uploaded via this service's own /media/upload,
+  # or the Python agent-api's, depending on which pipeline was selected) is
+  # downloaded and passed to the transcription call.
   AZURE_OPENAI_WHISPER_DEPLOYMENT: "whisper"
+  # Chat attachment upload (POST /media/upload) — image/audio blobs land in this
+  # container, addressed to callers via a read-only SAS URL minted at upload time.
+  # Same container the Python agent-api uses — see Services/MediaService.cs.
+  AZURE_STORAGE_MEDIA_CONTAINER: "chat-media"
+  MEDIA_SAS_EXPIRY_HOURS: "168"
   # RetrievalService uses this Azure OpenAI deployment for query + corpus
   # embeddings. Must exist in the Azure OpenAI resource — create via
   # `az cognitiveservices account deployment create` if missing.

@@ -11,7 +11,7 @@ Datadog Agent Observability added multimodal (voice/image) tracing support, and 
 
 ```
 UI (Chat.tsx)
-  └─► POST /api/media/upload  (always the Python backend, regardless of chat backend selected)
+  └─► POST /api/media/upload or /api-dotnet/media/upload  (matches the selected chat backend)
         └─► Azure Blob Storage `chat-media` container
               └─► returns { url, kind, mime_type, size_bytes } — a read-only SAS URL, 7-day expiry
 
@@ -30,7 +30,7 @@ Four decisions shape everything below:
 
 1. **Both modalities cascade to text, not just audio.** Azure OpenAI's chat deployments here (`gpt-4.1-mini`/`gpt-4.1`) accept vision content directly, so the original design sent the image inline to the specialist's tool-calling call. That turned out to be a dead end for capture (see [Why both modalities need a pre-step](#why-both-modalities-need-a-pre-step) below) — so images now go through a dedicated vision-description call *before* the agent runs, exactly mirroring how audio already worked. Both the transcript and the image description are folded into the query text; the specialist's ReAct loop is 100% text-only regardless of which modality (if any) the turn started as.
 2. **Attachments live in Blob Storage, not inline.** The UI never sends base64 image/audio bytes in the request body. It uploads first, gets a SAS URL back, and that URL is what flows through the request and Redis conversation history. This keeps Redis lean (history is reloaded in full every turn) — the *trace* payload is a separate concern, covered below.
-3. **One shared upload endpoint.** `POST /media/upload` lives only on `agent-api` (Python) — the UI always uploads there even when `agent-api-dotnet` is the active chat backend. Avoids duplicating Blob SDK plumbing and a second nginx location block; the trade-off is that voice/image attachments require the Python pod to be up regardless of which backend is chosen for the chat turn itself.
+3. **Each backend uploads independently, to the same container.** `POST /media/upload` is implemented on both `agent-api` (Python, `media.py`) and `agent-api-dotnet` (`Services/MediaService.cs`), against the same `chat-media` Blob Storage container and identical env var names/blob-naming convention/SAS semantics. The UI's `getUploadApiBase()` follows whichever backend is currently selected — this keeps the .NET pipeline fully self-contained (no dependency on the Python pod being up) so it can be demoed as a pure .NET path.
 4. **Whisper lives on its own Azure OpenAI account.** See [Why Whisper needs its own account](#why-whisper-needs-its-own-azure-openai-account) below.
 
 <Aside type="caution">

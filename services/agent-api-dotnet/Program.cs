@@ -367,6 +367,7 @@ builder.Services.AddSingleton<IResponseEvaluator, MeaiGroundednessEvaluator>();
 builder.Services.AddSingleton<AgentService>();
 builder.Services.AddSingleton<SuggestionService>();
 builder.Services.AddSingleton<ConversationService>();
+builder.Services.AddSingleton<MediaService>();
 
 // ── Background services ───────────────────────────────────────────────────────
 builder.Services.AddHostedService<KafkaConsumerService>();
@@ -422,6 +423,23 @@ builder.Services.AddRateLimiter(opts =>
             factory: _ => new SlidingWindowRateLimiterOptions
             {
                 PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                SegmentsPerWindow = 4,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0,
+            });
+    });
+    // Mirrors Python agent-api's @limiter.limit("10/minute") on POST /media/upload.
+    opts.AddPolicy("media", httpContext =>
+    {
+        var key = httpContext.User?.FindFirst("sub")?.Value
+                  ?? httpContext.Connection.RemoteIpAddress?.ToString()
+                  ?? "anon";
+        return RateLimitPartition.GetSlidingWindowLimiter(
+            partitionKey: key,
+            factory: _ => new SlidingWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
                 Window = TimeSpan.FromMinutes(1),
                 SegmentsPerWindow = 4,
                 QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
@@ -739,6 +757,45 @@ app.MapGet("/suggestions/initial", async (
 
 app.MapGet("/models", (AppState state) =>
     Results.Ok(new { models = state.AvailableModels, @default = state.DefaultModel }));
+
+// ── /media/upload — chat attachment (image/audio) upload ─────────────────────
+// Mirrors Python agent-api's POST /media/upload (media.py) — same allowlist,
+// size cap, blob-naming convention, and AZURE_STORAGE_* env vars, so both
+// backends can share the chat-media Blob Storage container. This lets the
+// .NET pipeline run end-to-end with no dependency on the Python service.
+app.MapPost("/media/upload", async (
+    HttpContext httpContext,
+    MediaService mediaService) =>
+{
+    var form = await httpContext.Request.ReadFormAsync(httpContext.RequestAborted);
+    var file = form.Files["file"];
+    if (file is null)
+        return Results.Problem(detail: "Missing 'file' in form data", statusCode: 422);
+
+    var sessionId = httpContext.Request.Headers["X-Session-ID"].FirstOrDefault()
+        ?? Guid.NewGuid().ToString();
+
+    try
+    {
+        await using var stream = file.OpenReadStream();
+        var attachment = await mediaService.UploadAsync(
+            fileStream: stream,
+            contentLength: file.Length,
+            filename: file.FileName,
+            contentType: file.ContentType ?? "application/octet-stream",
+            sessionId: sessionId,
+            ct: httpContext.RequestAborted);
+        return Results.Ok(attachment);
+    }
+    catch (UnsupportedMediaTypeException ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 415);
+    }
+    catch (MediaTooLargeException ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 413);
+    }
+}).RequireAuthorization().RequireRateLimiting("media");
 
 app.MapGet("/tools", async (McpClientHolder holder, AppState state, HttpContext httpContext) =>
 {

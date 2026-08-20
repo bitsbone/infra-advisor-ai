@@ -3,10 +3,12 @@ using System.Text.Json.Serialization;
 namespace InfraAdvisor.AgentApi.Models;
 
 /// <summary>
-/// A chat attachment (image or audio) already uploaded to Blob Storage via the
-/// Python agent-api's POST /media/upload — this service receives the resulting
-/// URL, it never handles the upload itself. See docs/agent-guides — multimodal
-/// media upload architecture note (shared-endpoint decision).
+/// A chat attachment (image or audio) uploaded to Blob Storage — either via this
+/// service's own POST /media/upload (see Services/MediaService.cs) when the .NET
+/// pipeline is selected, or via the Python agent-api's POST /media/upload when
+/// the Python pipeline is selected. Each backend uploads independently to the
+/// same AZURE_STORAGE_MEDIA_CONTAINER container. See docs/agent-guides —
+/// multimodal media upload architecture note.
 /// </summary>
 public record AttachmentDto(
     [property: JsonPropertyName("url")] string Url,

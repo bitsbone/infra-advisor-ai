@@ -42,6 +42,11 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
 
+    <!-- Chat attachment (image/audio) upload to the same chat-media Blob Storage
+         container the Python agent-api uses — mirrors media.py's blob-upload +
+         read-SAS generation so this service's /media/upload has parity. -->
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.24.0" />
+
     <PackageReference Include="StackExchange.Redis" Version="2.13.1" />
     <PackageReference Include="Confluent.Kafka" Version="2.14.0" />
     <PackageReference Include="Npgsql" Version="9.0.3" />

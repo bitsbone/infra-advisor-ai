@@ -24,12 +24,12 @@ export function getApiBase(): string {
   return getBackend() === "dotnet" ? "/api-dotnet" : (import.meta.env.VITE_AGENT_API_URL || "/api");
 }
 
-// Chat attachment uploads always go to the Python agent-api's POST
-// /media/upload, regardless of which backend (`getBackend()`) is currently
-// selected for chat — there is one shared upload endpoint, not one per
-// backend. See docs/agent-guides — multimodal media upload architecture note.
+// Chat attachment uploads go to whichever backend (`getBackend()`) is
+// currently selected — each backend has its own POST /media/upload against
+// the same underlying chat-media Blob Storage container. See docs/agent-guides
+// — multimodal media upload architecture note.
 function getUploadApiBase(): string {
-  return import.meta.env.VITE_AGENT_API_URL || "/api";
+  return getApiBase();
 }
 
 export class ApiError extends Error {
@@ -68,8 +68,8 @@ export interface Attachment {
   size_bytes: number;
 }
 
-/** Upload a chat attachment (image or audio) to Blob Storage via the shared
- * Python agent-api endpoint and return the resulting reference. */
+/** Upload a chat attachment (image or audio) to Blob Storage via the currently
+ * selected backend's endpoint and return the resulting reference. */
 export async function uploadMedia(file: File): Promise<Attachment> {
   const sessionId = getRumSessionId() ?? getSessionId();
   const formData = new FormData();
