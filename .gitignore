@@ -9,6 +9,7 @@
 
 # Claude Code local settings (project settings.json is committed)
 .claude/settings.local.json
+graphify-out/
 
 # Local MCP server config (may contain token references)
 .mcp.json
