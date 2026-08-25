@@ -98,7 +98,7 @@ Native crash artifacts are symbol files rather than JavaScript source maps. iOS 
 
 Symbol upload is privileged build infrastructure. It uses a Datadog API key from a local credential helper or CI secret store, while the runtime SDK uses the public client token. Never pass the API key through `BuildConfig`, xcconfig files, application schemes, tracked `datadog-ci.json`, or the mobile binary.
 
-Both Error Lab screens include a debug-only **Trigger test crash** action. Run without an attached debugger, trigger the crash, and reopen the app so the SDK can upload its persisted report. The control is unavailable in release builds, and the intentional error contains no user, prompt, credential, or response data.
+Both Error Lab screens include a debug-only **Trigger test crash** action. On iOS, LLDB intercepts `fatalError` before the SDK can capture it, leaving the process suspended and making the simulator look frozen or blank. The iOS example detects an attached debugger and blocks the crash with recovery instructions: build the app, press Stop in Xcode, launch Infra Advisor directly from the Simulator home screen, trigger the crash, and tap the icon again. A debugger-free crash terminates the process, and the next launch returns to Login because the session is memory-only while the SDK uploads its persisted report. The control is unavailable in release builds, and the intentional error contains no user, prompt, credential, or response data.
 
 ## Sampling and production adaptation
 

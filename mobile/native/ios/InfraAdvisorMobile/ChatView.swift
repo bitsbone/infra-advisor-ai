@@ -1,5 +1,6 @@
 import SwiftUI
 import DatadogRUM
+import Darwin
 
 extension Color {
     static let infraAdvisorPurple = Color(red: 0.39, green: 0.17, blue: 0.65)
@@ -141,12 +142,26 @@ private struct IntentionalDemoError: LocalizedError {
     var errorDescription: String? { "Intentional handled error created by the Error Lab." }
 }
 
+/// LLDB intercepts fatal signals before Datadog or iOS can process them, which makes the
+/// simulator look frozen instead of terminated. Detect that state so the demo can explain
+/// the correct debugger-free launch procedure instead of creating a misleading hang.
+private enum DebuggerDetector {
+    static var isAttached: Bool {
+        var processInfo = kinfo_proc()
+        var query = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        var size = MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&query, u_int(query.count), &processInfo, &size, nil, 0) == 0 else { return false }
+        return (processInfo.kp_proc.p_flag & P_TRACED) != 0
+    }
+}
+
 struct ErrorLabView: View {
     @EnvironmentObject private var session: SessionStore
     let api: APIClientProtocol
     @State private var status = "Choose a signal to generate."
     @State private var isCallingAPI = false
     @State private var confirmsCrash = false
+    @State private var showsDebuggerInstructions = false
 
     var body: some View {
         NavigationStack {
@@ -193,8 +208,11 @@ struct ErrorLabView: View {
                 }
 #if DEBUG
                 Section("App crash") {
-                    Button("Trigger test crash", role: .destructive) { confirmsCrash = true }
-                    Text("Run without the Xcode debugger, confirm the crash, then reopen the app so Crash Reporting can upload it.")
+                    Button("Trigger test crash", role: .destructive) {
+                        if DebuggerDetector.isAttached { showsDebuggerInstructions = true }
+                        else { confirmsCrash = true }
+                    }
+                    Text("First build the app, press Stop in Xcode, and launch Infra Advisor directly from the Simulator home screen. After the crash closes the app, tap its icon again to return to Login and upload the report.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -207,6 +225,11 @@ struct ErrorLabView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Unsaved in-memory session state will be lost. This control is available only in Debug builds.")
+            }
+            .alert("Xcode debugger is attached", isPresented: $showsDebuggerInstructions) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Xcode pauses on fatalError, which looks like a frozen or blank app. Press Stop in Xcode, launch Infra Advisor from the Simulator home screen, sign in again, and then trigger the crash.")
             }
         }
         .trackRUMView(name: "Error Lab")

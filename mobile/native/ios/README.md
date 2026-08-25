@@ -79,7 +79,7 @@ xcodebuild archive -workspace InfraAdvisorMobile.xcworkspace -scheme InfraAdviso
 
 Do not place the API key in `Shared.xcconfig`, `Local.xcconfig`, the Xcode project, or an application scheme. The client token initializes the shipped SDK; the API key is privileged CI-only upload authorization.
 
-For a crash smoke test, run a Debug build without the Xcode debugger attached, open Errors, and tap **Trigger test crash**. Relaunch the application so the SDK can send the stored crash report, then confirm the issue in RUM Error Tracking. Simulator crashes can validate capture, but Datadog symbolication uses dSYMs from physical-device builds.
+For a crash smoke test, first build and run the Debug app normally, then press Xcode's **Stop** button. Return to the Simulator home screen and tap the **Infra Advisor** icon directly; launching from the icon ensures LLDB is not attached. Sign in again, open Errors, tap **Trigger test crash**, and confirm **Crash now**. The app should close immediately. Tap its Simulator icon again: the app returns to Login because authentication is intentionally memory-only, and the SDK uploads the stored crash report after startup. If Xcode's debugger is still attached, the app blocks the crash and displays these instructions because LLDB would otherwise pause on `fatalError` and make the simulator appear frozen or blank. Simulator crashes validate capture, but Datadog symbolication uses dSYMs from physical-device builds.
 
 The deeper lifecycle and privacy rationale is documented in [`../../OBSERVABILITY_PATTERNS.md`](../../OBSERVABILITY_PATTERNS.md).
 

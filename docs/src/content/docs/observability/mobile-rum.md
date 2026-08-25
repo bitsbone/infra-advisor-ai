@@ -73,7 +73,7 @@ xcodebuild archive -workspace InfraAdvisorMobile.xcworkspace -scheme InfraAdviso
 ./gradlew assembleRelease uploadMappingRelease
 ```
 
-Each Error Lab screen includes a debug-only **Trigger test crash** control. Run the app without an attached debugger, trigger the crash, reopen the app so the stored report can upload, and confirm the issue in RUM Error Tracking. iOS crash symbolication requires dSYMs from a physical-device build; Android release deobfuscation requires the mapping file for that exact build ID.
+Each Error Lab screen includes a debug-only **Trigger test crash** control. On iOS, Xcode's debugger intercepts `fatalError` and suspends the process, which looks like a frozen or blank simulator app and prevents the SDK from handling a real crash. The iOS control detects this condition and shows recovery instructions instead: build the app, press Stop in Xcode, launch Infra Advisor directly from the Simulator home screen, trigger the crash, and tap the icon again. A debugger-free crash closes the app, and the next launch returns to Login because the JWT is memory-only while the SDK uploads the saved report. iOS crash symbolication requires dSYMs from a physical-device build; Android release deobfuscation requires the mapping file for that exact build ID.
 
 ## Data minimization
 
