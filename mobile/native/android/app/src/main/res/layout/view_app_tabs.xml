@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="56dp"
+    android:background="#FFFFFF"
+    android:elevation="8dp"
+    android:gravity="center"
+    android:orientation="horizontal"
+    android:paddingHorizontal="8dp">
+
+    <Button
+        android:id="@+id/tab_chat"
+        style="?attr/borderlessButtonStyle"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:text="@string/chat" />
+
+    <Button
+        android:id="@+id/tab_errors"
+        style="?attr/borderlessButtonStyle"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:text="@string/errors" />
+
+    <Button
+        android:id="@+id/tab_info"
+        style="?attr/borderlessButtonStyle"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:text="@string/info" />
+</LinearLayout>

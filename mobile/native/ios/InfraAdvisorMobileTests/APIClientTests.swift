@@ -125,4 +125,20 @@ final class APIClientTests: XCTestCase {
             XCTAssertEqual(error, .http(status: 401, message: "Invalid email or password"))
         }
     }
+
+    func testErrorLabUsesBearerHeaderAndIntentionalMissingRoute() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/error-lab/not-found")
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer jwt")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!
+            return (response, #"{"detail":"Not Found"}"#.data(using: .utf8)!)
+        }
+        do {
+            try await client.simulateAPIError(token: "jwt")
+            XCTFail("Expected a 404")
+        } catch let error as APIClientError {
+            XCTAssertEqual(error, .http(status: 404, message: "Not Found"))
+        }
+    }
 }

@@ -1,9 +1,9 @@
 ---
 title: Native Mobile RUM
-description: Native iOS and Android RUM, Session Replay, resource monitoring, and distributed tracing into the InfraAdvisor AI backend
+description: Native iOS and Android RUM, Session Replay, logs, error tracking, resource monitoring, and distributed tracing into the InfraAdvisor AI backend
 ---
 
-InfraAdvisor AI includes two intentionally small native mobile applications that demonstrate how a client interaction becomes a correlated RUM action, network resource, mobile span, backend APM trace, and AI response. Both clients use the deployed `/auth/login` and `/api/query` contracts without changing the backend.
+InfraAdvisor AI includes two intentionally small native mobile applications that demonstrate how a client interaction becomes a correlated RUM action, network resource, mobile span, backend APM trace, and AI response. They also demonstrate crash capture and release symbol upload so Error Tracking shows actionable native stack frames. Both clients use the deployed `/auth/login` and `/api/query` contracts without changing the backend.
 
 The source lives under `mobile/native/ios` and `mobile/native/android`. Reserved `mobile/cross-platform/react-native` and `mobile/cross-platform/maui` directories make the platform boundary explicit for future examples.
 
@@ -22,13 +22,13 @@ The Login view calls `POST /auth/login`. A successful response is retained only 
 
 The Chat view generates a session ID and calls the selected backend's query endpoint. Both apps list and load persisted conversations, discover available models, provide Python/.NET backend selection, and send `X-Conversation-ID` so the backend saves each exchange. Starting a new chat clears the visible transcript and creates a fresh session; the JWT remains memory-only. Prompt suggestions include a federal procurement question designed to exercise the MCP procurement search path.
 
-Authenticated navigation exposes matching Chat and Info destinations on both platforms. Info shows the logged-in user, API endpoint, Datadog site/environment/service/application ID, and sampling/privacy settings, but deliberately omits the client token. Both apps use the same purple brand color, grouped background, rounded white controls, blue user messages, and light-purple assistant messages.
+Authenticated navigation exposes matching Chat, Error Lab, and Info destinations on both platforms. Error Lab generates handled mobile errors, instrumented API failures, fixed logs, and debug-only crashes. Info shows the logged-in user, API endpoint, Datadog site/environment/service/application ID, and sampling/privacy settings, but deliberately omits the client token. Both apps use the same purple brand color, grouped background, rounded white controls, blue user messages, and light-purple assistant messages.
 
 The native layouts also demonstrate platform-safe responsive patterns. Android uses an in-layout toolbar and applies system-bar plus display-cutout insets to the outer activity root, which is required when modern target SDKs enforce edge-to-edge drawing. iOS gives conversation and model menus full-width rows, uses a full-width backend segmented control, exposes suggestions through an expandable list, and keeps the composer pinned while the rest of the chat scrolls.
 
 ## iOS automatic instrumentation
 
-The iOS 16+ project uses SwiftUI, CocoaPods, `DatadogCore`, `DatadogRUM`, `DatadogSessionReplay`, `DatadogTrace`, and a typed `URLSession` API client.
+The iOS 16+ project uses SwiftUI, CocoaPods, `DatadogCore`, `DatadogCrashReporting`, `DatadogLogs`, `DatadogRUM`, `DatadogSessionReplay`, `DatadogTrace`, and a typed `URLSession` API client.
 
 `InfraAdvisorMobileApp.swift` initializes Datadog with the US3 site, demo environment, service name, 100% demo sampling, SwiftUI view/action predicates, and a narrow first-party host rule. It then enables `URLSessionInstrumentation` for `InfraAdvisorURLSessionDelegate` and constructs the API session with an instance of that delegate. Requests created by `APIClient.swift` are observed automatically: the SDK starts the RUM resource, creates the correlated mobile span, and injects trace context only for the trusted InfraAdvisor host.
 
@@ -38,13 +38,42 @@ Session Replay is enabled after RUM with `replaySampleRate: 100`, `textAndInputP
 
 ## Android Volley adapter
 
-The Android API 23+ project contains Java source only and uses Volley for all HTTP calls. Datadog does not automatically instrument this request path, so `ObservedJsonRequest.java` and `VolleyTelemetry.java` provide a reusable manual boundary.
+The Android API 23+ project contains Java source only and uses Volley for all HTTP calls. Datadog does not automatically instrument this request path, so `InstrumentedJsonRequest.java` and `VolleyTelemetry.java` provide a reusable manual boundary. `ApiClient` creates a new instrumented request for every operation; it does not reuse one mutable Volley request instance.
 
 For each request, the adapter starts one RUM resource and one client span, injects Datadog and W3C trace headers into a copy of the request headers, attaches the trace/span correlation fields to the RUM resource, and completes both signals on success, HTTP error, transport error, or cancellation.
 
 An atomic compare-and-set guard makes terminal completion exactly once. This is important because cancellation can race a late Volley callback. Unit tests cover this invariant, propagation-header merging, and removal of query strings and fragments from telemetry URLs.
 
 Android installs `dd-sdk-android-session-replay` and enables replay with a 100% sample rate and `TextAndInputPrivacy.MASK_SENSITIVE_INPUTS` after RUM initialization. The reusable Volley request accepts GET and POST operations, applies a 90-second zero-retry policy to AI queries, and reports timeout, connectivity, authentication, HTTP, and parsing failures distinctly. Avoiding automatic POST retries prevents one prompt from executing twice.
+
+## Logs and Error Lab
+
+Both apps enable Datadog Logs after Core initialization and create a reusable logger with 100% remote sampling, RUM correlation, and trace correlation. They send a fixed startup event, while Error Lab can emit fixed info, warning, and error logs. The logger interface intentionally accepts only controlled `demo.*` metadata and never receives email addresses, passwords, JWTs, prompts, authorization headers, request bodies, response bodies, or raw backend error content.
+
+The handled-error action reports a synthetic exception to RUM Error Tracking and emits a correlated error log. The API-error action requests an intentionally missing route through the same typed `URLSession` or instrumented Volley client used by production calls, which demonstrates a real failed resource and client span without adding a backend failure endpoint. The crash action is available only in Debug builds and requires confirmation.
+
+## Crash reporting and native symbols
+
+iOS enables `DatadogCrashReporting` immediately after Core initialization. Native crash state is persisted on the device and uploaded after the next application launch. Android's enabled RUM module collects uncaught Java exceptions; the optional NDK module is not included because this educational Android application contains Java source only and no application C or C++ code.
+
+Although teams sometimes call every client artifact a source map, these native applications use platform symbol files. iOS Release device builds generate dSYM bundles, and Android's obfuscated Release build generates an R8 `mapping.txt`. Datadog matches those artifacts to crash reports using the iOS dSYM UUID or the Android build ID.
+
+The iOS target has a final build phase that calls `scripts/upload-dsyms.sh`. The script uploads only Release device symbols, defaults to `us3.datadoghq.com`, and safely skips when `DATADOG_API_KEY` is absent. Android applies the Datadog Gradle plugin, enables R8 for Release, and exposes `uploadMappingRelease`. Both upload paths obtain their API key only from the build environment; the API key is never placed in app configuration, source, an application bundle, or telemetry.
+
+For iOS, provide the key through a CI secret or local credential helper and create a device archive. For Android, build the obfuscated release and invoke its mapping task:
+
+```bash
+# iOS, from mobile/native/ios
+# Set DATADOG_API_KEY through your local secret manager or CI secret store.
+export DATADOG_SITE=us3.datadoghq.com
+xcodebuild archive -workspace InfraAdvisorMobile.xcworkspace -scheme InfraAdvisorMobile -configuration Release -destination 'generic/platform=iOS' -archivePath build/InfraAdvisorMobile.xcarchive
+
+# Android, from mobile/native/android
+# Set DATADOG_API_KEY through your local secret manager or CI secret store.
+./gradlew assembleRelease uploadMappingRelease
+```
+
+Each Error Lab screen includes a debug-only **Trigger test crash** control. Run the app without an attached debugger, trigger the crash, reopen the app so the stored report can upload, and confirm the issue in RUM Error Tracking. iOS crash symbolication requires dSYMs from a physical-device build; Android release deobfuscation requires the mapping file for that exact build ID.
 
 ## Data minimization
 
@@ -88,7 +117,7 @@ Prerequisites: Android Studio with Android SDK 37, JDK 17, an API 23+ emulator o
 4. In **Tools → Device Manager**, choose **Create Virtual Device**, select a Pixel profile, and choose a Google APIs system image with API 35 or newer.
 5. Finish the device, start it with the Play button, and wait for the Android home screen.
 6. After Gradle sync completes, choose the `app` run configuration and the running emulator in the toolbar, then click **Run**.
-7. Sign in, choose a sample prompt, select Python or .NET and an available model, submit multiple turns, reopen the saved conversation, navigate to Info, inspect the response and trace metadata, start a new chat, then log out.
+7. Sign in, choose a sample prompt, select Python or .NET and an available model, submit multiple turns, reopen the saved conversation, exercise Error Lab, navigate to Info, inspect the response and trace metadata, start a new chat, then log out.
 
 The app uses the deployed HTTPS endpoint by default. If the run configuration is missing, use **File → Sync Project with Gradle Files**. If the emulator is missing from the device selector, verify that it is running in Device Manager and that Platform Tools are installed.
 
@@ -124,12 +153,15 @@ Do not pass secrets on a shared shell because command-line arguments may be reta
 ## Verify in Datadog
 
 1. Sign in and confirm the session contains the backend user ID and email.
-2. Confirm `Login`/`LoginActivity`, `Chat`/`ChatActivity`, and `Info`/`InfoActivity` RUM views and their navigation/actions.
+2. Confirm `Login`/`LoginActivity`, `Chat`/`ChatActivity`, `Error Lab`/`ErrorLabActivity`, and `Info`/`InfoActivity` RUM views and their navigation/actions.
 3. Submit a query and open the `/api/query` resource in the session timeline.
 4. Pivot from the resource to its mobile client span.
 5. Confirm the trace continues through the InfraAdvisor backend and into the AI agent/model/tool spans.
 6. Reopen the saved conversation and confirm its messages, backend, and model reload.
-7. Open the session replay and confirm the Login-to-Chat-to-Info journey was recorded with sensitive inputs masked.
-8. Log out and confirm subsequent events no longer carry the previous user identity.
+7. Open Error Lab, record a handled error, request the missing route, send the fixed sample logs, and verify their RUM context and safe attributes.
+8. Open the session replay and confirm the Login-to-Chat-to-Error-Lab-to-Info journey was recorded with sensitive inputs masked.
+9. Log out and confirm subsequent events no longer carry the previous user identity.
+10. Run a Debug build without an attached debugger, use Error Lab to trigger the intentional crash, reopen the app, and confirm the crash reaches RUM Error Tracking.
+11. Upload the matching Release dSYM or R8 mapping artifact and verify that the Error Tracking stack includes application function, file, and line information.
 
 The local builds and automated tests prove compilation, serialization, error handling, header behavior, and completion lifecycles. The final RUM-to-backend trace check requires a live run because it depends on an active account, network access, and the Datadog applications receiving telemetry.

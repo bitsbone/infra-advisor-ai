@@ -1,4 +1,7 @@
-plugins { id "com.android.application" }
+plugins {
+    id "com.android.application"
+    id "com.datadoghq.dd-sdk-android-gradle-plugin"
+}
 
 // Environment variables are the machine-local override; tracked Gradle properties provide demo defaults.
 def configValue = { String propertyName, String environmentName -> providers.environmentVariable(environmentName).orElse(providers.gradleProperty(propertyName)).get() }
@@ -25,6 +28,15 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    buildTypes {
+        release {
+            // R8 produces the mapping file consumed by Datadog Error Tracking. Upload credentials
+            // are supplied only to the upload task through DATADOG_API_KEY or DD_API_KEY.
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
     buildFeatures { buildConfig true }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -34,10 +46,17 @@ android {
     testOptions { unitTests.returnDefaultValues = true }
 }
 
+datadog {
+    site = "US3"
+    serviceName = configValue('datadogService', 'DD_SERVICE')
+    checkProjectDependencies = "warn"
+}
+
 dependencies {
     implementation "androidx.appcompat:appcompat:1.7.1"
     implementation "com.android.volley:volley:1.2.1"
     implementation "com.datadoghq:dd-sdk-android-rum:3.11.0"
+    implementation "com.datadoghq:dd-sdk-android-logs:3.11.0"
     implementation "com.datadoghq:dd-sdk-android-session-replay:3.11.0"
     implementation "com.datadoghq:dd-sdk-android-trace:3.11.0"
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"

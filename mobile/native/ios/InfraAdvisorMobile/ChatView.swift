@@ -128,10 +128,88 @@ struct AuthenticatedRootView: View {
         TabView {
             ChatView(api: api)
                 .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
+            ErrorLabView(api: api)
+                .tabItem { Label("Errors", systemImage: "exclamationmark.triangle") }
             InfoView(config: config)
                 .tabItem { Label("Info", systemImage: "person.crop.circle") }
         }
         .tint(Color.infraAdvisorPurple)
+    }
+}
+
+private struct IntentionalDemoError: LocalizedError {
+    var errorDescription: String? { "Intentional handled error created by the Error Lab." }
+}
+
+struct ErrorLabView: View {
+    @EnvironmentObject private var session: SessionStore
+    let api: APIClientProtocol
+    @State private var status = "Choose a signal to generate."
+    @State private var isCallingAPI = false
+    @State private var confirmsCrash = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Generate safe, intentional telemetry and then inspect it in Datadog. No credentials, prompts, or payload bodies are attached to these events.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Section("Handled mobile error") {
+                    Button("Record handled error") {
+                        let error = IntentionalDemoError()
+                        RUMMonitor.shared().addError(error: error, attributes: ["demo.intentional": true, "demo.error.kind": "handled"])
+                        DemoLogReporter.handledError(error)
+                        status = "Handled RUM error and correlated error log recorded."
+                    }
+                }
+                Section("API response error") {
+                    Button(isCallingAPI ? "Requesting…" : "Request missing route") {
+                        guard let token = session.login?.token else { return }
+                        isCallingAPI = true
+                        Task {
+                            do {
+                                try await api.simulateAPIError(token: token)
+                                status = "The route unexpectedly succeeded."
+                            } catch let error as APIClientError {
+                                if case let .http(code, _) = error { DemoLogReporter.apiFailure(status: code) }
+                                else { DemoLogReporter.apiFailure(status: nil) }
+                                status = "Expected API failure captured: \(error.localizedDescription)"
+                            } catch {
+                                DemoLogReporter.apiFailure(status: nil)
+                                status = "Expected transport failure captured: \(error.localizedDescription)"
+                            }
+                            isCallingAPI = false
+                        }
+                    }
+                    .disabled(isCallingAPI)
+                }
+                Section("Logs") {
+                    Button("Send info, warning, and error logs") {
+                        DemoLogReporter.sendExamples()
+                        status = "Three correlated sample logs queued for upload."
+                    }
+                }
+#if DEBUG
+                Section("App crash") {
+                    Button("Trigger test crash", role: .destructive) { confirmsCrash = true }
+                    Text("Run without the Xcode debugger, confirm the crash, then reopen the app so Crash Reporting can upload it.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+#endif
+                Section("Latest result") { Text(status).textSelection(.enabled) }
+            }
+            .navigationTitle("Error Lab")
+            .confirmationDialog("Crash the demo app?", isPresented: $confirmsCrash, titleVisibility: .visible) {
+                Button("Crash now", role: .destructive) { fatalError("Intentional Infra Advisor iOS demo crash") }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Unsaved in-memory session state will be lost. This control is available only in Debug builds.")
+            }
+        }
+        .trackRUMView(name: "Error Lab")
     }
 }
 
@@ -345,6 +423,9 @@ struct InfoView: View {
                     LabeledContent("Replay sampling", value: "100%")
                     LabeledContent("Replay privacy", value: "Mask sensitive inputs")
                     LabeledContent("Trace sampling", value: "\(Int(config.traceSampleRate))%")
+                    LabeledContent("Logs", value: "Enabled · 100% sampling")
+                    LabeledContent("Crash reporting", value: "Enabled")
+                    LabeledContent("Crash symbols", value: "Release dSYM upload")
                 }
                 Section("API") { LabeledContent("Base URL", value: config.apiBaseURL.absoluteString) }
                 Section { Button("Logout", role: .destructive, action: session.signOut) }

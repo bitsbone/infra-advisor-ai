@@ -85,6 +85,9 @@
                 android:textColor="#1F1F1F"
                 android:textIsSelectable="true"
                 android:textSize="15sp" />
+
         </LinearLayout>
     </ScrollView>
+
+    <include layout="@layout/view_app_tabs" />
 </LinearLayout>

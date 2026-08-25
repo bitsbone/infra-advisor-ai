@@ -148,4 +148,6 @@
             android:textSize="12sp"
             android:typeface="monospace" />
     </LinearLayout>
+
+    <include layout="@layout/view_app_tabs" />
 </LinearLayout>

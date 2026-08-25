@@ -9,18 +9,25 @@ import java.util.HashMap;
 import java.util.Map;
 import org.json.JSONObject;
 
-public final class ObservedJsonRequest extends JsonObjectRequest {
+/**
+ * Per-call Volley JSON request with the demo's shared Datadog instrumentation policy.
+ *
+ * ApiClient creates a new instance for every HTTP operation; the reusable behavior is this class,
+ * not a singleton request. Keeping telemetry at this boundary ensures every current and future API
+ * call gets the same resource, span, trace propagation, cancellation, and sanitization behavior.
+ */
+public final class InstrumentedJsonRequest extends JsonObjectRequest {
     private final VolleyTelemetry telemetry;
     private int responseStatus = 200;
     private long responseSize;
     private final Map<String, String> requestHeaders;
 
-    public ObservedJsonRequest(int method, String url, JSONObject body, Map<String, String> headers, int timeoutMs,
+    public InstrumentedJsonRequest(int method, String url, JSONObject body, Map<String, String> headers, int timeoutMs,
                                Response.Listener<JSONObject> listener, Response.ErrorListener errorListener) {
         this(new VolleyTelemetry(methodName(method), sanitize(url)), method, url, body, headers, timeoutMs, listener, errorListener);
     }
 
-    private ObservedJsonRequest(VolleyTelemetry telemetry, int method, String url, JSONObject body,
+    private InstrumentedJsonRequest(VolleyTelemetry telemetry, int method, String url, JSONObject body,
                                 Map<String, String> headers, int timeoutMs, Response.Listener<JSONObject> listener,
                                 Response.ErrorListener errorListener) {
 

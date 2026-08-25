@@ -10,7 +10,7 @@ import dev.kyletaylor.infraadvisor.mobile.model.LoginResponse;
 import dev.kyletaylor.infraadvisor.mobile.model.QueryResponse;
 import dev.kyletaylor.infraadvisor.mobile.model.ConversationDetail;
 import dev.kyletaylor.infraadvisor.mobile.model.ConversationSummary;
-import dev.kyletaylor.infraadvisor.mobile.observability.ObservedJsonRequest;
+import dev.kyletaylor.infraadvisor.mobile.observability.InstrumentedJsonRequest;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -109,9 +109,17 @@ public final class ApiClient {
         } catch (JSONException error) { result.failure(error); }
     }
 
+    /** Uses the normal instrumented Volley path to produce a controlled HTTP 404 resource. */
+    public void simulateApiError(String token, Result<JSONObject> result) {
+        enqueue(Request.Method.GET, "/api/error-lab/not-found", null, authHeaders(token), STANDARD_TIMEOUT_MS,
+                result::success, result::failure);
+    }
+
     private void enqueue(int method, String path, JSONObject body, Map<String, String> headers, int timeoutMs,
                          Response.Listener<JSONObject> listener, Response.ErrorListener errors) {
-        queue.add(new ObservedJsonRequest(method, baseUrl + path, body, headers, timeoutMs, listener, errors));
+        // A fresh request is created for each operation; InstrumentedJsonRequest is the reusable
+        // policy boundary that gives every call the same Datadog resource/span behavior.
+        queue.add(new InstrumentedJsonRequest(method, baseUrl + path, body, headers, timeoutMs, listener, errors));
     }
 
     static String apiPath(String backend, String route) {

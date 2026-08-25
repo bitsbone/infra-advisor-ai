@@ -5,6 +5,9 @@ import com.datadog.android.Datadog;
 import com.datadog.android.DatadogSite;
 import com.datadog.android.core.configuration.Configuration;
 import com.datadog.android.privacy.TrackingConsent;
+import com.datadog.android.log.Logger;
+import com.datadog.android.log.Logs;
+import com.datadog.android.log.LogsConfiguration;
 import com.datadog.android.rum.Rum;
 import com.datadog.android.rum.RumConfiguration;
 import com.datadog.android.rum.tracking.ActivityViewTrackingStrategy;
@@ -23,6 +26,7 @@ import java.util.EnumSet;
 public final class InfraAdvisorApplication extends Application {
     private final Session session = new Session();
     private ApiClient apiClient;
+    private Logger demoLogger;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -40,7 +44,21 @@ public final class InfraAdvisorApplication extends Application {
                 .trackUserInteractions()
                 .useViewTrackingStrategy(new ActivityViewTrackingStrategy(true))
                 .build();
+        // Enabling RUM also installs Datadog's uncaught Java exception collection. This app has no
+        // application C/C++ code, so the optional NDK crash-reporting module is intentionally absent.
         Rum.enable(rumConfiguration);
+        // Logs is a separate SDK feature. This logger sends every fixed demo event and bundles
+        // it with active RUM/trace context. Callers must never pass credentials or payload data.
+        Logs.enable(new LogsConfiguration.Builder().build());
+        demoLogger = new Logger.Builder()
+                .setService(BuildConfig.DD_SERVICE)
+                .setName("infra-advisor-demo")
+                .setNetworkInfoEnabled(true)
+                .setBundleWithRumEnabled(true)
+                .setBundleWithTraceEnabled(true)
+                .setRemoteSampleRate(100f)
+                .build();
+        demoLogger.i("Infra Advisor mobile observability initialized", null, demoAttributes("app_started"));
         // Record every sampled demo RUM session. Session Replay keeps its privacy defaults;
         // credentials, JWTs, prompts, and payloads are never added as telemetry attributes.
         SessionReplay.enable(new SessionReplayConfiguration.Builder(100f)
@@ -61,6 +79,16 @@ public final class InfraAdvisorApplication extends Application {
 
     public Session session() { return session; }
     public ApiClient api() { return apiClient; }
+    public Logger logger() { return demoLogger; }
+
+    /** Returns safe, fixed attributes for educational events. Never add user or request data. */
+    public static java.util.Map<String, Object> demoAttributes(String signal) {
+        java.util.Map<String, Object> attributes = new java.util.HashMap<>();
+        attributes.put("demo.signal", signal);
+        attributes.put("demo.platform", "android");
+        attributes.put("demo.intentional", true);
+        return attributes;
+    }
 
     private static DatadogSite parseSite(String value) {
         try { return DatadogSite.valueOf(value.toUpperCase(java.util.Locale.US)); }

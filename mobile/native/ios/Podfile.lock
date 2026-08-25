@@ -1,7 +1,12 @@
 PODS:
   - DatadogCore (3.2.0):
     - DatadogInternal (= 3.2.0)
+  - DatadogCrashReporting (3.2.0):
+    - DatadogInternal (= 3.2.0)
+    - PLCrashReporter (~> 1.12.0)
   - DatadogInternal (3.2.0)
+  - DatadogLogs (3.2.0):
+    - DatadogInternal (= 3.2.0)
   - DatadogRUM (3.2.0):
     - DatadogInternal (= 3.2.0)
   - DatadogSessionReplay (3.2.0):
@@ -10,9 +15,12 @@ PODS:
     - DatadogInternal (= 3.2.0)
     - OpenTelemetrySwiftApi (= 1.13.1)
   - OpenTelemetrySwiftApi (1.13.1)
+  - PLCrashReporter (1.12.0)
 
 DEPENDENCIES:
   - DatadogCore (~> 3.0)
+  - DatadogCrashReporting (~> 3.0)
+  - DatadogLogs (~> 3.0)
   - DatadogRUM (~> 3.0)
   - DatadogSessionReplay (~> 3.0)
   - DatadogTrace (~> 3.0)
@@ -20,20 +28,26 @@ DEPENDENCIES:
 SPEC REPOS:
   trunk:
     - DatadogCore
+    - DatadogCrashReporting
     - DatadogInternal
+    - DatadogLogs
     - DatadogRUM
     - DatadogSessionReplay
     - DatadogTrace
     - OpenTelemetrySwiftApi
+    - PLCrashReporter
 
 SPEC CHECKSUMS:
   DatadogCore: 8f360d91ec79c8799e753ec1abe3169911ee50fa
+  DatadogCrashReporting: 0a392c47eaf0294df7e04c9ae113e97612af63b3
   DatadogInternal: 291b5ad0142280a651ab196ebd30dcd1d37cf6ff
+  DatadogLogs: 3ce559b785c8013911be4777845e46202046e618
   DatadogRUM: f26899d603f1797b4a41e00b5ee1aa0f6c972ef2
   DatadogSessionReplay: 5759c700a1a7df795068e0ab87d807bcc1f987a8
   DatadogTrace: 95e5fb69876ce3ab223dd8ef3036605c89db3cdf
   OpenTelemetrySwiftApi: aaee576ed961e0c348af78df58b61300e95bd104
+  PLCrashReporter: db59ef96fa3d25f3650040d02ec2798cffee75f2
 
-PODFILE CHECKSUM: 96785700ac1c9e7e4a46e4787dcf53be285361e9
+PODFILE CHECKSUM: 14ff9094e71fc3b9c0dfd995ab0adb5fe5647ea8
 
 COCOAPODS: 1.16.2

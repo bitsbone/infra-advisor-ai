@@ -68,6 +68,7 @@ public final class ChatActivity extends AppCompatActivity {
         setSupportActionBar((Toolbar) findViewById(R.id.toolbar));
         setTitle(R.string.chat_title);
         bindViews();
+        AppTabs.bind(this, AppTabs.Destination.CHAT);
         configureSelectors();
         ask.setOnClickListener(view -> submit());
         newChat.setOnClickListener(view -> resetChat());
@@ -293,13 +294,11 @@ public final class ChatActivity extends AppCompatActivity {
     }
 
     @Override public boolean onCreateOptionsMenu(Menu menu) {
-        menu.add(R.string.info).setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         menu.add(R.string.logout).setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         return true;
     }
 
     @Override public boolean onOptionsItemSelected(MenuItem item) {
-        if (item.getTitle().equals(getString(R.string.info))) { startActivity(new Intent(this, InfoActivity.class)); return true; }
         if (item.getTitle().equals(getString(R.string.logout))) { app().session().clear(); openLogin(); return true; }
         return super.onOptionsItemSelected(item);
     }

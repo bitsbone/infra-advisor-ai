@@ -28,7 +28,7 @@ public final class VolleyTelemetryTest {
                 "x-datadog-trace-id", "123"
         );
 
-        Map<String, String> merged = ObservedJsonRequest.mergeHeaders(application, propagation);
+        Map<String, String> merged = InstrumentedJsonRequest.mergeHeaders(application, propagation);
 
         assertEquals("Bearer example", merged.get("Authorization"));
         assertEquals("00-example", merged.get("traceparent"));
@@ -39,7 +39,7 @@ public final class VolleyTelemetryTest {
     @Test public void telemetryUrlDropsQueryAndFragment() {
         assertEquals(
                 "https://example.test/api/query",
-                ObservedJsonRequest.sanitize("https://example.test/api/query?token=secret#answer")
+                InstrumentedJsonRequest.sanitize("https://example.test/api/query?token=secret#answer")
         );
     }
 }

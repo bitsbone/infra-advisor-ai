@@ -13,4 +13,11 @@
     <string name="empty_history">Choose a sample prompt or enter a question below to start a chat.</string>
     <string name="prompt_hint">Ask about infrastructure risks, resilience, funding, or planning…</string>
     <string name="new_conversation">New conversation</string>
+    <string name="errors">Errors</string>
+    <string name="error_lab">Error Lab</string>
+    <string name="error_lab_intro">Generate safe, intentional telemetry and inspect it in Datadog. Credentials, prompts, and payload bodies are never attached.</string>
+    <string name="handled_error">Record handled error</string>
+    <string name="api_error">Request missing API route</string>
+    <string name="sample_logs">Send info, warning, and error logs</string>
+    <string name="test_crash">Trigger test crash</string>
 </resources>

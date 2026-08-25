@@ -5,7 +5,7 @@ This guide makes the demo's reusable implementation decisions explicit. The two 
 ## End-to-end signal flow
 
 ```text
-Login, Chat, or Info view
+Login, Chat, Error Lab, or Info view
   -> RUM action
   -> RUM resource for POST /auth/login or POST /api/query
   -> mobile client span carrying Datadog + W3C trace headers
@@ -26,6 +26,14 @@ Both the RUM `urlSessionTracking` configuration and delegate instrumentation are
 
 Named `.trackRUMView(name:)` modifiers make SwiftUI's `Login` and `Chat` screens stable RUM view names even if their Swift type names change later.
 
+## Logs and intentional error examples
+
+Both apps enable the dedicated Datadog Logs module after Core and create one reusable logger with 100% remote sampling plus RUM and trace correlation. A safe initialization event confirms intake after launch. Error Lab can emit fixed information, warning, and error examples, and handled mobile errors are sent to both RUM Error Tracking and Logs so the relationship is visible during a demo.
+
+The logging facades accept only controlled event names and attributes such as `demo.signal`, `demo.platform`, and `demo.intentional`. They never receive identity values, credentials, JWTs, prompts, authorization headers, request bodies, response bodies, or raw backend errors. Preserve that narrow interface when reusing the pattern.
+
+The API-error action requests `/api/error-lab/not-found` through the normal instrumented client. The expected 404 exercises genuine resource, span, header-propagation, duration, status, and completion behavior without creating a privileged failure endpoint or sending user content. Crash actions are confirmation-gated and compiled only into Debug builds.
+
 ## Session Replay on both native platforms
 
 Both apps install the dedicated Datadog Session Replay module after RUM is enabled and use a 100% replay sample rate. The iOS configuration explicitly enables SwiftUI recording and `.maskSensitiveInputs`; Android records the activity-based UI with `TextAndInputPrivacy.MASK_SENSITIVE_INPUTS`. This policy masks inputs Datadog classifies as sensitive, including email, password, and phone fields, while allowing ordinary application text to remain useful in the replay. Neither app adds credentials, JWTs, prompts, or response bodies as RUM or span attributes.
@@ -40,7 +48,7 @@ Conversation list and detail responses populate the history selector and transcr
 
 ## Android: manual Volley adapter
 
-Volley is wrapped by `ObservedJsonRequest`. At construction it asks `VolleyTelemetry` to:
+Volley is wrapped by `InstrumentedJsonRequest`. `ApiClient` creates a new request instance for each API operation, while this reusable class applies the same instrumentation lifecycle to every request. At construction it asks `VolleyTelemetry` to:
 
 1. Generate a unique resource key.
 2. Start a client span and a matching RUM resource.
@@ -82,6 +90,16 @@ Never add these values to RUM attributes or span tags:
 
 The apps parse response bodies to render the UI, but telemetry receives only a readable error classification and safe transport metadata. Datadog client tokens and RUM application IDs are public client identifiers expected to be present in a mobile binary; Datadog API and application keys are secrets and must never be added.
 
+## Crash reporting and symbolication
+
+iOS enables the dedicated `DatadogCrashReporting` module after Core initialization. A native crash is written on-device and submitted after the next application launch. Android RUM installs uncaught Java exception collection as part of `Rum.enable`; this Java-only app does not add the optional NDK crash module because it contains no application C or C++ code.
+
+Native crash artifacts are symbol files rather than JavaScript source maps. iOS Release device builds produce dSYM bundles whose UUIDs match captured crashes. The final Xcode build phase calls `scripts/upload-dsyms.sh`, which refuses to upload Debug or simulator artifacts and reads `DATADOG_API_KEY` only from the build environment. Android enables R8 for Release, and the Datadog Gradle plugin injects a build ID and registers `uploadMappingRelease` for the generated `mapping.txt` file.
+
+Symbol upload is privileged build infrastructure. It uses a Datadog API key from a local credential helper or CI secret store, while the runtime SDK uses the public client token. Never pass the API key through `BuildConfig`, xcconfig files, application schemes, tracked `datadog-ci.json`, or the mobile binary.
+
+Both Error Lab screens include a debug-only **Trigger test crash** action. Run without an attached debugger, trigger the crash, and reopen the app so the SDK can upload its persisted report. The control is unavailable in release builds, and the intentional error contains no user, prompt, credential, or response data.
+
 ## Sampling and production adaptation
 
 RUM sessions, Session Replay recordings, and first-party traces are sampled at 100% in this demo so every live walkthrough is observable. For production, lower those rates based on traffic and cost, use tracking-consent and replay privacy behavior appropriate to the product, and inject configuration per environment. Keep the first-party host allowlist narrow in every environment.
@@ -90,9 +108,12 @@ RUM sessions, Session Replay recordings, and first-party traces are sampled at 1
 
 1. Log in with an existing Infra Advisor account.
 2. Confirm the RUM session has the backend user ID and email.
-3. Confirm separate `Login`, `Chat`, and `Info` views and their navigation/actions.
+3. Confirm separate `Login`, `Chat`, `Error Lab`, and `Info` views and their navigation/actions.
 4. Submit a query and open the `/api/query` RUM resource.
 5. Pivot to its mobile client span, then confirm the propagated trace continues into the Infra Advisor backend.
 6. Reopen the saved conversation and confirm its messages, backend, and model reload.
-7. Open the session replay and confirm the Login-to-Chat-to-Info journey was recorded with sensitive inputs masked.
-8. Log out and confirm later events no longer carry the prior user identity.
+7. Open Error Lab, record a handled error, request the missing route, send the three sample logs, and confirm the signals carry the active RUM context.
+8. Open the session replay and confirm the Login-to-Chat-to-Error-Lab-to-Info journey was recorded with sensitive inputs masked.
+9. Log out and confirm later events no longer carry the prior user identity.
+10. In a debugger-free Debug run, trigger the platform's test crash from Error Lab, reopen the app, and confirm the issue reaches RUM Error Tracking.
+11. Build a Release artifact with a secret-provided API key and confirm its dSYM or R8 mapping file appears under Datadog RUM Debug Symbols.

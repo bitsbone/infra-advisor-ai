@@ -11,6 +11,7 @@ protocol APIClientProtocol {
     func conversation(token: String, id: String) async throws -> ConversationDetail
     func createConversation(token: String, title: String, model: String, backend: Backend) async throws -> ConversationSummary
     func query(token: String, prompt: String, sessionID: String, model: String, backend: Backend, userID: String, conversationID: String) async throws -> QueryResponse
+    func simulateAPIError(token: String) async throws
 }
 
 enum APIClientError: LocalizedError, Equatable {
@@ -63,6 +64,13 @@ final class APIClient: APIClientProtocol {
         var headers = ["Content-Type": "application/json", "X-Session-ID": sessionID, "X-User-ID": userID, "X-Conversation-ID": conversationID]
         headers["Authorization"] = "Bearer \(token)"
         return try await request(path: backend.apiPrefix + "/query", method: "POST", body: encoder.encode(QueryRequest(query: prompt, sessionID: sessionID, model: model)), headers: headers, timeout: 90)
+    }
+
+    /// Exercises the same instrumented URLSession path as production calls against a route that
+    /// intentionally does not exist. This demonstrates HTTP error resources without adding a
+    /// special failure endpoint to the backend or sending user-provided content.
+    func simulateAPIError(token: String) async throws {
+        let _: ModelsResponse = try await get(path: "/api/error-lab/not-found", token: token)
     }
 
     private func get<Response: Decodable>(path: String, token: String?) async throws -> Response {
