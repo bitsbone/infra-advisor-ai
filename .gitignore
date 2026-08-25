@@ -56,6 +56,13 @@ publish/
 # Build artifacts
 *.tar.gz
 *.zip
+**/build/
+**/.gradle/
+**/DerivedData/
+**/Pods/
+**/*.xcworkspace/xcuserdata/
+**/*.xcodeproj/xcuserdata/
+mobile/native/ios/Config/Local.xcconfig
 
 # macOS
 .DS_Store

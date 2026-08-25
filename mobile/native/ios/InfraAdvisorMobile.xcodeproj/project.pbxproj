@@ -1,0 +1,495 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		11A84B23A0345FA6F9A8E07D /* Pods_InfraAdvisorMobileTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 75F7C843F9C2E39AB6093E80 /* Pods_InfraAdvisorMobileTests.framework */; };
+		A10000000000000000000001 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* AppConfig.swift */; };
+		A10000000000000000000002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* Models.swift */; };
+		A10000000000000000000003 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* APIClient.swift */; };
+		A10000000000000000000004 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* SessionStore.swift */; };
+		A10000000000000000000005 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* LoginView.swift */; };
+		A10000000000000000000006 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* ChatView.swift */; };
+		A10000000000000000000007 /* InfraAdvisorMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* InfraAdvisorMobileApp.swift */; };
+		A10000000000000000000008 /* APIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* APIClientTests.swift */; };
+		A10000000000000000000009 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* XCTest.framework */; };
+		EBC168C4B852DC6665A24987 /* Pods_InfraAdvisorMobile.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5B58DEEA39C7744AA93E0E87 /* Pods_InfraAdvisorMobile.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A30000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A40000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000001;
+			remoteInfo = InfraAdvisorMobile;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0D1ECC0079A1B19783DCAAD1 /* Pods-InfraAdvisorMobile.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-InfraAdvisorMobile.debug.xcconfig"; path = "Target Support Files/Pods-InfraAdvisorMobile/Pods-InfraAdvisorMobile.debug.xcconfig"; sourceTree = "<group>"; };
+		0E333C282CC359BA1C39DDC3 /* Pods-InfraAdvisorMobile.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-InfraAdvisorMobile.release.xcconfig"; path = "Target Support Files/Pods-InfraAdvisorMobile/Pods-InfraAdvisorMobile.release.xcconfig"; sourceTree = "<group>"; };
+		5B58DEEA39C7744AA93E0E87 /* Pods_InfraAdvisorMobile.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_InfraAdvisorMobile.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		75F7C843F9C2E39AB6093E80 /* Pods_InfraAdvisorMobileTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_InfraAdvisorMobileTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000001 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		A20000000000000000000007 /* InfraAdvisorMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfraAdvisorMobileApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000008 /* APIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000009 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+		A2000000000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2000000000000000000000B /* InfraAdvisorMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = InfraAdvisorMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000000000000000000000C /* InfraAdvisorMobileTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = InfraAdvisorMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000000000000000000000D /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		A2000000000000000000000E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		A2000000000000000000000F /* Tests.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Tests.xcconfig; sourceTree = "<group>"; };
+		A20000000000000000000010 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
+		A20000000000000000000011 /* TestsRelease.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = TestsRelease.xcconfig; sourceTree = "<group>"; };
+		B8A74908B267F668C693E7D5 /* Pods-InfraAdvisorMobileTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-InfraAdvisorMobileTests.release.xcconfig"; path = "Target Support Files/Pods-InfraAdvisorMobileTests/Pods-InfraAdvisorMobileTests.release.xcconfig"; sourceTree = "<group>"; };
+		BB59C8588B5F77FAF8ABBA49 /* Pods-InfraAdvisorMobileTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-InfraAdvisorMobileTests.debug.xcconfig"; path = "Target Support Files/Pods-InfraAdvisorMobileTests/Pods-InfraAdvisorMobileTests.debug.xcconfig"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A60000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EBC168C4B852DC6665A24987 /* Pods_InfraAdvisorMobile.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A60000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000009 /* XCTest.framework in Frameworks */,
+				11A84B23A0345FA6F9A8E07D /* Pods_InfraAdvisorMobileTests.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		05C5B7DB8978247B66FADC5D /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				0D1ECC0079A1B19783DCAAD1 /* Pods-InfraAdvisorMobile.debug.xcconfig */,
+				0E333C282CC359BA1C39DDC3 /* Pods-InfraAdvisorMobile.release.xcconfig */,
+				BB59C8588B5F77FAF8ABBA49 /* Pods-InfraAdvisorMobileTests.debug.xcconfig */,
+				B8A74908B267F668C693E7D5 /* Pods-InfraAdvisorMobileTests.release.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
+			sourceTree = "<group>";
+		};
+		8015312AE6AE5A9B50CEAC83 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				5B58DEEA39C7744AA93E0E87 /* Pods_InfraAdvisorMobile.framework */,
+				75F7C843F9C2E39AB6093E80 /* Pods_InfraAdvisorMobileTests.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		A70000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A70000000000000000000002 /* InfraAdvisorMobile */,
+				A70000000000000000000003 /* InfraAdvisorMobileTests */,
+				A70000000000000000000004 /* Config */,
+				A70000000000000000000005 /* Products */,
+				05C5B7DB8978247B66FADC5D /* Pods */,
+				8015312AE6AE5A9B50CEAC83 /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		A70000000000000000000002 /* InfraAdvisorMobile */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000007 /* InfraAdvisorMobileApp.swift */,
+				A20000000000000000000001 /* AppConfig.swift */,
+				A20000000000000000000002 /* Models.swift */,
+				A20000000000000000000003 /* APIClient.swift */,
+				A20000000000000000000004 /* SessionStore.swift */,
+				A20000000000000000000005 /* LoginView.swift */,
+				A20000000000000000000006 /* ChatView.swift */,
+				A2000000000000000000000A /* Info.plist */,
+			);
+			path = InfraAdvisorMobile;
+			sourceTree = "<group>";
+		};
+		A70000000000000000000003 /* InfraAdvisorMobileTests */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000008 /* APIClientTests.swift */,
+			);
+			path = InfraAdvisorMobileTests;
+			sourceTree = "<group>";
+		};
+		A70000000000000000000004 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000000000000D /* Debug.xcconfig */,
+				A2000000000000000000000E /* Release.xcconfig */,
+				A2000000000000000000000F /* Tests.xcconfig */,
+				A20000000000000000000010 /* Shared.xcconfig */,
+				A20000000000000000000011 /* TestsRelease.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		A70000000000000000000005 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000000000000B /* InfraAdvisorMobile.app */,
+				A2000000000000000000000C /* InfraAdvisorMobileTests.xctest */,
+				A20000000000000000000009 /* XCTest.framework */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000000000000000000001 /* InfraAdvisorMobile */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA0000000000000000000001 /* Build configuration list for PBXNativeTarget "InfraAdvisorMobile" */;
+			buildPhases = (
+				D2E47EB5ABDEFA4AC609359D /* [CP] Check Pods Manifest.lock */,
+				A80000000000000000000001 /* Sources */,
+				A60000000000000000000001 /* Frameworks */,
+				A90000000000000000000001 /* Resources */,
+				B649E25E3A3582C5E1316691 /* [CP] Embed Pods Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = InfraAdvisorMobile;
+			productName = InfraAdvisorMobile;
+			productReference = A2000000000000000000000B /* InfraAdvisorMobile.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A50000000000000000000002 /* InfraAdvisorMobileTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA0000000000000000000002 /* Build configuration list for PBXNativeTarget "InfraAdvisorMobileTests" */;
+			buildPhases = (
+				A9493C71DAA3DFABE42CFBC5 /* [CP] Check Pods Manifest.lock */,
+				A80000000000000000000002 /* Sources */,
+				A60000000000000000000002 /* Frameworks */,
+				A90000000000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AB0000000000000000000001 /* PBXTargetDependency */,
+			);
+			name = InfraAdvisorMobileTests;
+			productName = InfraAdvisorMobileTests;
+			productReference = A2000000000000000000000C /* InfraAdvisorMobileTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A40000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					A50000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					A50000000000000000000002 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = A50000000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = AA0000000000000000000003 /* Build configuration list for PBXProject "InfraAdvisorMobile" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A70000000000000000000001;
+			productRefGroup = A70000000000000000000005 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A50000000000000000000001 /* InfraAdvisorMobile */,
+				A50000000000000000000002 /* InfraAdvisorMobileTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A90000000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A90000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A9493C71DAA3DFABE42CFBC5 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-InfraAdvisorMobileTests-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		B649E25E3A3582C5E1316691 /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-InfraAdvisorMobile/Pods-InfraAdvisorMobile-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-InfraAdvisorMobile/Pods-InfraAdvisorMobile-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-InfraAdvisorMobile/Pods-InfraAdvisorMobile-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		D2E47EB5ABDEFA4AC609359D /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-InfraAdvisorMobile-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A80000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000007 /* InfraAdvisorMobileApp.swift in Sources */,
+				A10000000000000000000001 /* AppConfig.swift in Sources */,
+				A10000000000000000000002 /* Models.swift in Sources */,
+				A10000000000000000000003 /* APIClient.swift in Sources */,
+				A10000000000000000000004 /* SessionStore.swift in Sources */,
+				A10000000000000000000005 /* LoginView.swift in Sources */,
+				A10000000000000000000006 /* ChatView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A80000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000008 /* APIClientTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AB0000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A50000000000000000000001 /* InfraAdvisorMobile */;
+			targetProxy = A30000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AC0000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A2000000000000000000000D /* Debug.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = InfraAdvisorMobile/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kyletaylor.infraadvisor.mobile.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AC0000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A2000000000000000000000E /* Release.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = InfraAdvisorMobile/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kyletaylor.infraadvisor.mobile.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AC0000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A2000000000000000000000F /* Tests.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kyletaylor.infraadvisor.mobile.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/InfraAdvisorMobile.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/InfraAdvisorMobile";
+			};
+			name = Debug;
+		};
+		AC0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A20000000000000000000011 /* TestsRelease.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kyletaylor.infraadvisor.mobile.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/InfraAdvisorMobile.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/InfraAdvisorMobile";
+			};
+			name = Release;
+		};
+		AC0000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AC0000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AA0000000000000000000001 /* Build configuration list for PBXNativeTarget "InfraAdvisorMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC0000000000000000000001 /* Debug */,
+				AC0000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA0000000000000000000002 /* Build configuration list for PBXNativeTarget "InfraAdvisorMobileTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC0000000000000000000003 /* Debug */,
+				AC0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA0000000000000000000003 /* Build configuration list for PBXProject "InfraAdvisorMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC0000000000000000000005 /* Debug */,
+				AC0000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A40000000000000000000001 /* Project object */;
+}

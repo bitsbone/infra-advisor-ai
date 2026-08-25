@@ -145,6 +145,15 @@ Managed by a single `DatadogAgent` custom resource via the Datadog Operator.
 | [`services/load-generator`](services/load-generator/) | Python 3.12 | Kafka producer — synthetic query corpus (70 % happy path, 20 % edge, 10 % adversarial) |
 | [`services/ingestion`](services/ingestion/) | Python 3.12 | 9 Airflow DAGs — government data ingestion + Spark feature engineering |
 
+## Mobile applications
+
+Runnable native Datadog RUM examples are available in [`mobile/`](mobile/):
+
+- iOS 16+ using SwiftUI, CocoaPods, and instrumented `URLSession`
+- Android API 23+ using Java and a reusable observable Volley request adapter
+
+Both clients use the deployed authentication and query APIs, associate RUM sessions with authenticated users, and propagate traces into backend APM. See the [implementation patterns guide](mobile/OBSERVABILITY_PATTERNS.md) for the instrumentation lifecycle and privacy boundaries.
+
 ## Infrastructure
 
 | Component | Technology | Namespace |

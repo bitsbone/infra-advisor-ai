@@ -163,6 +163,7 @@ export default defineConfig({
                     { label: 'Overview', slug: 'observability' },
                     { label: 'APM & Tracing', slug: 'observability/apm' },
                     { label: 'RUM & Session Replay', slug: 'observability/rum' },
+                    { label: 'Native Mobile RUM', slug: 'observability/mobile-rum' },
                     { label: 'Dashboards & Monitors', slug: 'observability/dashboards' },
                 ],
             },

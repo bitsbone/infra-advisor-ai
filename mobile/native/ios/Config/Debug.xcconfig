@@ -1,0 +1,2 @@
+#include? "../Pods/Target Support Files/Pods-InfraAdvisorMobile/Pods-InfraAdvisorMobile.debug.xcconfig"
+#include "Shared.xcconfig"

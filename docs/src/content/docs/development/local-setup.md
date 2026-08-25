@@ -172,3 +172,7 @@ Switch backends in the UI using the **Python / .NET** toggle in the chat toolbar
 ```bash
 DD_TRACE_ENABLED=false uv run uvicorn src.main:app --reload --port 8001
 ```
+
+## Native mobile apps
+
+The native iOS and Android clients can be built independently and use the deployed InfraAdvisor APIs by default, so the backend stack above is not required for a first run. See [Native Mobile RUM](/infra-advisor-ai/observability/mobile-rum/#run-locally) for prerequisites, simulator/emulator steps, build-time overrides, tests, and Datadog verification.

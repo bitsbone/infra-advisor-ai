@@ -103,3 +103,7 @@ RUM automatically captures:
 - **User interactions:** Click/scroll events with timing
 
 The primary user interaction to monitor is the **Time To First Token** — the latency between query submission and the first character of the answer appearing. This corresponds to the `POST /api/query` XHR duration in RUM resource timing.
+
+## Native mobile clients
+
+The repository also includes native iOS and Android RUM reference applications that authenticate against the same backend and continue mobile traces into the AI query service. See [Native Mobile RUM](/infra-advisor-ai/observability/mobile-rum/) for CocoaPods, SwiftUI, Java, Volley, local build instructions, telemetry lifecycles, and privacy boundaries.

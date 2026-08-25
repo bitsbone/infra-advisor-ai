@@ -84,6 +84,7 @@ DD_VERSION: latest
 
 - [APM & Tracing](/infra-advisor-ai/observability/apm/) — Span coverage by service, log-trace correlation, DBM, code origin, error trace linking
 - [RUM & Session Replay](/infra-advisor-ai/observability/rum/) — SDK initialization, custom events, RUM→LLM Obs linking, distributed tracing, sourcemaps
+- [Native Mobile RUM](/infra-advisor-ai/observability/mobile-rum/) — SwiftUI and Java/Volley reference clients, authenticated user identity, mobile resource monitoring, and traces continued into the AI backend
 - [Dashboards & Monitors](/infra-advisor-ai/observability/dashboards/) — All 5 dashboards, 3 monitors, 1 Synthetics test — purpose, widgets, and import instructions
 
 For LLM-specific observability — instrumentation, evaluations, prompt tracking, sessions, experiments — see the dedicated **[LLM Engineering Guide](/infra-advisor-ai/llm-engineering/)** section in the left sidebar.

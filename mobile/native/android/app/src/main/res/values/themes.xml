@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.InfraAdvisor" parent="Theme.AppCompat.Light.DarkActionBar">
+        <item name="colorPrimary">#632CA6</item>
+        <item name="colorPrimaryDark">#4B1E82</item>
+        <item name="colorAccent">#632CA6</item>
+        <item name="android:fontFamily">sans</item>
+    </style>
+</resources>
