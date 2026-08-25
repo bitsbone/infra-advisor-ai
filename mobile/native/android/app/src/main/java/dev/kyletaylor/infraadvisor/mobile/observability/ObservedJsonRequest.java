@@ -2,6 +2,7 @@ package dev.kyletaylor.infraadvisor.mobile.observability;
 
 import com.android.volley.NetworkResponse;
 import com.android.volley.Response;
+import com.android.volley.DefaultRetryPolicy;
 import com.android.volley.toolbox.JsonObjectRequest;
 import java.net.URI;
 import java.util.HashMap;
@@ -14,20 +15,26 @@ public final class ObservedJsonRequest extends JsonObjectRequest {
     private long responseSize;
     private final Map<String, String> requestHeaders;
 
-    public ObservedJsonRequest(String url, JSONObject body, Map<String, String> headers,
+    public ObservedJsonRequest(int method, String url, JSONObject body, Map<String, String> headers, int timeoutMs,
                                Response.Listener<JSONObject> listener, Response.ErrorListener errorListener) {
-        this(new VolleyTelemetry("POST", sanitize(url)), url, body, headers, listener, errorListener);
+        this(new VolleyTelemetry(methodName(method), sanitize(url)), method, url, body, headers, timeoutMs, listener, errorListener);
     }
 
-    private ObservedJsonRequest(VolleyTelemetry telemetry, String url, JSONObject body, Map<String, String> headers,
-                                Response.Listener<JSONObject> listener, Response.ErrorListener errorListener) {
+    private ObservedJsonRequest(VolleyTelemetry telemetry, int method, String url, JSONObject body,
+                                Map<String, String> headers, int timeoutMs, Response.Listener<JSONObject> listener,
+                                Response.ErrorListener errorListener) {
+
         // Listener wrapping keeps observability independent from ApiClient:
         // callers receive normal Volley callbacks after telemetry is closed.
-        super(Method.POST, url, body,
+        super(method, url, body,
                 listener,
                 error -> { telemetry.failure(error.networkResponse == null ? 0 : error.networkResponse.statusCode, error); errorListener.onErrorResponse(error); });
         this.telemetry = telemetry;
         this.requestHeaders = mergeHeaders(headers, telemetry.headers());
+
+        // Agent queries can legitimately take tens of seconds. Do not let Volley's short
+        // default timeout turn a healthy, still-running AI request into a generic failure.
+        setRetryPolicy(new DefaultRetryPolicy(timeoutMs, 0, 1f));
     }
 
     @Override protected Response<JSONObject> parseNetworkResponse(NetworkResponse response) {
@@ -66,5 +73,13 @@ public final class ObservedJsonRequest extends JsonObjectRequest {
         Map<String, String> merged = new HashMap<>(applicationHeaders);
         merged.putAll(propagationHeaders);
         return merged;
+    }
+
+    private static String methodName(int method) {
+        if (method == Method.GET) return "GET";
+        if (method == Method.DELETE) return "DELETE";
+        if (method == Method.PUT) return "PUT";
+        if (method == Method.PATCH) return "PATCH";
+        return "POST";
     }
 }

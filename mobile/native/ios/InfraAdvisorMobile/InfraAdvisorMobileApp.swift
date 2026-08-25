@@ -1,11 +1,13 @@
 import SwiftUI
 import DatadogCore
 import DatadogRUM
+import DatadogSessionReplay
 import DatadogTrace
 
 @main
 struct InfraAdvisorMobileApp: App {
     private let api: APIClient
+    private let config: AppConfig
     @StateObject private var session: SessionStore
 
     init() {
@@ -45,19 +47,39 @@ struct InfraAdvisorMobileApp: App {
                 )
             )
         )
+        // Record every demo RUM session. SwiftUI support is explicitly enabled because
+        // Session Replay treats it as an opt-in feature in Datadog SDK 3.x.
+        SessionReplay.enable(
+            with: SessionReplay.Configuration(
+                replaySampleRate: 100,
+                textAndInputPrivacyLevel: .maskSensitiveInputs,
+                featureFlags: [.swiftui: true]
+            )
+        )
         // Bundling traces with RUM is what makes a resource pivot to its mobile span and the
         // continued backend trace in Datadog.
         Trace.enable(with: Trace.Configuration(sampleRate: config.traceSampleRate, bundleWithRumEnabled: true, networkInfoEnabled: true))
 
-        let api = APIClient(baseURL: config.apiBaseURL)
+        // RUM's urlSessionTracking defines what to collect; this call activates swizzling for
+        // the concrete delegate used below. Both steps are required by Datadog SDK 3.x.
+        URLSessionInstrumentation.enable(
+            with: .init(delegateClass: InfraAdvisorURLSessionDelegate.self)
+        )
+        let networkSession = URLSession(
+            configuration: .default,
+            delegate: InfraAdvisorURLSessionDelegate(),
+            delegateQueue: nil
+        )
+        let api = APIClient(baseURL: config.apiBaseURL, session: networkSession)
         self.api = api
+        self.config = config
         _session = StateObject(wrappedValue: SessionStore(api: api))
     }
 
     var body: some Scene {
         WindowGroup {
             Group {
-                if session.login == nil { LoginView() } else { ChatView(api: api) }
+                if session.login == nil { LoginView() } else { AuthenticatedRootView(api: api, config: config) }
             }
             .environmentObject(session)
         }

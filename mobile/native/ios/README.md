@@ -1,6 +1,6 @@
 # Infra Advisor iOS demo
 
-SwiftUI iOS 16+ client using CocoaPods and Datadog RUM/Trace.
+SwiftUI iOS 16+ client using CocoaPods and Datadog RUM, Session Replay, and Trace.
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ open InfraAdvisorMobile.xcworkspace
 
 Select the `InfraAdvisorMobile` scheme, choose an iPhone simulator, and press Run. Always open the generated `.xcworkspace`, not the `.xcodeproj`, because CocoaPods provides the Datadog frameworks.
 
-The default API is the deployed `https://infra-advisor-ai.kyletaylor.dev`, so a local backend is not required. Sign in with an existing account, submit the example prompt, inspect the answer and trace metadata, then use Logout to clear the in-memory JWT and Datadog identity.
+The default API is the deployed `https://infra-advisor-ai.kyletaylor.dev`, so a local backend is not required. The Chat tab supports persisted conversation selection, prompt suggestions, live model discovery, and Python/.NET backend selection. The Info tab shows the logged-in user and safe Datadog/API configuration without displaying the client token. Logout clears the in-memory JWT and Datadog identity.
 
 ## Test from the terminal
 
@@ -48,14 +48,18 @@ Datadog RUM application IDs and client tokens are public client identifiers desi
 
 ## Reference patterns
 
-- `InfraAdvisorMobileApp.swift` initializes Core, RUM, and Trace and limits distributed tracing to the configured first-party backend host.
+- `InfraAdvisorMobileApp.swift` initializes Core, RUM, Session Replay, and Trace, records 100% of sampled demo sessions with SwiftUI replay support and `.maskSensitiveInputs`, enables `URLSessionInstrumentation` for the app's concrete session delegate, and limits distributed tracing to the configured first-party backend host.
 - `SessionStore.swift` calls `setUserInfo` only after login succeeds and clears both the in-memory JWT and Datadog identity at logout.
 - `APIClient.swift` demonstrates typed `URLSession` requests. The Datadog SDK automatically creates resources, spans, and propagation headers; application code does not copy authorization headers or payloads into telemetry.
 - `LoginView.swift` and `ChatView.swift` use named SwiftUI RUM views. Their button labels allow the configured SwiftUI action predicate to report useful action names.
+- `ChatView.swift` provides the shared purple visual language, Chat/Info tabs, persisted conversation selection, backend/model menus, and prompt suggestions including an MCP procurement example.
+- The Chat screen keeps its composer pinned above the tab bar while conversation content scrolls independently. Conversation and model menus use full-width rows, backend selection uses a full-width segmented control, and prompt suggestions expand into readable full-width actions instead of compressing controls on narrow devices.
 - `Config/Shared.xcconfig` is the single build-time configuration surface.
 
 The deeper lifecycle and privacy rationale is documented in [`../../OBSERVABILITY_PATTERNS.md`](../../OBSERVABILITY_PATTERNS.md).
 
 ## Verify in Datadog
 
-After signing in and submitting a prompt, verify `Login` and `Chat` in RUM Explorer, inspect the `/auth/login` and `/api/query` resources, and follow the query resource into its distributed APM trace. Logout should remove the authenticated user from subsequent events.
+After signing in and submitting a prompt, verify `Login`, `Chat`, and `Info` in RUM Explorer, open the session's replay, inspect the authentication, model, conversation, and query resources, and follow the query resource into its distributed APM trace. Select the saved conversation again and confirm its messages reload. Logout should remove the authenticated user from subsequent events.
+
+In a Debug run, the Xcode console should show Datadog SDK debug messages. To inspect propagation without exposing values, add a symbolic breakpoint or use a debugging proxy and verify that first-party requests contain the header names `x-datadog-trace-id`, `x-datadog-parent-id`, and `traceparent`. Do not log their values in application code.

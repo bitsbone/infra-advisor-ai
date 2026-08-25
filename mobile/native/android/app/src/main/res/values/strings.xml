@@ -7,4 +7,10 @@
     <string name="chat_title">Infra Advisor</string>
     <string name="ask">Ask Infra Advisor</string>
     <string name="logout">Logout</string>
+    <string name="info">Info</string>
+    <string name="chat">Chat</string>
+    <string name="new_chat">New</string>
+    <string name="empty_history">Choose a sample prompt or enter a question below to start a chat.</string>
+    <string name="prompt_hint">Ask about infrastructure risks, resilience, funding, or planning…</string>
+    <string name="new_conversation">New conversation</string>
 </resources>

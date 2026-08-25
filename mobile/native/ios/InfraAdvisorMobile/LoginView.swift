@@ -33,6 +33,7 @@ struct LoginView: View {
             }
             .navigationTitle("Login")
         }
+        .tint(Color.infraAdvisorPurple)
         .trackRUMView(name: "Login")
     }
 }

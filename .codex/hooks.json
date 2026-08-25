@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ '$TOOL_INPUT_path' == *.py ]]; then uv run ruff check --fix '$TOOL_INPUT_path' 2>/dev/null || true; fi"
+          }
+        ]
+      }
+    ]
+  }
+}

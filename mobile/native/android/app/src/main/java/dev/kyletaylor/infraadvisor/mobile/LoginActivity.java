@@ -8,6 +8,7 @@ import android.widget.EditText;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.Toolbar;
 import dev.kyletaylor.infraadvisor.mobile.api.ApiError;
 import dev.kyletaylor.infraadvisor.mobile.model.LoginResponse;
 
@@ -18,8 +19,10 @@ public final class LoginActivity extends AppCompatActivity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        setTitle(R.string.login_title);
         setContentView(R.layout.activity_login);
+        SystemBarInsets.apply(findViewById(R.id.screen_root));
+        setSupportActionBar((Toolbar) findViewById(R.id.toolbar));
+        setTitle(R.string.login_title);
         EditText email = findViewById(R.id.email);
         EditText password = findViewById(R.id.password);
         signIn = findViewById(R.id.sign_in);

@@ -56,14 +56,61 @@ final class APIClientTests: XCTestCase {
     }
 
     func testQueryAddsBearerHeaderAndDecodesTraceMetadata() async throws {
-        URLProtocolStub.handler = { request in
+        URLProtocolStub.handler = { [self] request in
+            XCTAssertEqual(request.url?.path, "/api-dotnet/query")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer jwt")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Session-ID"), "session")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-User-ID"), "user-1")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Conversation-ID"), "conversation-1")
+            let body = try bodyData(from: request)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
+            XCTAssertEqual(json["model"], "gpt-4.1-mini")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             let data = #"{"answer":"ok","sources":[],"trace_id":"42","span_id":"7","session_id":"session","model":"gpt"}"#.data(using: .utf8)!
             return (response, data)
         }
-        let result = try await client.query(token: "jwt", prompt: "hello", sessionID: "session")
+        let result = try await client.query(token: "jwt", prompt: "hello", sessionID: "session", model: "gpt-4.1-mini", backend: .dotnet, userID: "user-1", conversationID: "conversation-1")
         XCTAssertEqual(result.traceID, "42")
+    }
+
+    func testConversationListDecodesSavedBackendAndModel() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/conversations")
+            XCTAssertEqual(request.httpMethod, "GET")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let data = #"{"conversations":[{"id":"c1","user_id":"u1","title":"Flood plan","model":"gpt-4.1-mini","backend":"python","created_at":null,"updated_at":null,"message_count":2}]}"#.data(using: .utf8)!
+            return (response, data)
+        }
+
+        let result = try await client.listConversations(token: "jwt")
+        XCTAssertEqual(result.first?.backend, .python)
+        XCTAssertEqual(result.first?.model, "gpt-4.1-mini")
+    }
+
+    func testInstrumentedSessionInjectsDatadogAndW3CTraceHeaders() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let instrumentedSession = URLSession(
+            configuration: configuration,
+            delegate: InfraAdvisorURLSessionDelegate(),
+            delegateQueue: nil
+        )
+        client = APIClient(
+            baseURL: URL(string: "https://infra-advisor-ai.kyletaylor.dev")!,
+            session: instrumentedSession
+        )
+        URLProtocolStub.handler = { request in
+            // Assert only header presence. Trace IDs are observability context and should not
+            // be printed or copied into test output.
+            XCTAssertNotNil(request.value(forHTTPHeaderField: "x-datadog-trace-id"))
+            XCTAssertNotNil(request.value(forHTTPHeaderField: "x-datadog-parent-id"))
+            XCTAssertNotNil(request.value(forHTTPHeaderField: "traceparent"))
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let data = #"{"answer":"ok","sources":[],"trace_id":"42","span_id":"7","session_id":"session","model":"gpt"}"#.data(using: .utf8)!
+            return (response, data)
+        }
+
+        _ = try await client.query(token: "jwt", prompt: "hello", sessionID: "session", model: "gpt-4.1-mini", backend: .python, userID: "user-1", conversationID: "conversation-1")
     }
 
     func testServerDetailBecomesReadableError() async throws {

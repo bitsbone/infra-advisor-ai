@@ -39,7 +39,7 @@ public final class VolleyTelemetry {
                         return Unit.INSTANCE;
                     }
                 });
-        rum.startResource(key, RumResourceMethod.POST, sanitizedUrl, correlationAttributes());
+        rum.startResource(key, resourceMethod(method), sanitizedUrl, correlationAttributes());
     }
 
     public Map<String, String> headers() { return Collections.unmodifiableMap(traceHeaders); }
@@ -86,5 +86,13 @@ public final class VolleyTelemetry {
         attributes.put("_dd.span_id", Long.toUnsignedString(span.context().getSpanId()));
         attributes.put("_dd.rule_psr", 1.0d);
         return attributes;
+    }
+
+    private static RumResourceMethod resourceMethod(String method) {
+        if ("GET".equals(method)) return RumResourceMethod.GET;
+        if ("DELETE".equals(method)) return RumResourceMethod.DELETE;
+        if ("PUT".equals(method)) return RumResourceMethod.PUT;
+        if ("PATCH".equals(method)) return RumResourceMethod.PATCH;
+        return RumResourceMethod.POST;
     }
 }

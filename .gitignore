@@ -63,6 +63,7 @@ publish/
 **/*.xcworkspace/xcuserdata/
 **/*.xcodeproj/xcuserdata/
 mobile/native/ios/Config/Local.xcconfig
+mobile/native/android/local.properties
 
 # macOS
 .DS_Store

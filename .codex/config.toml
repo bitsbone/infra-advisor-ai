@@ -1,0 +1,16 @@
+[mcp_servers.azure]
+command = "npx"
+args = [
+    "-y",
+    "@azure/mcp@latest",
+    "server",
+    "start",
+]
+
+[mcp_servers.kubernetes]
+command = "npx"
+args = [
+    "-y",
+    "kubernetes-mcp-server@latest",
+    "--read-only",
+]

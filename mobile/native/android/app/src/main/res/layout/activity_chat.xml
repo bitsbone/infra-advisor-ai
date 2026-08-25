@@ -1,23 +1,151 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="match_parent">
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="vertical" android:padding="20dp">
-        <TextView android:id="@+id/signed_in_user" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:textSize="14sp" android:layout_marginBottom="12dp" />
-        <EditText android:id="@+id/prompt" android:layout_width="match_parent" android:layout_height="140dp"
-            android:gravity="top|start" android:inputType="textMultiLine" />
-        <Button android:id="@+id/ask" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="@string/ask" android:layout_marginTop="12dp" />
-        <ProgressBar android:id="@+id/progress" android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:visibility="gone" android:layout_gravity="center_horizontal" />
-        <TextView android:id="@+id/error" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:textColor="#B00020" android:layout_marginTop="12dp" />
-        <TextView android:id="@+id/answer" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:textSize="17sp" android:textIsSelectable="true" android:layout_marginTop="16dp" />
-        <TextView android:id="@+id/sources" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:textIsSelectable="true" android:layout_marginTop="12dp" />
-        <TextView android:id="@+id/trace" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:typeface="monospace" android:textIsSelectable="true" android:layout_marginTop="12dp" />
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/screen_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F7F4FA"
+    android:orientation="vertical">
+
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="#632CA6"
+        android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
+        app:popupTheme="@style/ThemeOverlay.AppCompat.Light"
+        app:titleTextColor="#FFFFFF" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <Spinner
+            android:id="@+id/conversations"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:contentDescription="Conversation history" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <Spinner
+                android:id="@+id/backend"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:contentDescription="Backend" />
+
+            <Spinner
+                android:id="@+id/model"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:contentDescription="Model" />
+
+            <Button
+                android:id="@+id/new_chat"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:text="@string/new_chat" />
+        </LinearLayout>
+
+        <ScrollView
+            android:id="@+id/history_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="8dp"
+            android:layout_weight="1"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:id="@+id/chat_history"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingBottom="8dp">
+
+                <TextView
+                    android:id="@+id/empty_history"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:padding="24dp"
+                    android:text="@string/empty_history"
+                    android:textColor="#6A6A6A" />
+            </LinearLayout>
+        </ScrollView>
+
+        <TextView
+            android:id="@+id/error"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp"
+            android:textColor="#B00020" />
+
+        <Spinner
+            android:id="@+id/sample_prompts"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:contentDescription="Sample prompts" />
+
+        <EditText
+            android:id="@+id/prompt"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/prompt_field_background"
+            android:gravity="top|start"
+            android:hint="@string/prompt_hint"
+            android:inputType="textCapSentences|textMultiLine"
+            android:maxLines="5"
+            android:minHeight="104dp"
+            android:padding="14dp"
+            android:textColor="#1F1F1F"
+            android:textColorHint="#737373"
+            android:textCursorDrawable="@null"
+            android:textSize="16sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/ask"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/ask" />
+
+            <ProgressBar
+                android:id="@+id/progress"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="10dp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/trace"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:maxLines="3"
+            android:textColor="#5F5F5F"
+            android:textIsSelectable="true"
+            android:textSize="12sp"
+            android:typeface="monospace" />
     </LinearLayout>
-</ScrollView>
+</LinearLayout>

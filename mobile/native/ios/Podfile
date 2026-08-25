@@ -5,6 +5,7 @@ target 'InfraAdvisorMobile' do
 
   pod 'DatadogCore', '~> 3.0'
   pod 'DatadogRUM', '~> 3.0'
+  pod 'DatadogSessionReplay', '~> 3.0'
   pod 'DatadogTrace', '~> 3.0'
 
   target 'InfraAdvisorMobileTests' do

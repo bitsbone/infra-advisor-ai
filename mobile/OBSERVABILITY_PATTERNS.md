@@ -5,7 +5,7 @@ This guide makes the demo's reusable implementation decisions explicit. The two 
 ## End-to-end signal flow
 
 ```text
-Login or Chat view
+Login, Chat, or Info view
   -> RUM action
   -> RUM resource for POST /auth/login or POST /api/query
   -> mobile client span carrying Datadog + W3C trace headers
@@ -16,15 +16,27 @@ At login success, each app sets the Datadog user to the backend user ID and emai
 
 ## iOS: automatic URLSession instrumentation
 
-`InfraAdvisorMobileApp.swift` configures `firstPartyHostsTracing` for the Infra Advisor host. Requests made by `APIClient.swift` through `URLSession` then get:
+`InfraAdvisorMobileApp.swift` configures `firstPartyHostsTracing` for the Infra Advisor host, enables `URLSessionInstrumentation` for `InfraAdvisorURLSessionDelegate`, and creates a session using that delegate. Requests made by `APIClient.swift` through this session then get:
 
 1. A RUM resource timed by the SDK.
 2. A correlated client span because Trace is enabled with RUM bundling.
 3. Trace propagation headers only when the destination matches the trusted first-party host.
 
-This is the preferred pattern for URLSession. Keep application networking typed and ordinary; do not manually start a second resource or span around the same request, because that would double-count it.
+Both the RUM `urlSessionTracking` configuration and delegate instrumentation are required. `URLSession.shared` does not provide the concrete delegate class the SDK needs for this integration. Keep application networking typed and ordinary; do not manually start a second resource or span around the same request, because that would double-count it.
 
 Named `.trackRUMView(name:)` modifiers make SwiftUI's `Login` and `Chat` screens stable RUM view names even if their Swift type names change later.
+
+## Session Replay on both native platforms
+
+Both apps install the dedicated Datadog Session Replay module after RUM is enabled and use a 100% replay sample rate. The iOS configuration explicitly enables SwiftUI recording and `.maskSensitiveInputs`; Android records the activity-based UI with `TextAndInputPrivacy.MASK_SENSITIVE_INPUTS`. This policy masks inputs Datadog classifies as sensitive, including email, password, and phone fields, while allowing ordinary application text to remain useful in the replay. Neither app adds credentials, JWTs, prompts, or response bodies as RUM or span attributes.
+
+The 100% rate is intentional for a deterministic educational demo, not a production recommendation. Session Replay sampling applies within sampled RUM sessions, so both RUM and replay sampling must be considered when adapting the pattern.
+
+## Conversation persistence and backend routing
+
+Both clients use the authenticated Python `/api/conversations` endpoints as a shared conversation control plane because the Python and .NET services use the same conversation store. Model discovery and query execution still route through the selected `/api` or `/api-dotnet` prefix. The first prompt creates a conversation with its model/backend metadata, and each query sends `X-Conversation-ID`, `X-User-ID`, and the stable session ID so the selected backend persists the user/assistant exchange.
+
+Conversation list and detail responses populate the history selector and transcript. Loading a saved conversation restores its backend and model, then locks backend selection until the user starts a new conversation. JWTs remain memory-only even though conversation messages are intentionally persisted by the backend.
 
 ## Android: manual Volley adapter
 
@@ -48,6 +60,8 @@ The request delegates to exactly one terminal method:
 
 To reuse the pattern for another Volley request type, keep telemetry ownership inside the request wrapper: start it immediately before enqueueing, merge the returned trace headers in `getHeaders()`, and route every terminal callback and `cancel()` through the same telemetry instance.
 
+The wrapper accepts the real HTTP method so model discovery appears as a GET resource. Agent queries receive a 90-second timeout and no automatic retries: AI latency can exceed Volley's short default, while retrying a POST could execute the same prompt twice. `ApiError` converts timeouts, offline failures, authentication errors, and backend responses into distinct user-facing messages without exposing payload bodies.
+
 ## Data minimization boundary
 
 Recorded fields are intentionally limited to:
@@ -70,13 +84,15 @@ The apps parse response bodies to render the UI, but telemetry receives only a r
 
 ## Sampling and production adaptation
 
-RUM sessions and first-party traces are sampled at 100% in this demo so every live walkthrough is observable. For production, lower those rates based on traffic and cost, use tracking-consent behavior appropriate to the product, and inject configuration per environment. Keep the first-party host allowlist narrow in every environment.
+RUM sessions, Session Replay recordings, and first-party traces are sampled at 100% in this demo so every live walkthrough is observable. For production, lower those rates based on traffic and cost, use tracking-consent and replay privacy behavior appropriate to the product, and inject configuration per environment. Keep the first-party host allowlist narrow in every environment.
 
 ## Live verification checklist
 
 1. Log in with an existing Infra Advisor account.
 2. Confirm the RUM session has the backend user ID and email.
-3. Confirm separate `Login` and `Chat` views and their button actions.
+3. Confirm separate `Login`, `Chat`, and `Info` views and their navigation/actions.
 4. Submit a query and open the `/api/query` RUM resource.
 5. Pivot to its mobile client span, then confirm the propagated trace continues into the Infra Advisor backend.
-6. Log out and confirm later events no longer carry the prior user identity.
+6. Reopen the saved conversation and confirm its messages, backend, and model reload.
+7. Open the session replay and confirm the Login-to-Chat-to-Info journey was recorded with sensitive inputs masked.
+8. Log out and confirm later events no longer carry the prior user identity.

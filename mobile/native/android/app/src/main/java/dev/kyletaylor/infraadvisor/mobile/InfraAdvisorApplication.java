@@ -8,6 +8,9 @@ import com.datadog.android.privacy.TrackingConsent;
 import com.datadog.android.rum.Rum;
 import com.datadog.android.rum.RumConfiguration;
 import com.datadog.android.rum.tracking.ActivityViewTrackingStrategy;
+import com.datadog.android.sessionreplay.SessionReplay;
+import com.datadog.android.sessionreplay.SessionReplayConfiguration;
+import com.datadog.android.sessionreplay.TextAndInputPrivacy;
 import com.datadog.android.trace.DatadogTracing;
 import com.datadog.android.trace.GlobalDatadogTracer;
 import com.datadog.android.trace.Trace;
@@ -38,6 +41,11 @@ public final class InfraAdvisorApplication extends Application {
                 .useViewTrackingStrategy(new ActivityViewTrackingStrategy(true))
                 .build();
         Rum.enable(rumConfiguration);
+        // Record every sampled demo RUM session. Session Replay keeps its privacy defaults;
+        // credentials, JWTs, prompts, and payloads are never added as telemetry attributes.
+        SessionReplay.enable(new SessionReplayConfiguration.Builder(100f)
+                .setTextAndInputPrivacy(TextAndInputPrivacy.MASK_SENSITIVE_INPUTS)
+                .build());
         Trace.enable(new TraceConfiguration.Builder().build());
         // Volley is not auto-instrumented by Datadog. Register one tracer for
         // the adapter below and ask it to emit both Datadog and W3C headers so

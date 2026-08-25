@@ -4,6 +4,8 @@ PODS:
   - DatadogInternal (3.2.0)
   - DatadogRUM (3.2.0):
     - DatadogInternal (= 3.2.0)
+  - DatadogSessionReplay (3.2.0):
+    - DatadogInternal (= 3.2.0)
   - DatadogTrace (3.2.0):
     - DatadogInternal (= 3.2.0)
     - OpenTelemetrySwiftApi (= 1.13.1)
@@ -12,6 +14,7 @@ PODS:
 DEPENDENCIES:
   - DatadogCore (~> 3.0)
   - DatadogRUM (~> 3.0)
+  - DatadogSessionReplay (~> 3.0)
   - DatadogTrace (~> 3.0)
 
 SPEC REPOS:
@@ -19,6 +22,7 @@ SPEC REPOS:
     - DatadogCore
     - DatadogInternal
     - DatadogRUM
+    - DatadogSessionReplay
     - DatadogTrace
     - OpenTelemetrySwiftApi
 
@@ -26,9 +30,10 @@ SPEC CHECKSUMS:
   DatadogCore: 8f360d91ec79c8799e753ec1abe3169911ee50fa
   DatadogInternal: 291b5ad0142280a651ab196ebd30dcd1d37cf6ff
   DatadogRUM: f26899d603f1797b4a41e00b5ee1aa0f6c972ef2
+  DatadogSessionReplay: 5759c700a1a7df795068e0ab87d807bcc1f987a8
   DatadogTrace: 95e5fb69876ce3ab223dd8ef3036605c89db3cdf
   OpenTelemetrySwiftApi: aaee576ed961e0c348af78df58b61300e95bd104
 
-PODFILE CHECKSUM: b8a3a41bf9d74f3419ec9096e07a167d7fdc6f20
+PODFILE CHECKSUM: 96785700ac1c9e7e4a46e4787dcf53be285361e9
 
 COCOAPODS: 1.16.2

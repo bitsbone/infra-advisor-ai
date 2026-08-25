@@ -38,6 +38,7 @@ dependencies {
     implementation "androidx.appcompat:appcompat:1.7.1"
     implementation "com.android.volley:volley:1.2.1"
     implementation "com.datadoghq:dd-sdk-android-rum:3.11.0"
+    implementation "com.datadoghq:dd-sdk-android-session-replay:3.11.0"
     implementation "com.datadoghq:dd-sdk-android-trace:3.11.0"
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
 

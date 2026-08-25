@@ -1,8 +1,11 @@
 <resources>
-    <style name="Theme.InfraAdvisor" parent="Theme.AppCompat.Light.DarkActionBar">
+    <style name="Theme.InfraAdvisor" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="colorPrimary">#632CA6</item>
         <item name="colorPrimaryDark">#4B1E82</item>
         <item name="colorAccent">#632CA6</item>
         <item name="android:fontFamily">sans</item>
+        <item name="android:statusBarColor">#F7F4FA</item>
+        <item name="android:navigationBarColor">#4B1E82</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>
