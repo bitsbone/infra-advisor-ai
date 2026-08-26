@@ -44,13 +44,18 @@ public sealed class AppSession
 
     public async Task SignOutAsync()
     {
-        if (sessionCleanup is { } cleanup)
+        try
         {
-            await cleanup().ConfigureAwait(false);
-            sessionCleanup = null;
+            if (sessionCleanup is { } cleanup)
+            {
+                await cleanup().ConfigureAwait(false);
+            }
         }
-
-        ClearAuthentication();
+        finally
+        {
+            sessionCleanup = null;
+            ClearAuthentication();
+        }
     }
 
     private void ClearAuthentication()

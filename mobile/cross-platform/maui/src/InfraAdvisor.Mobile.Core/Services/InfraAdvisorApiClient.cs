@@ -32,13 +32,13 @@ public sealed class InfraAdvisorApiClient
 
     public Task<ModelsResponse> GetModelsAsync(CancellationToken cancellationToken = default) => GetAsync<ModelsResponse>(ApiPath("models"), cancellationToken);
 
-    public async Task<IReadOnlyList<string>> GetInitialSuggestionsAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<SuggestionItem>> GetInitialSuggestionsAsync(CancellationToken cancellationToken = default)
     {
         var response = await GetAsync<SuggestionsResponse>(ApiPath("suggestions/initial"), cancellationToken).ConfigureAwait(false);
         return response.Suggestions;
     }
 
-    public async Task<IReadOnlyList<string>> GetContextualSuggestionsAsync(string query, string answer, IReadOnlyList<string> sources, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<SuggestionItem>> GetContextualSuggestionsAsync(string query, string answer, IReadOnlyList<string> sources, CancellationToken cancellationToken = default)
     {
         var response = await SendJsonAsync<SuggestionsResponse>(HttpMethod.Post, ApiPath("suggestions"), new ContextualSuggestionsRequest(query, answer, sources), cancellationToken).ConfigureAwait(false);
         return response.Suggestions;

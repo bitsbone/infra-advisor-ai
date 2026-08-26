@@ -8,6 +8,14 @@ Source: <https://github.com/syncfusion/maui-toolkit>
 
 License: MIT
 
+## kyletaylored.Datadog.MAUI.Symbols
+
+Release symbol discovery and upload use the community `kyletaylored.Datadog.MAUI.Symbols` MSBuild package under the Apache-2.0 license.
+
+Source: <https://github.com/kyletaylored/datadog-maui-symbols>
+
+License: Apache-2.0
+
 ## Plugin.Maui.Audio
 
 Microphone recording and audio playback integration use `Plugin.Maui.Audio` under the MIT license.

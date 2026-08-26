@@ -1,30 +1,42 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using InfraAdvisor.Mobile.Configuration;
 using InfraAdvisor.Mobile.Observability;
 using InfraAdvisor.Mobile.Services;
 
 namespace InfraAdvisor.Mobile.ViewModels;
 
-public partial class InfoViewModel(AppSession session, AppNavigator navigator, IObservability observability) : ObservableObject
+public partial class InfoViewModel(AppSession session, IAppNavigator navigator, IObservability observability, IAppRuntimeInfo runtimeInfo) : ObservableObject
 {
     public string Email => session.User?.Email ?? "Not signed in";
     public string UserId => session.User?.Id ?? "—";
-    public string ApiBaseUrl => AppConfiguration.ApiBaseUrl;
-    public string Site => AppConfiguration.DatadogSite;
-    public string Environment => AppConfiguration.DatadogEnvironment;
-    public string Service => AppConfiguration.DatadogService;
+    public string ApiBaseUrl => runtimeInfo.ApiBaseUrl;
+    public string Site => runtimeInfo.DatadogSite;
+    public string Environment => runtimeInfo.DatadogEnvironment;
+    public string Service => runtimeInfo.DatadogService;
     public string Sampling => "RUM 100% · Traces 100% · Replay 100%";
     public string ReplayPrivacy => "Mask sensitive inputs";
-    public string Version => $"{AppInfo.Current.VersionString} ({AppInfo.Current.BuildString})";
+    public string Version => runtimeInfo.Version;
 
     [RelayCommand]
     private async Task LogoutAsync()
     {
+        var operationKey = observability.StartOperation("authentication.logout", new Dictionary<string, object> { ["flow"] = "authentication" });
         observability.Info("Logout started", new Dictionary<string, object> { ["flow"] = "authentication" });
-        await session.SignOutAsync();
-        observability.ClearUser();
-        observability.StopSession();
-        navigator.ShowLogin();
+        try
+        {
+            await session.SignOutAsync();
+            observability.SucceedOperation("authentication.logout", operationKey, new Dictionary<string, object> { ["result"] = "success" });
+        }
+        catch (Exception exception)
+        {
+            observability.FailOperation("authentication.logout", operationKey, abandoned: false, new Dictionary<string, object> { ["result"] = "cleanup_error" });
+            observability.Error("Logout cleanup failed", exception);
+        }
+        finally
+        {
+            observability.ClearUser();
+            observability.StopSession();
+            navigator.ShowLogin();
+        }
     }
 }

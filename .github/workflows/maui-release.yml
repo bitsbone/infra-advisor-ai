@@ -84,7 +84,7 @@ jobs:
           SYNC: ${{ inputs.operation == 'build-and-sync' }}
         run: |
           set -euo pipefail
-          dotnet publish "$PROJECT" -f net10.0-android -c Release -p:ApplicationDisplayVersion="${{ inputs.version_name }}" -p:ApplicationVersion="$GITHUB_RUN_NUMBER" -p:AndroidPackageFormat=apk -p:AndroidKeyStore=true -p:AndroidSigningKeyStore="$RUNNER_TEMP/maui-android.keystore" -p:AndroidSigningStorePass=env:ANDROID_KEYSTORE_PASSWORD -p:AndroidSigningKeyAlias="$ANDROID_KEY_ALIAS" -p:AndroidSigningKeyPass=env:ANDROID_KEY_PASSWORD -p:DatadogUploadSymbols="$SYNC"
+          dotnet publish "$PROJECT" -f net10.0-android -c Release -p:ApplicationDisplayVersion="${{ inputs.version_name }}" -p:ApplicationVersion="$GITHUB_RUN_NUMBER" -p:AndroidPackageFormat=apk -p:AndroidKeyStore=true -p:AndroidSigningKeyStore="$RUNNER_TEMP/maui-android.keystore" -p:AndroidSigningStorePass=env:ANDROID_KEYSTORE_PASSWORD -p:AndroidSigningKeyAlias="$ANDROID_KEY_ALIAS" -p:AndroidSigningKeyPass=env:ANDROID_KEY_PASSWORD -p:DatadogSymbolUploadEnabled="$SYNC"
           apk_path="$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-android -name '*-Signed.apk' -type f | head -1)"
           mapping_path="$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile -name mapping.txt -type f | head -1)"
           [[ -n "$apk_path" && -n "$mapping_path" ]] || { echo "Expected APK or R8 mapping was not generated." >&2; exit 1; }
@@ -167,7 +167,7 @@ jobs:
           SYNC: ${{ inputs.operation == 'build-and-sync' }}
         run: |
           set -euo pipefail
-          dotnet publish "$PROJECT" -f net10.0-ios -c Release -p:RuntimeIdentifier=ios-arm64 -p:ArchiveOnBuild=true -p:BuildIpa=true -p:ApplicationDisplayVersion="${{ inputs.version_name }}" -p:ApplicationVersion="$GITHUB_RUN_NUMBER" -p:CodesignKey="$MAUI_IOS_CODESIGN_KEY" -p:CodesignProvision="$MAUI_IOS_PROFILE_NAME" -p:DatadogUploadSymbols="$SYNC"
+          dotnet publish "$PROJECT" -f net10.0-ios -c Release -p:RuntimeIdentifier=ios-arm64 -p:ArchiveOnBuild=true -p:BuildIpa=true -p:ApplicationDisplayVersion="${{ inputs.version_name }}" -p:ApplicationVersion="$GITHUB_RUN_NUMBER" -p:CodesignKey="$MAUI_IOS_CODESIGN_KEY" -p:CodesignProvision="$MAUI_IOS_PROFILE_NAME" -p:DatadogSymbolUploadEnabled="$SYNC"
           ipa_path="$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-ios -name '*.ipa' -type f | head -1)"; dsym_path="$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-ios -name '*.dSYM' -type d | head -1)"
           [[ -n "$ipa_path" && -n "$dsym_path" ]] || { echo "Expected IPA or dSYM was not generated." >&2; exit 1; }
           echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"; echo "DSYM_PATH=$dsym_path" >> "$GITHUB_ENV"

@@ -5,14 +5,21 @@ namespace InfraAdvisor.Mobile;
 
 public partial class App : Application
 {
-    private readonly LoginPage loginPage;
+    private readonly IServiceProvider services;
 
-    public App(LoginPage loginPage, IObservability observability)
+    public App(IServiceProvider services, IObservability observability)
     {
         InitializeComponent();
-        this.loginPage = loginPage;
+        this.services = services;
         observability.Info("Infra Advisor MAUI application started", new Dictionary<string, object> { ["app.version"] = AppInfo.Current.VersionString, ["platform"] = DeviceInfo.Current.Platform.ToString() });
     }
 
-    protected override Window CreateWindow(IActivationState? activationState) => new(loginPage);
+    protected override Window CreateWindow(IActivationState? activationState)
+    {
+#if DEBUG
+        // Resolve the authenticated shell while app resources are available so invalid XAML or missing DI registrations fail during development before a successful login changes the root page.
+        _ = services.GetRequiredService<AppShell>();
+#endif
+        return new Window(services.GetRequiredService<LoginPage>());
+    }
 }

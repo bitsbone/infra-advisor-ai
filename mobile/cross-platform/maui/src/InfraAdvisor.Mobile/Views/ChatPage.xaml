@@ -1,52 +1,221 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" xmlns:models="clr-namespace:InfraAdvisor.Mobile.Models" xmlns:coreModels="clr-namespace:InfraAdvisor.Mobile.Models;assembly=InfraAdvisor.Mobile.Core" xmlns:controls="clr-namespace:InfraAdvisor.Mobile.Controls" x:Class="InfraAdvisor.Mobile.Views.ChatPage" Title="Chat" AutomationId="ChatPage">
+<ContentPage
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:controls="clr-namespace:InfraAdvisor.Mobile.Controls"
+    xmlns:coreModels="clr-namespace:InfraAdvisor.Mobile.Models;assembly=InfraAdvisor.Mobile.Core"
+    xmlns:models="clr-namespace:InfraAdvisor.Mobile.Models;assembly=InfraAdvisor.Mobile.Presentation"
+    xmlns:viewModels="clr-namespace:InfraAdvisor.Mobile.ViewModels;assembly=InfraAdvisor.Mobile.Presentation"
+    xmlns:views="clr-namespace:InfraAdvisor.Mobile.Views"
+    x:Class="InfraAdvisor.Mobile.Views.ChatPage"
+    x:Name="ChatRoot"
+    x:DataType="viewModels:ChatViewModel"
+    Title="Chat"
+    AutomationId="ChatPage">
     <Grid ColumnDefinitions="Auto,*">
-        <VisualStateManager.VisualStateGroups><VisualStateGroup Name="WindowStates"><VisualState Name="Compact"><VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="0" /></VisualState.StateTriggers><VisualState.Setters><Setter TargetName="HistoryRail" Property="IsVisible" Value="False" /></VisualState.Setters></VisualState><VisualState Name="Wide"><VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="850" /></VisualState.StateTriggers><VisualState.Setters><Setter TargetName="HistoryRail" Property="IsVisible" Value="True" /></VisualState.Setters></VisualState></VisualStateGroup></VisualStateManager.VisualStateGroups>
-        <Border x:Name="HistoryRail" WidthRequest="270" Margin="12" Style="{StaticResource Card}" IsVisible="False"><Grid RowDefinitions="Auto,Auto,*" RowSpacing="12"><Label Text="Conversations" Style="{StaticResource SectionTitle}" /><Button Grid.Row="1" Text="New conversation" Command="{Binding NewConversationCommand}" Style="{StaticResource SecondaryButton}" /><CollectionView Grid.Row="2" ItemsSource="{Binding Conversations}" SelectedItem="{Binding SelectedConversation}" SelectionMode="Single"><CollectionView.ItemTemplate><DataTemplate><Grid Padding="8" RowDefinitions="Auto,Auto"><Label Text="{Binding Title}" FontAttributes="Bold" LineBreakMode="TailTruncation" /><Label Grid.Row="1" Text="{Binding MessageCount, StringFormat='{0} messages'}" FontSize="11" TextColor="{StaticResource TextSecondary}" /></Grid></DataTemplate></CollectionView.ItemTemplate></CollectionView></Grid></Border>
-    <Grid Grid.Column="1" Padding="16" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto" RowSpacing="10" MaximumWidthRequest="1100">
-        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
-            <VerticalStackLayout Spacing="0"><Label Text="Infra Advisor" Style="{StaticResource PageTitle}" /><Label Text="Observable AI for resilient infrastructure" TextColor="{StaticResource TextSecondary}" /></VerticalStackLayout>
-            <Button Grid.Column="1" Text="New" Command="{Binding NewConversationCommand}" Style="{StaticResource SecondaryButton}" AutomationId="NewConversation" />
-            <Button Grid.Column="2" Text="Delete" Clicked="OnDeleteConversationClicked" CommandParameter="{Binding SelectedConversation}" Style="{StaticResource DangerButton}" AutomationId="DeleteConversation" />
-        </Grid>
-        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="12">
-            <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,*" ColumnSpacing="10" RowSpacing="8">
-                <Picker Grid.ColumnSpan="2" Title="Conversation history" ItemsSource="{Binding Conversations}" ItemDisplayBinding="{Binding Title}" SelectedItem="{Binding SelectedConversation}" AutomationId="ConversationPicker" />
-                <Picker Grid.Row="1" Title="Backend" ItemsSource="{Binding Backends}" SelectedItem="{Binding SelectedBackend}" IsEnabled="{Binding CanChangeBackend}" AutomationId="BackendPicker" />
-                <Picker Grid.Row="1" Grid.Column="1" Title="Model" ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" AutomationId="ModelPicker" />
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup Name="WindowStates">
+                <VisualState Name="Compact">
+                    <VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="0" /></VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter TargetName="HistoryRail" Property="IsVisible" Value="False" />
+                        <Setter TargetName="CompactHistoryButton" Property="IsVisible" Value="True" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState Name="Wide">
+                    <VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="850" /></VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter TargetName="HistoryRail" Property="IsVisible" Value="True" />
+                        <Setter TargetName="CompactHistoryButton" Property="IsVisible" Value="False" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
+
+        <Border x:Name="HistoryRail" WidthRequest="280" Margin="12" Style="{StaticResource Card}" IsVisible="False">
+            <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="12">
+                <Label Text="Conversations" Style="{StaticResource SectionTitle}" />
+                <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <Button Text="New conversation" Command="{Binding NewConversationCommand}" Style="{StaticResource SecondaryButton}" AutomationId="WideNewConversation" />
+                    <Button Grid.Column="1" Text="↻" Command="{Binding LoadHistoryCommand}" Style="{StaticResource SecondaryButton}" AutomationId="WideRefreshHistory" />
+                </Grid>
+                <Label Grid.Row="2" Text="No saved conversations yet." IsVisible="{Binding HasNoConversations}" TextColor="{StaticResource TextSecondary}" />
+                <VerticalStackLayout Grid.Row="3" Spacing="6">
+                    <ActivityIndicator IsRunning="{Binding IsHistoryLoading}" IsVisible="{Binding IsHistoryLoading}" HorizontalOptions="Start" />
+                    <Label Text="{Binding HistoryErrorMessage}" IsVisible="{Binding HasHistoryError}" TextColor="{StaticResource Danger}" />
+                </VerticalStackLayout>
+                <CollectionView Grid.Row="4" ItemsSource="{Binding Conversations}" SelectedItem="{Binding SelectedConversation}" SelectionMode="Single" AutomationId="WideConversationHistory">
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="coreModels:ConversationSummary">
+                            <Grid Padding="8" RowDefinitions="Auto,Auto">
+                                <Label Text="{Binding Title}" FontAttributes="Bold" LineBreakMode="TailTruncation" />
+                                <Label Grid.Row="1" Text="{Binding MessageCount, StringFormat='{0} messages'}" FontSize="11" TextColor="{StaticResource TextSecondary}" />
+                            </Grid>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
             </Grid>
         </Border>
-        <ScrollView Grid.Row="2" Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
-            <HorizontalStackLayout Spacing="8" BindableLayout.ItemsSource="{Binding Suggestions}">
-                <BindableLayout.ItemTemplate><DataTemplate><Button Text="{Binding .}" Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.UseSuggestionCommand}" CommandParameter="{Binding .}" Style="{StaticResource SecondaryButton}" FontSize="12" Padding="12,6" /></DataTemplate></BindableLayout.ItemTemplate>
-            </HorizontalStackLayout>
-        </ScrollView>
-        <ScrollView Grid.Row="3" Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
-            <HorizontalStackLayout Spacing="8" BindableLayout.ItemsSource="{Binding PipelineSteps}">
-                <BindableLayout.ItemTemplate><DataTemplate x:DataType="models:PipelineStepItem"><Border BackgroundColor="#E0E7FF" StrokeThickness="0" Padding="10,5" StrokeShape="RoundRectangle 14"><Label Text="{Binding Label}" FontSize="12" TextColor="{StaticResource PrimaryDark}" /></Border></DataTemplate></BindableLayout.ItemTemplate>
-            </HorizontalStackLayout>
-        </ScrollView>
-        <Grid Grid.Row="4">
-            <VerticalStackLayout IsVisible="{Binding HasNoMessages}" HorizontalOptions="Center" VerticalOptions="Center" Spacing="12" MaximumWidthRequest="620"><Label Text="Where should we start?" Style="{StaticResource SectionTitle}" HorizontalTextAlignment="Center" /><Label Text="Ask about infrastructure resilience, emergency management, procurement, bridges, or disaster response." HorizontalTextAlignment="Center" TextColor="{StaticResource TextSecondary}" MaximumWidthRequest="520" /><Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8"><Button Text="Infrastructure risk" Command="{Binding UseSuggestionCommand}" CommandParameter="What infrastructure risks should a Texas city review before hurricane season?" Style="{StaticResource SecondaryButton}" /><Button Grid.Column="1" Text="FEMA response" Command="{Binding UseSuggestionCommand}" CommandParameter="Summarize FEMA disaster declarations affecting Texas this year." Style="{StaticResource SecondaryButton}" /><Button Grid.Row="1" Text="Bridge priorities" Command="{Binding UseSuggestionCommand}" CommandParameter="Which bridges should be prioritized based on condition and traffic?" Style="{StaticResource SecondaryButton}" /><Button Grid.Row="1" Grid.Column="1" Text="Federal procurement (MCP)" Command="{Binding UseSuggestionCommand}" CommandParameter="What current federal procurement opportunities exist related to operational resilience or emergency management enhancements in Texas infrastructure systems?" Style="{StaticResource SecondaryButton}" /></Grid></VerticalStackLayout>
-            <CollectionView ItemsSource="{Binding Messages}" SelectionMode="None" AutomationId="ChatTranscript">
-                <CollectionView.ItemTemplate>
-                    <DataTemplate x:DataType="models:ChatMessageItem">
-                        <Border Margin="0,5" Padding="14" StrokeThickness="0" BackgroundColor="White" StrokeShape="RoundRectangle 14">
-                            <Border.Triggers><DataTrigger TargetType="Border" Binding="{Binding IsUser}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource PrimarySoft}" /></DataTrigger></Border.Triggers>
-                            <VerticalStackLayout Spacing="8"><Grid ColumnDefinitions="*,Auto"><Label Text="{Binding Role}" FontAttributes="Bold" FontSize="11" TextColor="{StaticResource Primary}" TextTransform="Uppercase" /><Label Grid.Column="1" Text="{Binding TimestampText}" FontSize="11" TextColor="{StaticResource TextSecondary}" /></Grid><controls:MarkdownLabel Markdown="{Binding Content}" LineBreakMode="WordWrap" /><HorizontalStackLayout BindableLayout.ItemsSource="{Binding Attachments}" Spacing="5"><BindableLayout.ItemTemplate><DataTemplate x:DataType="coreModels:MediaReference"><Border BackgroundColor="#ECFDF5" Stroke="#86EFAC" Padding="8,3" StrokeShape="RoundRectangle 10"><Label Text="{Binding Kind, StringFormat='Attached {0}'}" FontSize="11" TextColor="{StaticResource Success}" /></Border></DataTemplate></BindableLayout.ItemTemplate></HorizontalStackLayout><HorizontalStackLayout BindableLayout.ItemsSource="{Binding Sources}" Spacing="5"><BindableLayout.ItemTemplate><DataTemplate x:DataType="{x:Null}"><Border BackgroundColor="#F1F5F9" Stroke="#CBD5E1" Padding="8,3" StrokeShape="RoundRectangle 10"><Label Text="{Binding .}" FontSize="11" TextColor="{StaticResource TextSecondary}" /></Border></DataTemplate></BindableLayout.ItemTemplate></HorizontalStackLayout><Label Text="{Binding Metadata}" FontSize="11" TextColor="{StaticResource TextSecondary}" /><HorizontalStackLayout Spacing="6"><Button Text="Copy" FontSize="11" Padding="8,2" MinimumHeightRequest="30" Style="{StaticResource SecondaryButton}" Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.CopyMessageCommand}" CommandParameter="{Binding .}" /><HorizontalStackLayout IsVisible="{Binding CanFeedback}" Spacing="6"><Button Text="Helpful" FontSize="11" Padding="8,2" MinimumHeightRequest="30" Style="{StaticResource SecondaryButton}" Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.PositiveFeedbackCommand}" CommandParameter="{Binding .}" /><Button Text="Not helpful" FontSize="11" Padding="8,2" MinimumHeightRequest="30" Style="{StaticResource SecondaryButton}" Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.NegativeFeedbackCommand}" CommandParameter="{Binding .}" /><Button Text="Report" FontSize="11" Padding="8,2" MinimumHeightRequest="30" Style="{StaticResource DangerButton}" Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.ReportFeedbackCommand}" CommandParameter="{Binding .}" /></HorizontalStackLayout></HorizontalStackLayout></VerticalStackLayout>
-                        </Border>
-                    </DataTemplate>
-                </CollectionView.ItemTemplate>
-            </CollectionView>
+
+        <Grid Grid.Column="1" Padding="16" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto" RowSpacing="10" MaximumWidthRequest="1100">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="10">
+                <VerticalStackLayout Spacing="0">
+                    <Label Text="Infra Advisor" Style="{StaticResource PageTitle}" />
+                    <Label Text="Observable AI for resilient infrastructure" TextColor="{StaticResource TextSecondary}" />
+                </VerticalStackLayout>
+                <Button x:Name="CompactHistoryButton" Grid.Column="1" Text="History" Command="{Binding ToggleHistoryCommand}" Style="{StaticResource SecondaryButton}" AutomationId="OpenConversationHistory" />
+                <Button Grid.Column="2" Text="New" Command="{Binding NewConversationCommand}" Style="{StaticResource SecondaryButton}" AutomationId="NewConversation" />
+                <Button Grid.Column="3" Text="Delete" IsVisible="{Binding HasSelectedConversation}" Clicked="OnDeleteConversationClicked" CommandParameter="{Binding SelectedConversation}" Style="{StaticResource DangerButton}" AutomationId="DeleteConversation" />
+            </Grid>
+
+            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="12">
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                    <VerticalStackLayout Spacing="4">
+                        <Label Text="Backend" FontSize="12" TextColor="{StaticResource TextSecondary}" />
+                        <!-- Syncfusion's segmented control makes the mutually exclusive backend boundary explicit and mirrors the web toggle. -->
+                        <controls:BackendSegmentedControl ItemsSource="{Binding Backends}" SelectedIndex="{Binding SelectedBackendIndex, Mode=TwoWay}" IsEnabled="{Binding CanChangeBackend}" SegmentBackground="{StaticResource PrimarySoft}" Stroke="{StaticResource Border}" CornerRadius="12" SegmentHeight="48" AutomationId="BackendSelector" />
+                    </VerticalStackLayout>
+                    <Picker Grid.Column="1" Title="Model" ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" AutomationId="ModelPicker" />
+                </Grid>
+            </Border>
+
+            <ScrollView Grid.Row="2" Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
+                <HorizontalStackLayout Spacing="8" BindableLayout.ItemsSource="{Binding Suggestions}">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="coreModels:SuggestionItem">
+                            <Button Text="{Binding Label}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.UseSuggestionCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding Query}" Style="{StaticResource SecondaryButton}" FontSize="12" Padding="12,6" AutomationId="UseSuggestion" />
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </HorizontalStackLayout>
+            </ScrollView>
+
+            <Grid Grid.Row="3" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <ScrollView Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
+                    <HorizontalStackLayout Spacing="8" BindableLayout.ItemsSource="{Binding PipelineSteps}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="models:PipelineStepItem">
+                                <Border BackgroundColor="#E0E7FF" StrokeThickness="0" Padding="10,5" StrokeShape="RoundRectangle 14"><Label Text="{Binding Label}" FontSize="12" TextColor="{StaticResource PrimaryDark}" /></Border>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </HorizontalStackLayout>
+                </ScrollView>
+                <Label Grid.Column="1" Text="Still working…" IsVisible="{Binding IsStillWorking}" FontAttributes="Italic" TextColor="{StaticResource TextSecondary}" />
+            </Grid>
+
+            <Grid Grid.Row="4">
+                <VerticalStackLayout IsVisible="{Binding HasNoMessages}" HorizontalOptions="Center" VerticalOptions="Center" Spacing="12" MaximumWidthRequest="680">
+                    <Label Text="Where should we start?" Style="{StaticResource SectionTitle}" HorizontalTextAlignment="Center" />
+                    <Label Text="Explore infrastructure resilience, emergency management, procurement, bridges, and disaster response." HorizontalTextAlignment="Center" TextColor="{StaticResource TextSecondary}" MaximumWidthRequest="540" />
+                    <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                        <Button Text="Infrastructure risk" Command="{Binding UseSuggestionCommand}" CommandParameter="What infrastructure risks should a Texas city review before hurricane season?" Style="{StaticResource SecondaryButton}" AutomationId="DomainInfrastructureRisk" />
+                        <Button Grid.Column="1" Text="FEMA response" Command="{Binding UseSuggestionCommand}" CommandParameter="Summarize FEMA disaster declarations affecting Texas this year." Style="{StaticResource SecondaryButton}" AutomationId="DomainFemaResponse" />
+                        <Button Grid.Row="1" Text="Bridge priorities" Command="{Binding UseSuggestionCommand}" CommandParameter="Which bridges should be prioritized based on condition and traffic?" Style="{StaticResource SecondaryButton}" AutomationId="DomainBridgePriorities" />
+                        <Button Grid.Row="1" Grid.Column="1" Text="Federal procurement (MCP)" Command="{Binding UseSuggestionCommand}" CommandParameter="What current federal procurement opportunities exist related to operational resilience or emergency management enhancements in Texas infrastructure systems?" Style="{StaticResource SecondaryButton}" AutomationId="DomainFederalProcurement" />
+                    </Grid>
+                </VerticalStackLayout>
+
+                <CollectionView x:Name="Transcript" ItemsSource="{Binding Messages}" SelectionMode="None" AutomationId="ChatTranscript">
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="models:ChatMessageItem">
+                            <Border Margin="0,5" Style="{StaticResource AssistantBubble}">
+                                <Border.Triggers><DataTrigger TargetType="Border" Binding="{Binding IsUser}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource PrimarySoft}" /></DataTrigger></Border.Triggers>
+                                <VerticalStackLayout Spacing="8">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <Label Text="{Binding Role}" FontAttributes="Bold" FontSize="11" TextColor="{StaticResource Primary}" TextTransform="Uppercase" />
+                                        <Label Grid.Column="1" Text="{Binding TimestampText}" FontSize="11" TextColor="{StaticResource TextSecondary}" />
+                                    </Grid>
+                                    <controls:MarkdownLabel Markdown="{Binding Content}" LineBreakMode="WordWrap" />
+                                    <HorizontalStackLayout BindableLayout.ItemsSource="{Binding Steps}" Spacing="5">
+                                        <BindableLayout.ItemTemplate><DataTemplate x:DataType="models:PipelineStepItem"><Border BackgroundColor="#E0E7FF" StrokeThickness="0" Padding="8,3" StrokeShape="RoundRectangle 10"><Label Text="{Binding Label}" FontSize="11" TextColor="{StaticResource PrimaryDark}" /></Border></DataTemplate></BindableLayout.ItemTemplate>
+                                    </HorizontalStackLayout>
+                                    <HorizontalStackLayout BindableLayout.ItemsSource="{Binding Attachments}" Spacing="5">
+                                        <BindableLayout.ItemTemplate><DataTemplate x:DataType="coreModels:MediaReference"><Border BackgroundColor="#ECFDF5" Stroke="#86EFAC" Padding="8,3" StrokeShape="RoundRectangle 10"><Label Text="{Binding Kind, StringFormat='Attached {0}'}" FontSize="11" TextColor="{StaticResource Success}" /></Border></DataTemplate></BindableLayout.ItemTemplate>
+                                    </HorizontalStackLayout>
+                                    <HorizontalStackLayout BindableLayout.ItemsSource="{Binding Sources}" Spacing="5">
+                                        <BindableLayout.ItemTemplate><DataTemplate x:DataType="x:String"><Button Text="{Binding .}" FontSize="11" Padding="8,3" MinimumHeightRequest="30" Style="{StaticResource SecondaryButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.OpenSourceCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" AutomationId="OpenCitation" /></DataTemplate></BindableLayout.ItemTemplate>
+                                    </HorizontalStackLayout>
+                                    <Label Text="{Binding Metadata}" FontSize="11" TextColor="{StaticResource TextSecondary}" />
+                                    <HorizontalStackLayout Spacing="6">
+                                        <Button Text="Copy" FontSize="11" Padding="8,2" MinimumHeightRequest="30" Style="{StaticResource SecondaryButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.CopyMessageCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" AutomationId="CopyMessage" />
+                                        <HorizontalStackLayout IsVisible="{Binding CanFeedback}" Spacing="6">
+                                            <Button Text="Helpful" FontSize="11" Padding="8,2" MinimumHeightRequest="30" Style="{StaticResource SecondaryButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.PositiveFeedbackCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" AutomationId="PositiveFeedback" />
+                                            <Button Text="Not helpful" FontSize="11" Padding="8,2" MinimumHeightRequest="30" Style="{StaticResource SecondaryButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.NegativeFeedbackCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" AutomationId="NegativeFeedback" />
+                                            <Button Text="Report" FontSize="11" Padding="8,2" MinimumHeightRequest="30" Style="{StaticResource DangerButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.ReportFeedbackCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" AutomationId="ReportFeedback" />
+                                        </HorizontalStackLayout>
+                                    </HorizontalStackLayout>
+                                </VerticalStackLayout>
+                            </Border>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+            </Grid>
+
+            <VerticalStackLayout Grid.Row="5" Spacing="6">
+                <ScrollView Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
+                    <HorizontalStackLayout BindableLayout.ItemsSource="{Binding Attachments}" Spacing="6">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="models:AttachmentItem">
+                                <Border Style="{StaticResource AttachmentChip}">
+                                    <HorizontalStackLayout Spacing="8">
+                                        <Label Text="{Binding DisplayName}" FontSize="12" VerticalTextAlignment="Center" />
+                                        <Label Text="{Binding State}" FontSize="12" TextColor="{StaticResource TextSecondary}" VerticalTextAlignment="Center" />
+                                        <ProgressBar Progress="{Binding Progress}" WidthRequest="60" IsVisible="{Binding IsUploading}" />
+                                        <Button Text="Play" IsVisible="{Binding IsAudio}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.PlayAttachmentCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Padding="6,0" MinimumHeightRequest="28" Style="{StaticResource SecondaryButton}" AutomationId="PlayAttachment" />
+                                        <Button Text="Retry" IsVisible="{Binding CanRetry}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.RetryAttachmentCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Padding="6,0" MinimumHeightRequest="28" Style="{StaticResource SecondaryButton}" AutomationId="RetryAttachment" />
+                                        <Button Text="Cancel" IsVisible="{Binding CanCancel}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.CancelAttachmentCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Padding="6,0" MinimumHeightRequest="28" Style="{StaticResource DangerButton}" AutomationId="CancelAttachment" />
+                                        <Button Text="×" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.RemoveAttachmentCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Padding="4,0" MinimumHeightRequest="28" BackgroundColor="Transparent" TextColor="{StaticResource Danger}" AutomationId="RemoveAttachment" />
+                                    </HorizontalStackLayout>
+                                </Border>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </HorizontalStackLayout>
+                </ScrollView>
+                <HorizontalStackLayout Spacing="8">
+                    <Button Text="Attach" Command="{Binding PickAttachmentCommand}" Style="{StaticResource SecondaryButton}" AutomationId="PickAttachment" />
+                    <Button Text="{Binding RecordLabel}" Command="{Binding RecordAudioCommand}" Style="{StaticResource SecondaryButton}" AutomationId="RecordAudio" />
+                    <Button Text="Cancel recording" Command="{Binding CancelRecordingCommand}" IsVisible="{Binding IsRecording}" Style="{StaticResource DangerButton}" AutomationId="CancelRecording" />
+                    <Button Text="Cancel request" Command="{Binding CancelQueryCommand}" IsVisible="{Binding IsBusy}" Style="{StaticResource DangerButton}" AutomationId="CancelQuery" />
+                </HorizontalStackLayout>
+                <Label Text="{Binding ErrorMessage}" IsVisible="{Binding HasError}" TextColor="{StaticResource Danger}" SemanticProperties.Description="The most recent chat error" />
+            </VerticalStackLayout>
+
+            <Grid Grid.Row="6" RowDefinitions="Auto,Auto" RowSpacing="8">
+                <Border Style="{StaticResource Card}" Padding="8"><Editor Text="{Binding Prompt}" Placeholder="Ask Infra Advisor…" AutoSize="TextChanges" MinimumHeightRequest="88" MaximumHeightRequest="180" AutomationId="PromptEditor" /></Border>
+                <Button Grid.Row="1" Text="{Binding SendLabel}" Command="{Binding SendCommand}" IsEnabled="{Binding CanSend}" AutomationId="SendPrompt" />
+            </Grid>
         </Grid>
-        <VerticalStackLayout Grid.Row="5" Spacing="6">
-            <HorizontalStackLayout BindableLayout.ItemsSource="{Binding Attachments}" Spacing="6"><BindableLayout.ItemTemplate><DataTemplate x:DataType="models:AttachmentItem"><Border BackgroundColor="#ECFDF5" Stroke="#86EFAC" Padding="10,5" StrokeShape="RoundRectangle 12"><HorizontalStackLayout Spacing="8"><Label Text="{Binding DisplayName}" FontSize="12" /><Label Text="{Binding State}" FontSize="12" TextColor="{StaticResource TextSecondary}" /><ProgressBar Progress="{Binding Progress}" WidthRequest="60" /><Button Text="Play" Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.PlayAttachmentCommand}" CommandParameter="{Binding .}" Padding="6,0" MinimumHeightRequest="28" Style="{StaticResource SecondaryButton}" /><Button Text="Retry" Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.RetryAttachmentCommand}" CommandParameter="{Binding .}" Padding="6,0" MinimumHeightRequest="28" Style="{StaticResource SecondaryButton}" /><Button Text="Cancel" Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.CancelAttachmentCommand}" CommandParameter="{Binding .}" Padding="6,0" MinimumHeightRequest="28" Style="{StaticResource DangerButton}" /><Button Text="×" Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.RemoveAttachmentCommand}" CommandParameter="{Binding .}" Padding="4,0" MinimumHeightRequest="28" BackgroundColor="Transparent" TextColor="{StaticResource Danger}" /></HorizontalStackLayout></Border></DataTemplate></BindableLayout.ItemTemplate></HorizontalStackLayout>
-            <HorizontalStackLayout Spacing="8"><Button Text="Attach" Command="{Binding PickAttachmentCommand}" Style="{StaticResource SecondaryButton}" /><Button Text="{Binding RecordLabel}" Command="{Binding RecordAudioCommand}" Style="{StaticResource SecondaryButton}" /><Button Text="Cancel recording" Command="{Binding CancelRecordingCommand}" IsVisible="{Binding IsRecording}" Style="{StaticResource DangerButton}" /><Button Text="Cancel request" Command="{Binding CancelQueryCommand}" IsVisible="{Binding IsBusy}" Style="{StaticResource DangerButton}" /></HorizontalStackLayout>
-            <Label Text="{Binding ErrorMessage}" IsVisible="{Binding HasError}" TextColor="{StaticResource Danger}" />
-        </VerticalStackLayout>
-        <Grid Grid.Row="6" RowDefinitions="Auto,Auto" RowSpacing="8">
-            <Border Style="{StaticResource Card}" Padding="8"><Editor Text="{Binding Prompt}" Placeholder="Ask Infra Advisor…" AutoSize="TextChanges" MinimumHeightRequest="88" MaximumHeightRequest="180" AutomationId="PromptEditor" /></Border>
-            <Button Grid.Row="1" Text="{Binding SendLabel}" Command="{Binding SendCommand}" IsEnabled="{Binding CanSend}" AutomationId="SendPrompt" />
+
+        <Grid Grid.ColumnSpan="2" ZIndex="20" RowDefinitions="*,Auto" IsVisible="{Binding IsHistoryVisible}" AutomationId="ConversationHistorySheet">
+            <BoxView Grid.RowSpan="2" BackgroundColor="#660F172A">
+                <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseHistoryCommand}" /></BoxView.GestureRecognizers>
+            </BoxView>
+            <Border Grid.Row="1" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Border}" StrokeThickness="1" Padding="20" MaximumHeightRequest="620" StrokeShape="RoundRectangle 24">
+                <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="12">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                        <Label Text="Conversation history" Style="{StaticResource SectionTitle}" VerticalTextAlignment="Center" />
+                        <Button Grid.Column="1" Text="Close" Command="{Binding CloseHistoryCommand}" Style="{StaticResource SecondaryButton}" AutomationId="CloseConversationHistory" />
+                    </Grid>
+                    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <Button Text="New conversation" Command="{Binding NewConversationCommand}" Style="{StaticResource SecondaryButton}" AutomationId="SheetNewConversation" />
+                        <Button Grid.Column="1" Text="Refresh" Command="{Binding LoadHistoryCommand}" Style="{StaticResource SecondaryButton}" AutomationId="SheetRefreshHistory" />
+                    </Grid>
+                    <VerticalStackLayout Grid.Row="2" Spacing="6">
+                        <ActivityIndicator IsRunning="{Binding IsHistoryLoading}" IsVisible="{Binding IsHistoryLoading}" />
+                        <Label Text="No saved conversations yet." IsVisible="{Binding HasNoConversations}" HorizontalTextAlignment="Center" TextColor="{StaticResource TextSecondary}" />
+                        <Label Text="{Binding HistoryErrorMessage}" IsVisible="{Binding HasHistoryError}" HorizontalTextAlignment="Center" TextColor="{StaticResource Danger}" />
+                    </VerticalStackLayout>
+                    <CollectionView Grid.Row="3" ItemsSource="{Binding Conversations}" SelectedItem="{Binding SelectedConversation}" SelectionMode="Single" AutomationId="CompactConversationHistory">
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="coreModels:ConversationSummary">
+                                <Grid Padding="10" RowDefinitions="Auto,Auto">
+                                    <Label Text="{Binding Title}" FontAttributes="Bold" LineBreakMode="TailTruncation" />
+                                    <Label Grid.Row="1" Text="{Binding MessageCount, StringFormat='{0} messages'}" FontSize="11" TextColor="{StaticResource TextSecondary}" />
+                                </Grid>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </Grid>
+            </Border>
         </Grid>
-    </Grid></Grid>
+    </Grid>
 </ContentPage>

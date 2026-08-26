@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/InfraAdvisor.Mobile.Core/InfraAdvisor.Mobile.Core.csproj" />
+    <Project Path="src/InfraAdvisor.Mobile.Presentation/InfraAdvisor.Mobile.Presentation.csproj" />
     <Project Path="src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj" />
   </Folder>
   <Folder Name="/tests/">

@@ -1,4 +1,31 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" x:Class="InfraAdvisor.Mobile.Views.LoginPage" Title="Login" AutomationId="LoginPage">
-    <ScrollView><Grid Padding="24" RowDefinitions="*,Auto,*" MinimumHeightRequest="700"><VerticalStackLayout Grid.Row="1" Spacing="20" MaximumWidthRequest="480"><Image Source="appicon.svg" HeightRequest="72" WidthRequest="72" HorizontalOptions="Start" /><VerticalStackLayout Spacing="6"><Label Text="Infra Advisor" Style="{StaticResource PageTitle}" /><Label Text="AI guidance for resilient infrastructure, with end-to-end observability built in." TextColor="{StaticResource TextSecondary}" FontSize="16" /></VerticalStackLayout><Border Style="{StaticResource Card}"><VerticalStackLayout Spacing="14"><Label Text="Sign in" Style="{StaticResource SectionTitle}" /><Entry Placeholder="Email" Keyboard="Email" Text="{Binding Email}" AutomationId="LoginEmail" /><Entry Placeholder="Password" IsPassword="True" Text="{Binding Password}" AutomationId="LoginPassword" /><Label Text="{Binding ErrorMessage}" TextColor="{StaticResource Danger}" IsVisible="{Binding HasError}" /><Button Text="{Binding SubmitLabel}" Command="{Binding LoginCommand}" IsEnabled="{Binding CanSubmit}" AutomationId="LoginSubmit" /></VerticalStackLayout></Border><Label Text="Credentials and session tokens remain in memory and are never included in telemetry." FontSize="12" TextColor="{StaticResource TextSecondary}" /></VerticalStackLayout></Grid></ScrollView>
+<ContentPage
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:viewModels="clr-namespace:InfraAdvisor.Mobile.ViewModels;assembly=InfraAdvisor.Mobile.Presentation"
+    x:Class="InfraAdvisor.Mobile.Views.LoginPage"
+    x:DataType="viewModels:LoginViewModel"
+    Title="Login"
+    AutomationId="LoginPage">
+    <ScrollView>
+        <Grid Padding="24" RowDefinitions="*,Auto,*" MinimumHeightRequest="700">
+            <VerticalStackLayout Grid.Row="1" Spacing="20" MaximumWidthRequest="480">
+                <Image Source="brandmark.png" HeightRequest="72" WidthRequest="72" HorizontalOptions="Start" SemanticProperties.Description="Infra Advisor bridge logo" />
+                <VerticalStackLayout Spacing="6">
+                    <Label Text="Infra Advisor" Style="{StaticResource PageTitle}" />
+                    <Label Text="AI guidance for resilient infrastructure, with end-to-end observability built in." TextColor="{StaticResource TextSecondary}" FontSize="16" />
+                </VerticalStackLayout>
+                <Border Style="{StaticResource Card}">
+                    <VerticalStackLayout Spacing="14">
+                        <Label Text="Sign in" Style="{StaticResource SectionTitle}" />
+                        <Entry Placeholder="Email" Keyboard="Email" Text="{Binding Email}" AutomationId="LoginEmail" />
+                        <Entry Placeholder="Password" IsPassword="True" Text="{Binding Password}" AutomationId="LoginPassword" />
+                        <Label Text="{Binding ErrorMessage}" TextColor="{StaticResource Danger}" IsVisible="{Binding HasError}" />
+                        <Button Text="{Binding SubmitLabel}" Command="{Binding LoginCommand}" IsEnabled="{Binding CanSubmit}" AutomationId="LoginSubmit" />
+                    </VerticalStackLayout>
+                </Border>
+                <Label Text="Credentials and session tokens remain in memory and are never included in telemetry." FontSize="12" TextColor="{StaticResource TextSecondary}" />
+            </VerticalStackLayout>
+        </Grid>
+    </ScrollView>
 </ContentPage>

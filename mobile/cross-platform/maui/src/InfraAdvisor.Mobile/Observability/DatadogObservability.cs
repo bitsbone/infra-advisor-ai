@@ -1,5 +1,6 @@
 using Datadog.Maui;
 using Datadog.Maui.Configuration;
+using InfraAdvisor.Mobile.Services;
 
 namespace InfraAdvisor.Mobile.Observability;
 
@@ -22,13 +23,30 @@ public sealed class DatadogObservability : IObservability
 
     public void StopSession() => DdRum.StopSession();
 
-    public void Info(string message, IReadOnlyDictionary<string, object>? attributes = null) => DdLogs.Info(message);
+    public string StartOperation(string name, IReadOnlyDictionary<string, object>? attributes = null)
+    {
+        var operationKey = Guid.NewGuid().ToString("N");
+        DdRum.StartOperation(name, operationKey, TelemetrySanitizer.FilterAttributes(attributes));
+        return operationKey;
+    }
+
+    public void SucceedOperation(string name, string operationKey, IReadOnlyDictionary<string, object>? attributes = null) =>
+        DdRum.SucceedOperation(name, operationKey, TelemetrySanitizer.FilterAttributes(attributes));
+
+    public void FailOperation(string name, string operationKey, bool abandoned, IReadOnlyDictionary<string, object>? attributes = null) =>
+        DdRum.FailOperation(name, abandoned ? OperationFailure.Abandoned : OperationFailure.Error, operationKey, TelemetrySanitizer.FilterAttributes(attributes));
+
+    public void Info(string message, IReadOnlyDictionary<string, object>? attributes = null)
+    {
+        DdLogs.LogWithAttributes("info", message, TelemetrySanitizer.FilterAttributes(attributes));
+    }
 
     public void Error(string message, Exception exception, IReadOnlyDictionary<string, object>? attributes = null)
     {
-        var safeAttributes = attributes is null ? new Dictionary<string, object>() : new Dictionary<string, object>(attributes);
+        var safeAttributes = TelemetrySanitizer.FilterAttributes(attributes);
         safeAttributes["error.type"] = exception.GetType().Name;
-        DdLogs.Error($"{message} ({exception.GetType().Name})");
-        DdRum.AddError(message, RumErrorSource.Source, exception.ToString(), safeAttributes, 0, string.Empty);
+        DdLogs.LogWithAttributes("error", $"{message} ({exception.GetType().Name})", safeAttributes);
+        var safeStacktrace = $"{exception.GetType().FullName}\n{TelemetrySanitizer.SanitizeDiagnosticText(exception.StackTrace)}";
+        DdRum.AddError(message, RumErrorSource.Source, safeStacktrace, safeAttributes, 0, string.Empty);
     }
 }

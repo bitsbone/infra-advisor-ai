@@ -48,6 +48,24 @@ public static class MauiProgram
                 AutomaticViewTracking = true,
                 AutomaticActionTracking = true,
                 AutomaticResourceTracking = true,
+                ResourceEventMapper = resource =>
+                {
+                    resource.Url = TelemetrySanitizer.SanitizeUrl(resource.Url);
+                    resource.Context = TelemetrySanitizer.FilterAttributes(resource.Context);
+                    return resource;
+                },
+                ActionEventMapper = action =>
+                {
+                    action.Name = TelemetrySanitizer.SanitizeActionName(action.Name);
+                    action.Context = TelemetrySanitizer.FilterAttributes(action.Context);
+                    return action;
+                },
+                ErrorEventMapper = error =>
+                {
+                    error.Stacktrace = TelemetrySanitizer.SanitizeDiagnosticText(error.Stacktrace);
+                    error.Context = TelemetrySanitizer.FilterAttributes(error.Context);
+                    return error;
+                },
             })
             .UseDatadogSessionReplay(new SessionReplayConfiguration
             {
@@ -61,6 +79,12 @@ public static class MauiProgram
         builder.Services.AddSingleton<IRumSessionProvider, MauiRumSessionProvider>();
         builder.Services.AddSingleton<IObservability, DatadogObservability>();
         builder.Services.AddSingleton<AppNavigator>();
+        builder.Services.AddSingleton<IAppNavigator>(services => services.GetRequiredService<AppNavigator>());
+        builder.Services.AddSingleton<IAppPreferences, MauiAppPreferences>();
+        builder.Services.AddSingleton<IClipboardService, MauiClipboardService>();
+        builder.Services.AddSingleton<ILinkLauncher, MauiLinkLauncher>();
+        builder.Services.AddSingleton<IAppRuntimeInfo, MauiAppRuntimeInfo>();
+        builder.Services.AddSingleton<IAppTerminator, MauiAppTerminator>();
         builder.Services.AddHttpClient<InfraAdvisorApiClient>(client =>
         {
             client.BaseAddress = new Uri(AppConfiguration.ApiBaseUrl);

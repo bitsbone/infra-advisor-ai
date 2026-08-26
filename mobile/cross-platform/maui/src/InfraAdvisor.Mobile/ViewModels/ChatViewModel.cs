@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using InfraAdvisor.Mobile.Models;
@@ -8,23 +9,28 @@ using InfraAdvisor.Mobile.Services.Media;
 
 namespace InfraAdvisor.Mobile.ViewModels;
 
-public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session, IObservability observability, IMediaInputService mediaInput) : ObservableObject
+public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session, IObservability observability, IMediaInputService mediaInput, IAppPreferences preferences, IClipboardService clipboard, ILinkLauncher linkLauncher) : ObservableObject
 {
-    private static readonly string[] FallbackSuggestions =
+    private static readonly SuggestionItem[] FallbackSuggestions =
     [
-        "What infrastructure risks should a Texas city review before hurricane season?",
-        "Summarize FEMA disaster declarations affecting Texas this year.",
-        "Which bridges should be prioritized based on condition and traffic?",
-        "What current federal procurement opportunities exist related to operational resilience or emergency management enhancements in Texas infrastructure systems?",
+        new("Hurricane readiness", "What infrastructure risks should a Texas city review before hurricane season?"),
+        new("FEMA declarations", "Summarize FEMA disaster declarations affecting Texas this year."),
+        new("Bridge priorities", "Which bridges should be prioritized based on condition and traffic?"),
+        new("Federal procurement (MCP)", "What current federal procurement opportunities exist related to operational resilience or emergency management enhancements in Texas infrastructure systems?"),
     ];
 
     private CancellationTokenSource? queryCancellation;
     private CancellationTokenSource? recordingTimerCancellation;
+    private CancellationTokenSource? stillWorkingCancellation;
+    private readonly CancellationTokenSource sessionCancellation = new();
+    private string? recordingOperationKey;
     private bool initialized;
+    private int metadataGeneration;
+    private int conversationGeneration;
 
     public ObservableCollection<ChatMessageItem> Messages { get; } = [];
     public ObservableCollection<PipelineStepItem> PipelineSteps { get; } = [];
-    public ObservableCollection<string> Suggestions { get; } = [];
+    public ObservableCollection<SuggestionItem> Suggestions { get; } = [];
     public ObservableCollection<string> Models { get; } = [];
     public ObservableCollection<ConversationSummary> Conversations { get; } = [];
     public ObservableCollection<AttachmentItem> Attachments { get; } = [];
@@ -34,16 +40,23 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanSend)), NotifyPropertyChangedFor(nameof(SendLabel))] private bool isBusy;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasError))] private string? errorMessage;
     [ObservableProperty] private string selectedBackend = "Python";
+    [ObservableProperty] private int? selectedBackendIndex = 0;
     [ObservableProperty] private string? selectedModel;
-    [ObservableProperty] private ConversationSummary? selectedConversation;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasSelectedConversation))] private ConversationSummary? selectedConversation;
     [ObservableProperty] private bool isHistoryVisible;
+    [ObservableProperty] private bool isHistoryLoading;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasHistoryError))] private string? historyErrorMessage;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(RecordLabel))] private bool isRecording;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(RecordLabel))] private TimeSpan recordingDuration;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanChangeBackend))] private bool isConversationLocked;
+    [ObservableProperty] private bool isStillWorking;
 
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
     public bool HasMessages => Messages.Count > 0;
     public bool HasNoMessages => !HasMessages;
+    public bool HasNoConversations => Conversations.Count == 0;
+    public bool HasSelectedConversation => SelectedConversation is not null;
+    public bool HasHistoryError => !string.IsNullOrWhiteSpace(HistoryErrorMessage);
     public bool CanSend => !IsBusy && !string.IsNullOrWhiteSpace(Prompt) && SelectedModel is not null && Attachments.All(item => item.Remote is not null);
     public string SendLabel => IsBusy ? "Working…" : "Ask Infra Advisor";
     public string RecordLabel => IsRecording ? $"Stop {RecordingDuration:mm\\:ss}" : "Record";
@@ -54,18 +67,33 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     partial void OnSelectedModelChanged(string? value)
     {
         session.Model = value;
-        if (value is not null) Preferences.Default.Set("chat.model", value);
+        if (value is not null) preferences.Set("chat.model", value);
         OnPropertyChanged(nameof(CanSend));
     }
 
     partial void OnSelectedBackendChanged(string value)
     {
+        var index = value == ".NET" ? 1 : 0;
+        if (SelectedBackendIndex != index)
+        {
+            SelectedBackendIndex = index;
+        }
+
         var next = value == ".NET" ? BackendKind.DotNet : BackendKind.Python;
-        Preferences.Default.Set("chat.backend", next.ApiValue());
+        preferences.Set("chat.backend", next.ApiValue());
         if (session.Backend != next && session.ConversationId is null)
         {
             session.Backend = next;
             _ = LoadBackendMetadataAsync();
+        }
+    }
+
+    partial void OnSelectedBackendIndexChanged(int? value)
+    {
+        var backend = value == 1 ? ".NET" : "Python";
+        if (SelectedBackend != backend)
+        {
+            SelectedBackend = backend;
         }
     }
 
@@ -87,8 +115,8 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
 
         initialized = true;
         session.RegisterSessionCleanup(CleanupSessionAsync);
-        session.Backend = BackendKindExtensions.ParseBackend(Preferences.Default.Get("chat.backend", session.Backend.ApiValue()));
-        session.Model = Preferences.Default.Get<string?>("chat.model", null);
+        session.Backend = BackendKindExtensions.ParseBackend(preferences.Get("chat.backend", session.Backend.ApiValue()));
+        session.Model = preferences.Get("chat.model", null);
         SelectedBackend = session.Backend.DisplayName();
         await Task.WhenAll(LoadBackendMetadataAsync(), LoadHistoryAsync());
     }
@@ -96,21 +124,44 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     [RelayCommand]
     private async Task LoadHistoryAsync()
     {
+        if (IsHistoryLoading)
+        {
+            return;
+        }
+
+        IsHistoryLoading = true;
+        HistoryErrorMessage = null;
         try
         {
-            var values = await api.GetConversationsAsync();
+            var values = await api.GetConversationsAsync(sessionCancellation.Token);
             Conversations.Clear();
             foreach (var value in values)
             {
                 Conversations.Add(value);
             }
+
+            OnPropertyChanged(nameof(HasNoConversations));
         }
         catch (Exception exception) when (exception is ApiException or HttpRequestException)
         {
-            ErrorMessage = "Conversation history is temporarily unavailable.";
+            HistoryErrorMessage = "Conversation history is temporarily unavailable.";
             observability.Error("Conversation history load failed", exception, new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue() });
         }
+        catch (OperationCanceledException) when (sessionCancellation.IsCancellationRequested)
+        {
+            // Logout owns session cancellation; the replacement Login page should not inherit an error from this view model.
+        }
+        finally
+        {
+            IsHistoryLoading = false;
+        }
     }
+
+    [RelayCommand]
+    private void ToggleHistory() => IsHistoryVisible = !IsHistoryVisible;
+
+    [RelayCommand]
+    private void CloseHistory() => IsHistoryVisible = false;
 
     [RelayCommand]
     private async Task NewConversationAsync()
@@ -122,6 +173,7 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         }
         foreach (var attachment in Attachments.ToArray())
         {
+            attachment.UploadCancellation?.Cancel();
             await mediaInput.RemoveAsync(attachment);
         }
         session.StartNewConversation();
@@ -179,6 +231,7 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
                 RecordingDuration = TimeSpan.Zero;
                 recordingTimerCancellation = new CancellationTokenSource();
                 _ = RunRecordingTimerAsync(recordingTimerCancellation.Token);
+                recordingOperationKey = observability.StartOperation("media.record", new Dictionary<string, object> { ["modality"] = "audio" });
                 observability.Info("Audio recording started", new Dictionary<string, object> { ["modality"] = "audio" });
             }
             else
@@ -186,6 +239,11 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
                 var item = await mediaInput.StopRecordingAsync();
                 recordingTimerCancellation?.Cancel();
                 IsRecording = false;
+                if (recordingOperationKey is { } operationKey)
+                {
+                    observability.SucceedOperation("media.record", operationKey, new Dictionary<string, object> { ["modality"] = "audio", ["duration_ms"] = (long)RecordingDuration.TotalMilliseconds, ["size_bytes"] = item.SizeBytes });
+                    recordingOperationKey = null;
+                }
                 await AddAndUploadAsync(item);
             }
         }
@@ -193,6 +251,11 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         {
             IsRecording = false;
             ErrorMessage = exception.Message;
+            if (recordingOperationKey is { } operationKey)
+            {
+                observability.FailOperation("media.record", operationKey, abandoned: false, new Dictionary<string, object> { ["modality"] = "audio", ["duration_ms"] = (long)RecordingDuration.TotalMilliseconds });
+                recordingOperationKey = null;
+            }
             observability.Error("Audio recording failed", exception, new Dictionary<string, object> { ["modality"] = "audio" });
         }
     }
@@ -203,6 +266,7 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     [RelayCommand]
     private async Task RemoveAttachmentAsync(AttachmentItem item)
     {
+        item.UploadCancellation?.Cancel();
         Attachments.Remove(item);
         await mediaInput.RemoveAsync(item);
         OnPropertyChanged(nameof(CanSend));
@@ -217,10 +281,16 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     [RelayCommand]
     private async Task CancelRecordingAsync()
     {
+        var elapsedMilliseconds = (long)RecordingDuration.TotalMilliseconds;
         recordingTimerCancellation?.Cancel();
         await mediaInput.CancelRecordingAsync();
         IsRecording = false;
         RecordingDuration = TimeSpan.Zero;
+        if (recordingOperationKey is { } operationKey)
+        {
+            observability.FailOperation("media.record", operationKey, abandoned: true, new Dictionary<string, object> { ["modality"] = "audio", ["duration_ms"] = elapsedMilliseconds, ["result"] = "canceled" });
+            recordingOperationKey = null;
+        }
         observability.Info("Audio recording canceled", new Dictionary<string, object> { ["modality"] = "audio" });
     }
 
@@ -234,7 +304,16 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     private Task ReportFeedbackAsync(ChatMessageItem message) => SubmitFeedbackAsync(message, "reported");
 
     [RelayCommand]
-    private static Task CopyMessageAsync(ChatMessageItem message) => Clipboard.Default.SetTextAsync(message.Content);
+    private Task CopyMessageAsync(ChatMessageItem message) => clipboard.SetTextAsync(message.Content);
+
+    [RelayCommand]
+    private async Task OpenSourceAsync(string source)
+    {
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+        {
+            await linkLauncher.OpenAsync(uri);
+        }
+    }
 
     [RelayCommand]
     private async Task SendAsync()
@@ -245,11 +324,13 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         }
 
         var query = Prompt.Trim();
+        var queryOperationKey = observability.StartOperation("ai.query", new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue(), ["attachment_count"] = Attachments.Count });
         Prompt = string.Empty;
         IsBusy = true;
         ErrorMessage = null;
         PipelineSteps.Clear();
-        queryCancellation = new CancellationTokenSource();
+        queryCancellation = CancellationTokenSource.CreateLinkedTokenSource(sessionCancellation.Token);
+        ResetStillWorkingTimer();
         var messageAttachments = Attachments.Where(item => item.Remote is not null).Select(item => item.Remote!).ToArray();
         var assistantMessage = new ChatMessageItem { Role = "assistant", Content = string.Empty };
         Messages.Add(new ChatMessageItem { Role = "user", Content = query, Attachments = messageAttachments });
@@ -270,10 +351,12 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
             observability.Info("AI query stream started", new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue(), ["attachment_count"] = uploaded.Length });
             await foreach (var streamEvent in api.StreamQueryAsync(new QueryStreamRequest(query, session.SessionId, SelectedModel, uploaded), queryCancellation.Token))
             {
+                ResetStillWorkingTimer();
                 ApplyStreamEvent(streamEvent, assistantMessage);
             }
 
             observability.Info("AI query stream completed", new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue(), ["result"] = "success" });
+            observability.SucceedOperation("ai.query", queryOperationKey, new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue(), ["result"] = "success" });
             await LoadHistoryAsync();
             _ = LoadContextualSuggestionsAsync(query, assistantMessage);
             foreach (var attachment in Attachments.ToArray())
@@ -285,15 +368,21 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         catch (OperationCanceledException)
         {
             assistantMessage.Content = string.IsNullOrWhiteSpace(assistantMessage.Content) ? "Request canceled." : assistantMessage.Content;
+            observability.FailOperation("ai.query", queryOperationKey, abandoned: true, new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue(), ["result"] = "canceled" });
         }
         catch (Exception exception) when (exception is ApiException or HttpRequestException)
         {
             ErrorMessage = exception is ApiException apiException ? apiException.Message : "The service could not be reached. Check your connection and try again.";
             assistantMessage.Content = string.IsNullOrWhiteSpace(assistantMessage.Content) ? "I couldn't complete that request." : assistantMessage.Content;
+            observability.FailOperation("ai.query", queryOperationKey, abandoned: false, new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue(), ["result"] = "error" });
             observability.Error("AI query stream failed", exception, new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue() });
         }
         finally
         {
+            stillWorkingCancellation?.Cancel();
+            stillWorkingCancellation?.Dispose();
+            stillWorkingCancellation = null;
+            IsStillWorking = false;
             IsBusy = false;
             queryCancellation.Dispose();
             queryCancellation = null;
@@ -303,20 +392,37 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     [RelayCommand]
     private async Task DeleteConversationAsync(ConversationSummary conversation)
     {
-        await api.DeleteConversationAsync(conversation.Id);
-        if (session.ConversationId == conversation.Id)
+        try
         {
-            await NewConversationAsync();
-        }
+            await api.DeleteConversationAsync(conversation.Id, sessionCancellation.Token);
+            if (session.ConversationId == conversation.Id)
+            {
+                await NewConversationAsync();
+            }
 
-        await LoadHistoryAsync();
+            await LoadHistoryAsync();
+        }
+        catch (Exception exception) when (exception is ApiException or HttpRequestException)
+        {
+            ErrorMessage = "The conversation could not be deleted.";
+            observability.Error("Conversation delete failed", exception, new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue() });
+        }
+        catch (OperationCanceledException) when (sessionCancellation.IsCancellationRequested)
+        {
+        }
     }
 
     private async Task LoadBackendMetadataAsync()
     {
+        var generation = Interlocked.Increment(ref metadataGeneration);
         try
         {
-            var models = await api.GetModelsAsync();
+            var models = await api.GetModelsAsync(sessionCancellation.Token);
+            if (generation != metadataGeneration)
+            {
+                return;
+            }
+
             Models.Clear();
             foreach (var model in models.Models)
             {
@@ -324,29 +430,53 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
             }
 
             SelectedModel = session.Model is { } savedModel && Models.Contains(savedModel) ? savedModel : models.DefaultModel;
-            var suggestions = await api.GetInitialSuggestionsAsync();
+            var suggestions = await api.GetInitialSuggestionsAsync(sessionCancellation.Token);
+            if (generation != metadataGeneration)
+            {
+                return;
+            }
+
             SetSuggestions(suggestions.Count > 0 ? suggestions : FallbackSuggestions);
         }
         catch (Exception exception) when (exception is ApiException or HttpRequestException)
         {
-            SetSuggestions(FallbackSuggestions);
-            observability.Error("Chat metadata load failed", exception, new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue() });
+            if (generation == metadataGeneration)
+            {
+                SetSuggestions(FallbackSuggestions);
+                observability.Error("Chat metadata load failed", exception, new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue() });
+            }
+        }
+        catch (OperationCanceledException) when (sessionCancellation.IsCancellationRequested)
+        {
         }
     }
 
     private async Task OpenConversationAsync(ConversationSummary summary)
     {
+        var generation = Interlocked.Increment(ref conversationGeneration);
+        var previousBackend = session.Backend;
         try
         {
             session.Backend = BackendKindExtensions.ParseBackend(summary.Backend);
+            SelectedBackend = session.Backend.DisplayName();
+            var detail = await api.GetConversationAsync(summary.Id, sessionCancellation.Token);
+            if (generation != conversationGeneration)
+            {
+                return;
+            }
+
             session.ConversationId = summary.Id;
             IsConversationLocked = true;
-            SelectedBackend = session.Backend.DisplayName();
-            var detail = await api.GetConversationAsync(summary.Id);
             Messages.Clear();
             foreach (var message in detail.Messages)
             {
-                Messages.Add(new ChatMessageItem { Role = message.Role, Content = message.Content, Sources = message.Sources ?? [], Attachments = message.Attachments ?? [], SourceText = message.Sources is { Count: > 0 } ? $"Sources: {string.Join(", ", message.Sources)}" : string.Empty, Metadata = message.TraceId is null ? string.Empty : $"Trace {message.TraceId}", MessageId = message.Id, TraceId = message.TraceId, SpanId = message.SpanId, Timestamp = DateTimeOffset.TryParse(message.CreatedAt, out var created) ? created : DateTimeOffset.Now });
+                var item = new ChatMessageItem { Role = message.Role, Content = message.Content, Sources = message.Sources ?? [], Attachments = message.Attachments ?? [], SourceText = message.Sources is { Count: > 0 } ? $"Sources: {string.Join(", ", message.Sources)}" : string.Empty, Metadata = message.TraceId is null ? string.Empty : $"Trace {message.TraceId}", MessageId = message.Id, TraceId = message.TraceId, SpanId = message.SpanId, Timestamp = DateTimeOffset.TryParse(message.CreatedAt, out var created) ? created : DateTimeOffset.Now };
+                foreach (var step in message.Steps ?? [])
+                {
+                    item.Steps.Add(new PipelineStepItem(step.Id, step.Kind, step.Name, step.Status, step.Detail ?? step.ResultSummary, step.Sources, step.DurationMs));
+                }
+
+                Messages.Add(item);
             }
 
             SelectedModel = detail.Model ?? SelectedModel;
@@ -355,8 +485,21 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         }
         catch (Exception exception) when (exception is ApiException or HttpRequestException)
         {
+            if (generation != conversationGeneration)
+            {
+                return;
+            }
+
+            session.Backend = previousBackend;
+            session.ConversationId = null;
+            SelectedBackend = previousBackend.DisplayName();
+            IsConversationLocked = false;
+            SelectedConversation = null;
             ErrorMessage = "That conversation could not be loaded.";
             observability.Error("Conversation detail load failed", exception, new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue() });
+        }
+        catch (OperationCanceledException) when (sessionCancellation.IsCancellationRequested)
+        {
         }
     }
 
@@ -364,9 +507,13 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     {
         switch (streamEvent.Event)
         {
-            case "step": PipelineSteps.Add(new PipelineStepItem(streamEvent.Step ?? "Processing", streamEvent.Status ?? "active")); break;
-            case "tool_call_start": PipelineSteps.Add(new PipelineStepItem(streamEvent.Name ?? "Tool call", "running")); break;
-            case "tool_call_end": PipelineSteps.Add(new PipelineStepItem(streamEvent.Name ?? "Tool call", "complete")); break;
+            case "step":
+            case "tool_call_start":
+            case "tool_call_end":
+                var step = ToPipelineStep(streamEvent);
+                UpsertStep(PipelineSteps, step);
+                UpsertStep(assistant.Steps, step);
+                break;
             case "text_chunk": assistant.Content += streamEvent.Chunk; break;
             case "done":
                 assistant.SourceText = streamEvent.Sources is { Count: > 0 } ? $"Sources: {string.Join(", ", streamEvent.Sources)}" : string.Empty;
@@ -384,16 +531,19 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     {
         try
         {
-            var sources = string.IsNullOrWhiteSpace(assistant.SourceText) ? Array.Empty<string>() : [assistant.SourceText];
-            SetSuggestions(await api.GetContextualSuggestionsAsync(query, assistant.Content, sources));
+            var suggestions = await api.GetContextualSuggestionsAsync(query, assistant.Content, assistant.Sources, sessionCancellation.Token);
+            SetSuggestions(suggestions.Count > 0 ? suggestions : FallbackSuggestions);
         }
         catch (Exception exception) when (exception is ApiException or HttpRequestException)
         {
             observability.Info("Contextual suggestions unavailable", new Dictionary<string, object> { ["error_type"] = exception.GetType().Name });
         }
+        catch (OperationCanceledException) when (sessionCancellation.IsCancellationRequested)
+        {
+        }
     }
 
-    private void SetSuggestions(IEnumerable<string> values)
+    private void SetSuggestions(IEnumerable<SuggestionItem> values)
     {
         Suggestions.Clear();
         foreach (var value in values.Take(6)) Suggestions.Add(value);
@@ -420,10 +570,12 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
 
     private async Task UploadAsync(AttachmentItem item)
     {
+        var duration = Stopwatch.StartNew();
+        var operationKey = observability.StartOperation("media.upload", new Dictionary<string, object> { ["modality"] = item.Kind, ["size_bytes"] = item.SizeBytes });
         item.State = "Uploading…";
         item.Progress = 0;
         item.UploadCancellation?.Dispose();
-        item.UploadCancellation = new CancellationTokenSource();
+        item.UploadCancellation = CancellationTokenSource.CreateLinkedTokenSource(sessionCancellation.Token);
         try
         {
             await using var stream = await item.OpenReadAsync();
@@ -432,18 +584,22 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
             item.Remote = new MediaReference(response.Url, response.Kind, response.MimeType, response.SizeBytes);
             item.State = "Ready";
             OnPropertyChanged(nameof(CanSend));
-            observability.Info("Attachment upload completed", new Dictionary<string, object> { ["modality"] = item.Kind, ["size_bytes"] = item.SizeBytes, ["result"] = "success" });
+            observability.SucceedOperation("media.upload", operationKey, new Dictionary<string, object> { ["modality"] = item.Kind, ["size_bytes"] = item.SizeBytes, ["duration_ms"] = duration.ElapsedMilliseconds, ["result"] = "success" });
+            observability.Info("Attachment upload completed", new Dictionary<string, object> { ["modality"] = item.Kind, ["size_bytes"] = item.SizeBytes, ["duration_ms"] = duration.ElapsedMilliseconds, ["result"] = "success" });
         }
         catch (OperationCanceledException)
         {
             item.State = "Upload canceled";
             OnPropertyChanged(nameof(CanSend));
+            observability.FailOperation("media.upload", operationKey, abandoned: true, new Dictionary<string, object> { ["modality"] = item.Kind, ["size_bytes"] = item.SizeBytes, ["duration_ms"] = duration.ElapsedMilliseconds, ["result"] = "canceled" });
+            observability.Info("Attachment upload canceled", new Dictionary<string, object> { ["modality"] = item.Kind, ["size_bytes"] = item.SizeBytes, ["duration_ms"] = duration.ElapsedMilliseconds, ["result"] = "canceled" });
         }
         catch (Exception exception) when (exception is ApiException or HttpRequestException or IOException)
         {
             item.State = "Upload failed — tap retry";
             OnPropertyChanged(nameof(CanSend));
-            observability.Error("Attachment upload failed", exception, new Dictionary<string, object> { ["modality"] = item.Kind, ["size_bytes"] = item.SizeBytes });
+            observability.FailOperation("media.upload", operationKey, abandoned: false, new Dictionary<string, object> { ["modality"] = item.Kind, ["size_bytes"] = item.SizeBytes, ["duration_ms"] = duration.ElapsedMilliseconds, ["result"] = "error" });
+            observability.Error("Attachment upload failed", exception, new Dictionary<string, object> { ["modality"] = item.Kind, ["size_bytes"] = item.SizeBytes, ["duration_ms"] = duration.ElapsedMilliseconds });
         }
         finally
         {
@@ -459,15 +615,22 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
             return;
         }
 
+        var operationKey = observability.StartOperation("ai.feedback", new Dictionary<string, object> { ["rating"] = rating, ["backend"] = session.Backend.ApiValue() });
         try
         {
-            await api.SendFeedbackAsync(new FeedbackRequest(message.TraceId, message.SpanId, rating, session.SessionId));
+            await api.SendFeedbackAsync(new FeedbackRequest(message.TraceId, message.SpanId, rating, session.SessionId), sessionCancellation.Token);
+            observability.SucceedOperation("ai.feedback", operationKey, new Dictionary<string, object> { ["rating"] = rating, ["backend"] = session.Backend.ApiValue() });
             observability.Info("AI response feedback submitted", new Dictionary<string, object> { ["rating"] = rating, ["backend"] = session.Backend.ApiValue() });
         }
         catch (Exception exception) when (exception is ApiException or HttpRequestException)
         {
             ErrorMessage = "Feedback could not be submitted.";
+            observability.FailOperation("ai.feedback", operationKey, abandoned: false, new Dictionary<string, object> { ["rating"] = rating, ["backend"] = session.Backend.ApiValue() });
             observability.Error("AI response feedback failed", exception, new Dictionary<string, object> { ["rating"] = rating });
+        }
+        catch (OperationCanceledException) when (sessionCancellation.IsCancellationRequested)
+        {
+            observability.FailOperation("ai.feedback", operationKey, abandoned: true, new Dictionary<string, object> { ["rating"] = rating, ["backend"] = session.Backend.ApiValue() });
         }
     }
 
@@ -491,13 +654,64 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         }
     }
 
+    private void ResetStillWorkingTimer()
+    {
+        stillWorkingCancellation?.Cancel();
+        stillWorkingCancellation?.Dispose();
+        IsStillWorking = false;
+        stillWorkingCancellation = CancellationTokenSource.CreateLinkedTokenSource(queryCancellation?.Token ?? CancellationToken.None);
+        _ = ShowStillWorkingAfterDelayAsync(stillWorkingCancellation.Token);
+    }
+
+    private async Task ShowStillWorkingAfterDelayAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
+            IsStillWorking = true;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static PipelineStepItem ToPipelineStep(StreamEvent streamEvent) => streamEvent.Event switch
+    {
+        "step" => new PipelineStepItem($"internal:{streamEvent.Step ?? "processing"}", "internal", streamEvent.Step ?? "Processing", streamEvent.Status ?? "running", streamEvent.Detail),
+        "tool_call_start" => new PipelineStepItem(streamEvent.Id ?? $"tool:{streamEvent.Name ?? "unknown"}", "tool", streamEvent.Name ?? "Tool call", "running"),
+        "tool_call_end" => new PipelineStepItem(streamEvent.Id ?? $"tool:{streamEvent.Name ?? "unknown"}", "tool", streamEvent.Name ?? "Tool call", streamEvent.Status ?? "complete", streamEvent.ResultSummary, streamEvent.Sources, streamEvent.DurationMs),
+        _ => throw new ArgumentOutOfRangeException(nameof(streamEvent)),
+    };
+
+    private static void UpsertStep(ObservableCollection<PipelineStepItem> steps, PipelineStepItem value)
+    {
+        var index = steps.Select((step, position) => (step, position)).FirstOrDefault(pair => pair.step.Id == value.Id).position;
+        if (steps.Count > 0 && index >= 0 && index < steps.Count && steps[index].Id == value.Id)
+        {
+            steps[index] = value;
+            return;
+        }
+
+        steps.Add(value);
+    }
+
     private async Task CleanupSessionAsync()
     {
+        sessionCancellation.Cancel();
         queryCancellation?.Cancel();
+        stillWorkingCancellation?.Cancel();
         recordingTimerCancellation?.Cancel();
-        await mediaInput.CancelRecordingAsync();
+        if (IsRecording || recordingOperationKey is not null)
+        {
+            await CancelRecordingAsync();
+        }
+        else
+        {
+            await mediaInput.CancelRecordingAsync();
+        }
         foreach (var attachment in Attachments.ToArray())
         {
+            attachment.UploadCancellation?.Cancel();
             await mediaInput.RemoveAsync(attachment);
         }
         Attachments.Clear();

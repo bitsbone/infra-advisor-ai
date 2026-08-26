@@ -105,7 +105,7 @@ This is a real, billable Azure resource provisioning step — paused here for th
 - [x] Replace the reserved README-only directory with a .NET 10 MAUI solution and one multi-targeted application project.
 - [x] Add pinned package versions for `Datadog.Maui` 0.2.0, `CommunityToolkit.Mvvm`, `Plugin.Maui.Audio`, and the minimal Syncfusion MAUI Toolkit dependency selected during the UI spike.
 - [x] Add build-time configuration for API base URL, Datadog site/environment/service, RUM application ID, client token, session/resource trace/replay sampling, and app version without introducing privileged values.
-- [ ] Create shared color, typography, spacing, icon, card, button, input, skeleton, and message-bubble resources that mirror the web interface's blue/gray visual language and use `docs/public/favicon.svg` as the app-icon source.
+- [x] Create shared color, typography, spacing, icon, card, button, input, skeleton, and message-bubble resources that mirror the web interface's blue/gray visual language and use `docs/public/favicon.svg` as the app-icon source.
 - [x] Add `THIRD_PARTY_NOTICES.md` entries for any Syncfusion template/control or other external asset retained in the application.
 
 ## Phase 2 — Application architecture and API layer
@@ -113,53 +113,53 @@ This is a real, billable Azure resource provisioning step — paused here for th
 - [x] Implement typed records for login, user, query, stream events, sources, suggestions, models, feedback, conversations, stored tool steps, and attachments using the existing backend JSON contracts.
 - [x] Implement a single DI-managed `HttpClient` API service for `/auth/login`, `/models`, `/suggestions/initial`, `/suggestions`, `/media/upload`, `/query/stream`, `/feedback`, and conversation create/list/detail/delete operations against the selected `/api` or `/api-dotnet` prefix.
 - [x] Add a streaming SSE parser that handles fragmented buffers, named events, cancellation, HTTP failures, malformed blocks, and final metadata without retrying query POSTs.
-- [ ] Add multipart streaming uploads with MIME and 10 MB validation before transmission, progress state, retry/cancel support, sanitized errors, and no buffering or logging of payload bodies beyond what the upload API requires.
+- [x] Add multipart streaming uploads with MIME and 10 MB validation before transmission, progress state, retry/cancel support, sanitized errors, and no buffering or logging of payload bodies beyond what the upload API requires.
 - [x] Implement an in-memory session store for JWT/user identity and a preferences store only for non-sensitive backend/model/theme choices; generate a stable conversation session UUID and never persist the token.
 
 ## Phase 3 — Authentication and adaptive navigation
 
 - [x] Build a branded Login page with validation, password masking, disabled/loading states, readable authentication errors, and successful `DdSdk.SetUserInfo` association.
-- [ ] Build an adaptive Shell: Chat, Errors, and Info destinations; a history flyout/bottom sheet on phones; and a persistent history rail on wider layouts.
-- [ ] Implement logout so it cancels active operations, clears the in-memory JWT, calls `DdSdk.ClearUserInfo`, stops the current RUM session as appropriate, and returns to Login.
+- [x] Build an adaptive Shell: Chat, Errors, and Info destinations; a history flyout/bottom sheet on phones; and a persistent history rail on wider layouts.
+- [x] Implement logout so it cancels active operations, clears the in-memory JWT, calls `DdSdk.ClearUserInfo`, stops the current RUM session as appropriate, and returns to Login.
 - [x] Add stable page names and `AutomationId` values so Datadog automatic view/action tracking and UI automation produce intentional names.
 
 ## Phase 4 — Polished chat and conversation history
 
-- [ ] Build the empty state with web-aligned domain cards and prompt suggestions, including the federal-procurement MCP example.
-- [ ] Build a virtualized transcript with distinct user/assistant bubbles, Markdown rendering, selectable links, citations/source cards, trace metadata, copy, positive/negative/report feedback, timestamps, and accessible loading/error states.
+- [x] Build the empty state with web-aligned domain cards and prompt suggestions, including the federal-procurement MCP example.
+- [x] Build a virtualized transcript with distinct user/assistant bubbles, Markdown rendering, selectable links, citations/source cards, trace metadata, copy, positive/negative/report feedback, timestamps, and accessible loading/error states.
 - [x] Add live tool/pipeline step chips from `/query/stream`, partial assistant text, a still-working indicator, cancellation, and recovery after stream errors.
 - [x] Add backend and model selectors; discover models from the selected backend, remember the non-sensitive selection, restore saved conversation metadata, and lock backend selection while viewing an existing conversation.
-- [ ] Add history load, refresh, select, delete-with-confirmation, new conversation, and empty/error states using the authenticated conversation endpoints.
+- [x] Add history load, refresh, select, delete-with-confirmation, new conversation, and empty/error states using the authenticated conversation endpoints.
 - [x] Fetch initial suggestions and contextual follow-ups, with curated offline fallbacks so the demo remains usable when suggestion generation fails.
 
 ## Phase 5 — Image and audio attachments
 
-- [ ] Add a system file picker restricted to backend-supported image/audio formats and show immediate local preview chips with uploading, complete, failed, retry, remove, and cancel states.
+- [x] Add a system file picker restricted to backend-supported image/audio formats and show immediate local preview chips with uploading, complete, failed, retry, remove, and cancel states.
 - [x] Add microphone permission-on-demand and `Plugin.Maui.Audio` recording with an elapsed timer, explicit stop/cancel controls, WAV output, local playback preview, maximum-size handling, and deletion of temporary recordings after removal/upload lifecycle completion.
 - [x] Add iOS `NSMicrophoneUsageDescription` and Android microphone/media permissions with user-facing denied/restricted recovery messages; do not request microphone access until the record action is used.
-- [ ] Send completed attachment references with the query and render persisted image/audio attachments when a conversation is reopened. Limit each turn to one image and one audio item because the current agent pipelines consume the first attachment of each modality.
-- [ ] Track upload and recording workflows as safe RUM operations/actions with modality, status, duration, and size only; never attach filenames, local paths, SAS URLs, transcripts, prompts, or binary content to telemetry.
+- [x] Send completed attachment references with the query and render persisted image/audio attachments when a conversation is reopened. Limit each turn to one image and one audio item because the current agent pipelines consume the first attachment of each modality.
+- [x] Track upload and recording workflows as safe RUM operations/actions with modality, status, duration, and size only; never attach filenames, local paths, SAS URLs, transcripts, prompts, or binary content to telemetry.
 
 ## Phase 6 — Datadog reference implementation
 
 - [x] Initialize `Datadog.Maui` 0.2.0 in `MauiProgram.cs` with US3, `demo`, service `infra-advisor-mobile-maui`, the supplied public client token and RUM application ID, granted demo consent, native crash reporting, Logs, Trace, RUM, and Session Replay.
 - [x] Configure `infra-advisor-ai.kyletaylor.dev` as the only first-party host with Datadog and W3C headers, enable 100% RUM sessions, 100% first-party resource trace sampling, 100% replay sampling, background crash correlation, and the SDK's mask-sensitive-inputs replay privacy mode where exposed by the pinned package.
 - [x] Rely on the SDK's automatic `HttpClient` resource/span instrumentation and header injection; add custom actions/operations only for higher-level flows such as login, recording, upload, query, feedback, and logout so resources are not double-counted.
-- [ ] Add a narrow observability facade for controlled startup, authentication-state, upload-state, query-state, and Error Lab logs/errors. Add event mappers that strip URL query strings and reject sensitive application attributes.
-- [ ] Add an Errors page demonstrating a handled C# error, an instrumented missing API request, safe sample logs, and a debug-only confirmed crash with relaunch instructions.
+- [x] Add a narrow observability facade for controlled startup, authentication-state, upload-state, query-state, and Error Lab logs/errors. Add event mappers that strip URL query strings and reject sensitive application attributes.
+- [x] Add an Errors page demonstrating a handled C# error, an instrumented missing API request, safe sample logs, and a debug-only confirmed crash with relaunch instructions.
 - [x] Add an Info page that shows the authenticated user and safe runtime configuration but omits the JWT, client token, and privileged build credentials.
 
 ## Phase 7 — Symbols, builds, and selective delivery
 
-- [x] Configure Release portable PDB inclusion, Android R8/mapping generation, iOS dSYM generation, and `DatadogUploadSymbols=true` support with `DATADOG_API_KEY` supplied only by the build environment.
+- [x] Configure Release portable PDB inclusion, Android R8/mapping generation, iOS dSYM generation, and opt-in `kyletaylored.Datadog.MAUI.Symbols` upload support with `DATADOG_API_KEY` supplied only by the build environment.
 - [x] Add local run instructions for Android Studio/CLI emulators and Xcode/CLI iOS simulators, plus signed physical-device publishing and debugger-free crash validation.
 - [x] Add a manual GitHub Actions MAUI release workflow, or extend the existing native workflow cleanly, with Android/iOS/both and build-only/build-and-sync inputs, signing secrets, unique version/build metadata, private artifact retention, symbol uploads, and `datadog-ci synthetics upload-application` after the platform-specific Mobile App Testing applications are manually created.
 - [x] Keep Android keystores, Apple certificates/profiles, Datadog API/application keys, generated APK/AAB/IPA files, dSYMs, mappings, and local overrides out of git and remove decoded signing files from runners unconditionally.
 
 ## Phase 8 — Tests, documentation, and acceptance
 
-- [ ] Unit-test serialization, bearer headers, backend routing, session IDs, MIME/size validation, multipart requests, SSE fragmentation, cancellation, error parsing, conversation compatibility differences, upload state transitions, and view-model loading guards.
-- [ ] Add UI/view-model coverage for Login to Chat, adaptive history, conversation restoration, backend/model selection, prompts, streaming/tool chips, attachment retry/removal, microphone denial, feedback, Errors, Info, and logout.
+- [x] Unit-test serialization, bearer headers, backend routing, session IDs, MIME/size validation, multipart requests, SSE fragmentation, cancellation, error parsing, conversation compatibility differences, upload state transitions, and view-model loading guards.
+- [x] Add UI/view-model coverage for Login to Chat, adaptive history, conversation restoration, backend/model selection, prompts, streaming/tool chips, attachment retry/removal, microphone denial, feedback, Errors, Info, and logout.
 - [ ] Verify Debug builds and tests for both target frameworks, Android emulator behavior, iOS simulator behavior, Release publish outputs, trimming/R8 behavior, and app restart after an intentional crash.
 - [x] Update `mobile/README.md`, the MAUI README, `mobile/OBSERVABILITY_PATTERNS.md`, and `docs/src/content/docs/observability/mobile-rum.md` with architecture, source-file links, local setup, permissions, build/release steps, privacy, AI attachment flow, RUM-to-APM verification, and symbol/application upload instructions.
 - [x] Build the documentation site, run its link checker, and run secret/diff hygiene checks.
@@ -167,4 +167,8 @@ This is a real, billable Azure resource provisioning step — paused here for th
 
 ## Implementation gate
 
-Implementation approved and in progress. Image/audio parity follows the existing web/backend contract rather than adding unsupported arbitrary-document uploads.
+Implementation is complete. Image/audio parity follows the existing web/backend contract rather than adding unsupported arbitrary-document uploads.
+
+Local verification on 2026-08-26 passed 44 Release tests, a zero-warning Android R8 Release build, Android Debug build and emulator startup, iOS Debug and linked Release simulator builds, iOS simulator startup, documentation build/link checks, and repository hygiene. Debug startup eagerly resolved every Login, Chat, Errors, and Info page on both platforms; root and cross-template XAML bindings are compiled and guarded as errors against future type regressions. Debugger-free SIGSEGV tests terminated and relaunched both apps; Datadog received crash events with stacks from Android and iOS. The final Android Release mapping for build ID `a9abef8fb495b1ce` was uploaded through `kyletaylored.Datadog.MAUI.Symbols` 0.1.0. Live US3 data showed Android and iOS MAUI sessions, named Login views, Session Replay, controlled logs, a correlated 401 login resource with trace/span IDs, and a continued trace containing both `infra-advisor-mobile-maui` and `infra-advisor-auth-api`.
+
+The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM because the installed .NET iOS workload requires the iOS 26.2 SDK. The manual `macos-26` workflow is the authoritative signed-device path and runs on a GitHub image with a compatible newer Xcode. The remaining unchecked acceptance work requires publishing the uncommitted workflow, supplying its signing/Mobile App Testing configuration, and using a valid public-deployment account to exercise authenticated Chat, both backends, multimodal AI/tool spans, identity clearing, masked replay inspection, and symbolicated Release crashes.

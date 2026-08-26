@@ -1,6 +1,6 @@
 namespace InfraAdvisor.Mobile.Services;
 
-public sealed class AppNavigator(IServiceProvider services)
+public sealed class AppNavigator(IServiceProvider services) : IAppNavigator
 {
     public void ShowAuthenticatedApp()
     {

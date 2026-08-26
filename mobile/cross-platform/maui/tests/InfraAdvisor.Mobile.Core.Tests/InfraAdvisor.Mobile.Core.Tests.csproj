@@ -12,5 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/InfraAdvisor.Mobile.Core/InfraAdvisor.Mobile.Core.csproj" />
+    <ProjectReference Include="../../src/InfraAdvisor.Mobile.Presentation/InfraAdvisor.Mobile.Presentation.csproj" />
   </ItemGroup>
 </Project>

@@ -32,7 +32,9 @@ public sealed record LoginResponse(string Token, User User);
 
 public sealed record ModelsResponse(IReadOnlyList<string> Models, [property: JsonPropertyName("default")] string DefaultModel);
 
-public sealed record SuggestionsResponse(IReadOnlyList<string> Suggestions);
+public sealed record SuggestionItem(string Label, string Query);
+
+public sealed record SuggestionsResponse(IReadOnlyList<SuggestionItem> Suggestions);
 
 public sealed record ContextualSuggestionsRequest(string Query, string Answer, IReadOnlyList<string> Sources);
 
@@ -81,7 +83,19 @@ public sealed record ConversationMessage(
     [property: JsonPropertyName("trace_id")] string? TraceId,
     [property: JsonPropertyName("span_id")] string? SpanId,
     [property: JsonPropertyName("created_at")] string? CreatedAt,
+    IReadOnlyList<StoredStep>? Steps,
     IReadOnlyList<MediaReference>? Attachments);
+
+public sealed record StoredStep(
+    string Kind,
+    string Id,
+    string Name,
+    string Status,
+    [property: JsonPropertyName("args_json")] string? ArgsJson,
+    [property: JsonPropertyName("result_summary")] string? ResultSummary,
+    IReadOnlyList<string>? Sources,
+    [property: JsonPropertyName("duration_ms")] double? DurationMs,
+    string? Detail);
 
 public sealed record ConversationDetail(
     string Id,

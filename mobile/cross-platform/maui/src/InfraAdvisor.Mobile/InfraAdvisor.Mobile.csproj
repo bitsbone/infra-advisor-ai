@@ -4,6 +4,9 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>InfraAdvisor.Mobile</RootNamespace>
     <UseMaui>true</UseMaui>
+    <MauiEnableXamlCBindingWithSourceCompilation>true</MauiEnableXamlCBindingWithSourceCompilation>
+    <!-- Keep Release bindings trim-safe: a missing or mismatched x:DataType is a build failure, not a runtime-only surprise. -->
+    <WarningsAsErrors>$(WarningsAsErrors);XC0022;XC0023;XC0025</WarningsAsErrors>
     <SingleProject>true</SingleProject>
     <ApplicationTitle>Infra Advisor</ApplicationTitle>
     <ApplicationId>dev.kyletaylor.infraadvisor.maui</ApplicationId>
@@ -12,9 +15,13 @@
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">23.0</SupportedOSPlatformVersion>
     <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
-    <DatadogUploadSymbols Condition="'$(DatadogUploadSymbols)' == ''">false</DatadogUploadSymbols>
-    <DatadogSite>US3</DatadogSite>
+    <!-- Symbol upload is deliberately opt-in; CI supplies the API key and enables this only for build-and-sync runs. -->
+    <DatadogSymbolUploadEnabled Condition="'$(DatadogSymbolUploadEnabled)' == ''">false</DatadogSymbolUploadEnabled>
+    <DatadogApiKey Condition="'$(DatadogApiKey)' == ''">$(DATADOG_API_KEY)</DatadogApiKey>
+    <DatadogSite>us3.datadoghq.com</DatadogSite>
     <DatadogServiceName>infra-advisor-mobile-maui</DatadogServiceName>
+    <DatadogVersion>$(ApplicationDisplayVersion)</DatadogVersion>
+    <DatadogVariant>$(Configuration)</DatadogVariant>
     <InfraAdvisorApiBaseUrl Condition="'$(InfraAdvisorApiBaseUrl)' == ''">https://infra-advisor-ai.kyletaylor.dev/</InfraAdvisorApiBaseUrl>
     <InfraAdvisorDatadogEnvironment Condition="'$(InfraAdvisorDatadogEnvironment)' == ''">demo</InfraAdvisorDatadogEnvironment>
     <InfraAdvisorDatadogService Condition="'$(InfraAdvisorDatadogService)' == ''">infra-advisor-mobile-maui</InfraAdvisorDatadogService>
@@ -35,9 +42,19 @@
     <AndroidCreateProguardMappingFile>true</AndroidCreateProguardMappingFile>
     <MtouchDebug>false</MtouchDebug>
   </PropertyGroup>
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
+    <!-- The .NET iOS asset compiler needs the generated MAUI app-icon set name so it emits Assets.car and CFBundleIcons. -->
+    <AppIcon>appicon</AppIcon>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' And $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
+    <!-- The symbol uploader consumes this generated dSYM; it does not create symbols itself. -->
+    <MtouchDebugSymbols>true</MtouchDebugSymbols>
+    <GenerateDsymBundle>true</GenerateDsymBundle>
+  </PropertyGroup>
   <ItemGroup>
-    <MauiIcon Include="../../../../../docs/public/favicon.svg" Link="Resources/AppIcon/appicon.svg" Color="#1D4ED8" />
+    <MauiIcon Include="../../../../../docs/public/favicon.svg" Link="Resources/AppIcon/appicon.svg" BaseSize="512,512" Color="#1D4ED8" />
     <MauiSplashScreen Include="../../../../../docs/public/favicon.svg" Link="Resources/Splash/splash.svg" Color="#F8FAFC" BaseSize="128,128" />
+    <MauiImage Include="../../../../../docs/public/favicon.svg" Link="Resources/Images/brandmark.svg" BaseSize="128,128" />
     <MauiImage Include="Resources/Images/*" />
     <MauiFont Include="Resources/Fonts/*" />
     <MauiAsset Include="Resources/Raw/**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
@@ -45,6 +62,7 @@
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Datadog.Maui" Version="0.2.0" />
+    <PackageReference Include="kyletaylored.Datadog.MAUI.Symbols" Version="0.1.0" PrivateAssets="all" GeneratePathProperty="true" />
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.1" />
     <PackageReference Include="Plugin.Maui.Audio" Version="4.0.0" />
@@ -52,5 +70,15 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../InfraAdvisor.Mobile.Core/InfraAdvisor.Mobile.Core.csproj" />
+    <ProjectReference Include="../InfraAdvisor.Mobile.Presentation/InfraAdvisor.Mobile.Presentation.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Models/ChatPresentationModels.cs" />
+    <Compile Remove="Observability/IObservability.cs" />
+    <Compile Remove="Services/Media/IMediaInputService.cs" />
+    <Compile Remove="ViewModels/*.cs" />
+  </ItemGroup>
+  <!-- Package 0.1.0 names its build files Datadog.MAUI.Symbols.* instead of the full NuGet package ID, so NuGet does not auto-import them. Keep this explicit compatibility import until the package fixes those filenames. -->
+  <Import Project="$(Pkgkyletaylored_Datadog_MAUI_Symbols)/build/Datadog.MAUI.Symbols.props" Condition="Exists('$(Pkgkyletaylored_Datadog_MAUI_Symbols)/build/Datadog.MAUI.Symbols.props')" />
+  <Import Project="$(Pkgkyletaylored_Datadog_MAUI_Symbols)/build/Datadog.MAUI.Symbols.targets" Condition="Exists('$(Pkgkyletaylored_Datadog_MAUI_Symbols)/build/Datadog.MAUI.Symbols.targets')" />
 </Project>

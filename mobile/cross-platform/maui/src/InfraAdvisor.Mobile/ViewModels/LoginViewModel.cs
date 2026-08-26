@@ -5,7 +5,7 @@ using InfraAdvisor.Mobile.Services;
 
 namespace InfraAdvisor.Mobile.ViewModels;
 
-public partial class LoginViewModel(InfraAdvisorApiClient api, AppSession session, AppNavigator navigator, IObservability observability) : ObservableObject
+public partial class LoginViewModel(InfraAdvisorApiClient api, AppSession session, IAppNavigator navigator, IObservability observability) : ObservableObject
 {
     [ObservableProperty] private string email = string.Empty;
     [ObservableProperty] private string password = string.Empty;
@@ -30,6 +30,7 @@ public partial class LoginViewModel(InfraAdvisorApiClient api, AppSession sessio
 
         IsBusy = true;
         ErrorMessage = null;
+        var operationKey = observability.StartOperation("authentication.login", new Dictionary<string, object> { ["flow"] = "authentication" });
         observability.Info("Login started", new Dictionary<string, object> { ["flow"] = "authentication" });
         try
         {
@@ -38,20 +39,24 @@ public partial class LoginViewModel(InfraAdvisorApiClient api, AppSession sessio
             Password = string.Empty;
             observability.IdentifyUser(response.User.Id, response.User.Email);
             observability.Info("Login completed", new Dictionary<string, object> { ["result"] = "success" });
+            observability.SucceedOperation("authentication.login", operationKey, new Dictionary<string, object> { ["result"] = "success" });
             navigator.ShowAuthenticatedApp();
         }
         catch (OperationCanceledException)
         {
             ErrorMessage = "Sign in was canceled.";
+            observability.FailOperation("authentication.login", operationKey, abandoned: true, new Dictionary<string, object> { ["result"] = "canceled" });
         }
         catch (ApiException exception)
         {
             ErrorMessage = exception.Message;
+            observability.FailOperation("authentication.login", operationKey, abandoned: false, new Dictionary<string, object> { ["status_code"] = exception.StatusCode ?? 0 });
             observability.Error("Login failed", exception, new Dictionary<string, object> { ["status_code"] = exception.StatusCode ?? 0 });
         }
         catch (HttpRequestException exception)
         {
             ErrorMessage = "The service could not be reached. Check your connection and try again.";
+            observability.FailOperation("authentication.login", operationKey, abandoned: false, new Dictionary<string, object> { ["error_type"] = "transport" });
             observability.Error("Login transport failed", exception);
         }
         finally

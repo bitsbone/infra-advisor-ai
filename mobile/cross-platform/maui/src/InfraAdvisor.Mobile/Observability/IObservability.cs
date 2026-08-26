@@ -8,6 +8,12 @@ public interface IObservability
 
     void StopSession();
 
+    string StartOperation(string name, IReadOnlyDictionary<string, object>? attributes = null);
+
+    void SucceedOperation(string name, string operationKey, IReadOnlyDictionary<string, object>? attributes = null);
+
+    void FailOperation(string name, string operationKey, bool abandoned, IReadOnlyDictionary<string, object>? attributes = null);
+
     void Info(string message, IReadOnlyDictionary<string, object>? attributes = null);
 
     void Error(string message, Exception exception, IReadOnlyDictionary<string, object>? attributes = null);

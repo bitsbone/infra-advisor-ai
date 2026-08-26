@@ -5,8 +5,11 @@ using InfraAdvisor.Mobile.Services;
 
 namespace InfraAdvisor.Mobile.ViewModels;
 
-public partial class ErrorLabViewModel(InfraAdvisorApiClient api, IObservability observability) : ObservableObject
+public partial class ErrorLabViewModel(InfraAdvisorApiClient api, IObservability observability, IAppTerminator appTerminator) : ObservableObject
 {
+    // Keep the injected process boundary behind a property so Release builds retain a valid constructor while compiling out the destructive Debug-only call.
+    private IAppTerminator AppTerminator => appTerminator;
+
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasResult))] private string? resultMessage;
     public bool HasResult => !string.IsNullOrWhiteSpace(ResultMessage);
 #if DEBUG
@@ -54,7 +57,7 @@ public partial class ErrorLabViewModel(InfraAdvisorApiClient api, IObservability
     private void CrashApp()
     {
 #if DEBUG
-        Environment.FailFast("Intentional Infra Advisor MAUI Error Lab crash");
+        AppTerminator.Crash("Intentional Infra Advisor MAUI Error Lab crash");
 #else
         ResultMessage = "Intentional crashes are available only in Debug builds.";
 #endif

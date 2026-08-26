@@ -1,26 +1,39 @@
-using Datadog.Maui; using InfraAdvisor.Mobile.ViewModels;
+using Datadog.Maui;
+using InfraAdvisor.Mobile.ViewModels;
+
 namespace InfraAdvisor.Mobile.Views;
+
 [DdView("Chat")]
 public partial class ChatPage : ContentPage
 {
+    public ChatViewModel ViewModel { get; }
+
     public ChatPage(ChatViewModel viewModel)
     {
+        ViewModel = viewModel;
         InitializeComponent();
-        BindingContext = viewModel;
+        BindingContext = ViewModel;
+        ViewModel.Messages.CollectionChanged += (_, _) =>
+        {
+            if (ViewModel.Messages.LastOrDefault() is { } latest)
+            {
+                Dispatcher.Dispatch(() => Transcript.ScrollTo(latest, position: ScrollToPosition.End, animate: true));
+            }
+        };
     }
 
     protected override void OnAppearing()
     {
         base.OnAppearing();
-        if (BindingContext is ChatViewModel viewModel && viewModel.InitializeCommand.CanExecute(null))
+        if (ViewModel.InitializeCommand.CanExecute(null))
         {
-            viewModel.InitializeCommand.Execute(null);
+            ViewModel.InitializeCommand.Execute(null);
         }
     }
 
     private async void OnDeleteConversationClicked(object? sender, EventArgs eventArgs)
     {
-        if (sender is not Button { CommandParameter: InfraAdvisor.Mobile.Models.ConversationSummary conversation } || BindingContext is not ChatViewModel viewModel)
+        if (sender is not Button { CommandParameter: InfraAdvisor.Mobile.Models.ConversationSummary conversation })
         {
             return;
         }
@@ -28,7 +41,7 @@ public partial class ChatPage : ContentPage
         var confirmed = await DisplayAlertAsync("Delete conversation?", "This removes the stored conversation and cannot be undone.", "Delete", "Cancel");
         if (confirmed)
         {
-            viewModel.DeleteConversationCommand.Execute(conversation);
+            ViewModel.DeleteConversationCommand.Execute(conversation);
         }
     }
 }

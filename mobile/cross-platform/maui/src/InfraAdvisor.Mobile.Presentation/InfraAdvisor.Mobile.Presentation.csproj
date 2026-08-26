@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>InfraAdvisor.Mobile</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../InfraAdvisor.Mobile.Core/InfraAdvisor.Mobile.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../InfraAdvisor.Mobile/Models/ChatPresentationModels.cs" Link="Models/ChatPresentationModels.cs" />
+    <Compile Include="../InfraAdvisor.Mobile/Observability/IObservability.cs" Link="Observability/IObservability.cs" />
+    <Compile Include="../InfraAdvisor.Mobile/Services/Media/IMediaInputService.cs" Link="Services/Media/IMediaInputService.cs" />
+    <Compile Include="../InfraAdvisor.Mobile/ViewModels/*.cs" Link="ViewModels/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
