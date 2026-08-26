@@ -13,8 +13,8 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Trash2, Shield } from "lucide-react";
-import { User, createUser, deleteUser, listUsers, patchUser } from "../lib/auth";
+import { KeyRound, Trash2, Shield } from "lucide-react";
+import { User, createUser, deleteUser, listUsers, patchUser, setUserPassword } from "../lib/auth";
 import { useAuth } from "../hooks/useAuth";
 import { EvalDiagnostics } from "./EvalDiagnostics";
 import { AiGuardDiagnostics } from "./AiGuardDiagnostics";
@@ -69,6 +69,16 @@ export function AdminTab() {
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
+  // Passwords live only in this dialog's component state and are cleared as
+  // soon as the dialog closes. They are never copied into the user list,
+  // browser storage, logs, RUM attributes, or API responses.
+  const [passwordUser, setPasswordUser] = useState<User | null>(null);
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [savingPassword, setSavingPassword] = useState(false);
+
   // Confirmation dialog
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [confirming, setConfirming] = useState(false);
@@ -110,6 +120,51 @@ export function AdminTab() {
       setAddError(err instanceof Error ? err.message : "Failed to create user");
     } finally {
       setAdding(false);
+    }
+  }
+
+  // ── Set password ─────────────────────────────────────────────────────────
+
+  function openPasswordDialog(user: User) {
+    setPassword("");
+    setConfirmPassword("");
+    setPasswordError(null);
+    setPasswordSuccess(null);
+    setPasswordUser(user);
+  }
+
+  function closePasswordDialog() {
+    if (savingPassword) return;
+    setPasswordUser(null);
+    setPassword("");
+    setConfirmPassword("");
+    setPasswordError(null);
+  }
+
+  async function handleSetPassword(e: FormEvent) {
+    e.preventDefault();
+    if (!passwordUser) return;
+    if (password.length < 8) {
+      setPasswordError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setPasswordError("Passwords do not match.");
+      return;
+    }
+
+    setSavingPassword(true);
+    setPasswordError(null);
+    try {
+      await setUserPassword(passwordUser.id, password);
+      setPasswordSuccess("Password updated successfully.");
+      setPasswordUser(null);
+      setPassword("");
+      setConfirmPassword("");
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : "Failed to set password");
+    } finally {
+      setSavingPassword(false);
     }
   }
 
@@ -219,6 +274,7 @@ export function AdminTab() {
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="••••••••"
+                    minLength={8}
                     required
                     disabled={adding}
                     fontSize="sm"
@@ -247,8 +303,14 @@ export function AdminTab() {
           </form>
         </Box>
 
+        {passwordSuccess && (
+          <Box role="status" bg="green.50" borderWidth="1px" borderColor="green.200" borderRadius="lg" px={4} py={3}>
+            <Text fontSize="sm" color="green.700">{passwordSuccess}</Text>
+          </Box>
+        )}
+
         {/* Users table */}
-        <Box bg="white" borderWidth="1px" borderColor="gray.200" borderRadius="xl" boxShadow="xs" overflow="hidden">
+        <Box bg="white" borderWidth="1px" borderColor="gray.200" borderRadius="xl" boxShadow="xs" overflowX="auto">
           {loadingUsers ? (
             <Flex justify="center" align="center" py={10}><Spinner size="sm" color="blue.500" /></Flex>
           ) : listError ? (
@@ -256,7 +318,7 @@ export function AdminTab() {
               <Text fontSize="sm" color="red.500">{listError}</Text>
             </Flex>
           ) : (
-            <Table.Root size="sm">
+            <Table.Root size="sm" minW="760px">
               <Table.Header>
                 <Table.Row bg="gray.50">
                   {["Email", "Roles", "Created", "Actions"].map((h) => (
@@ -323,6 +385,21 @@ export function AdminTab() {
                         {/* Actions */}
                         <Table.Cell px={4} py={3}>
                           <HStack gap={1}>
+                            {/* Password management is available for every account,
+                                including the current admin's own account. */}
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              colorPalette="blue"
+                              borderRadius="md"
+                              gap={1}
+                              title={`Set password for ${u.email}`}
+                              onClick={() => openPasswordDialog(u)}
+                            >
+                              <KeyRound size={13} />
+                              Password
+                            </Button>
+
                             {/* Admin toggle */}
                             <Button
                               size="xs"
@@ -376,7 +453,7 @@ export function AdminTab() {
         </Box>
 
         <Text fontSize="xs" color="gray.400" textAlign="center">
-          Use the action buttons to manage roles and accounts. Your own account cannot be modified.
+          Administrators can set any account password, including their own. Your own role and account cannot be removed.
         </Text>
 
         {/* ── Eval pipeline diagnostics (read-only) ──────────────────────
@@ -409,6 +486,75 @@ export function AdminTab() {
           <AiGuardDiagnostics />
         </Box>
       </VStack>
+
+      {/* Password dialog stays separate from role/delete confirmation so a
+          secret value can never enter the generic pending-action model. */}
+      <Dialog.Root open={passwordUser !== null} onOpenChange={(e) => !e.open && closePasswordDialog()}>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content borderRadius="xl" maxW="sm" mx={4}>
+            <form onSubmit={handleSetPassword}>
+              <Dialog.Header px={6} pt={6} pb={2}>
+                <Dialog.Title fontSize="md" fontWeight="semibold" color="gray.800">
+                  Set password
+                </Dialog.Title>
+              </Dialog.Header>
+
+              <Dialog.Body px={6} py={3}>
+                <VStack gap={4} align="stretch">
+                  <Text fontSize="sm" color="gray.600">
+                    Set a new password for {passwordUser?.email}. Existing signed-in sessions remain active.
+                  </Text>
+                  <Box>
+                    <label htmlFor="admin-new-password" style={{ display: "block", marginBottom: 4, fontSize: "0.75rem", fontWeight: 500, color: "var(--chakra-colors-gray-600)" }}>
+                      New password
+                    </label>
+                    <Input
+                      id="admin-new-password"
+                      type="password"
+                      autoComplete="new-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      minLength={8}
+                      autoFocus
+                      required
+                      disabled={savingPassword}
+                      borderRadius="lg"
+                    />
+                  </Box>
+                  <Box>
+                    <label htmlFor="admin-confirm-password" style={{ display: "block", marginBottom: 4, fontSize: "0.75rem", fontWeight: 500, color: "var(--chakra-colors-gray-600)" }}>
+                      Confirm password
+                    </label>
+                    <Input
+                      id="admin-confirm-password"
+                      type="password"
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      minLength={8}
+                      required
+                      disabled={savingPassword}
+                      borderRadius="lg"
+                    />
+                  </Box>
+                  <Text fontSize="xs" color="gray.500">Use at least 8 characters. Any outstanding email reset link will be invalidated.</Text>
+                  {passwordError && <Text role="alert" fontSize="sm" color="red.500">{passwordError}</Text>}
+                </VStack>
+              </Dialog.Body>
+
+              <Dialog.Footer px={6} pb={6} pt={4} gap={3}>
+                <Button type="button" size="sm" variant="ghost" colorPalette="gray" borderRadius="lg" disabled={savingPassword} onClick={closePasswordDialog}>
+                  Cancel
+                </Button>
+                <Button type="submit" size="sm" colorPalette="blue" borderRadius="lg" disabled={savingPassword}>
+                  {savingPassword ? <Spinner size="xs" /> : "Set password"}
+                </Button>
+              </Dialog.Footer>
+            </form>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Dialog.Root>
 
       {/* Confirmation dialog */}
       <Dialog.Root open={pendingAction !== null} onOpenChange={(e) => !e.open && closeConfirm()}>

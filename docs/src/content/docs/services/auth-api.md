@@ -1,11 +1,11 @@
 ---
 title: Auth API
-description: User registration, JWT authentication, and password reset
+description: User registration, JWT authentication, self-service reset, and admin-managed passwords
 ---
 
 **Port:** 8002 | **Framework:** FastAPI + SQLAlchemy + PostgreSQL | **Replicas:** 2
 
-The Auth API handles user registration, authentication, password reset, and admin-level user management. It issues JWT tokens that the browser includes on every subsequent API request.
+The Auth API handles user registration, authentication, self-service password reset, administrator-managed passwords, and admin-level user management. It issues JWT tokens that the browser includes on every subsequent API request.
 
 ## Endpoints
 
@@ -31,12 +31,13 @@ The Auth API handles user registration, authentication, password reset, and admi
 |--------|------|-------------|
 | `GET` | `/admin/users` | List all users |
 | `POST` | `/admin/users` | Create a user (bypasses domain restriction) |
+| `PUT` | `/admin/users/{user_id}/password` | Set a user's password and invalidate outstanding reset links |
 | `DELETE` | `/admin/users/{user_id}` | Delete a user (cannot delete self) |
 | `PATCH` | `/admin/users/{user_id}` | Toggle `is_admin` or `is_service_account` flag |
 
 ## Registration
 
-By default, only `@datadoghq.com` email addresses can self-register (configurable via `ALLOWED_DOMAIN` env var). The first user to register becomes an admin automatically.
+By default, only `@datadoghq.com` email addresses can self-register (configurable via `ALLOWED_DOMAIN` env var). An initial administrator is provisioned explicitly with the `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` environment variables; self-registration never grants administrator access.
 
 ```bash
 curl -X POST https://infra-advisor-ai.kyletaylor.dev/auth/register \
@@ -45,6 +46,8 @@ curl -X POST https://infra-advisor-ai.kyletaylor.dev/auth/register \
 ```
 
 Admin users can create accounts for any email domain via `POST /admin/users`.
+
+Every route that creates or replaces a password applies the same server-side policy: 8 or more characters and no more than 72 UTF-8 bytes, matching bcrypt's safe input boundary.
 
 ## JWT authentication
 
@@ -73,6 +76,14 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6...
 ```
 
 JWT tokens expire after 24 hours. There is no refresh endpoint — users log in again after expiry.
+
+## Admin-managed passwords
+
+An authenticated administrator can select **Password** beside any account in the web admin panel, enter the replacement twice, and submit it. The server requires a password of at least 8 characters and no more than bcrypt's 72-byte input limit, hashes it before storage, and clears any outstanding self-service reset token. The dialog clears both password fields after success, cancellation, or closure and does not persist them in browser storage.
+
+This operation changes the credential used for the next login but does not revoke JWTs that were issued previously; those sessions remain valid until their normal 24-hour expiration. Use this control to provision or recover a known account when an administrator and the user have an approved secure channel for transferring the replacement credential. Use the email reset flow when the user can recover the account directly.
+
+The response is only `{"updated": true}`. The password is never returned, placed in a URL, attached to a RUM event, or written to application logs. The Auth API emits a safe audit log containing the administrator and target user UUIDs, while automatic APM instrumentation records the route, status, duration, and database work without request-body capture. Operators can find successful events with `service:infra-advisor-auth-api "Admin set user password"` and investigate failures using the `PUT /admin/users/{user_id}/password` resource in APM.
 
 ## Password reset flow
 

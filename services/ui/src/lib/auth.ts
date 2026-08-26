@@ -140,6 +140,15 @@ export async function createUser(data: {
   return res.json();
 }
 
+export async function setUserPassword(id: string, newPassword: string): Promise<void> {
+  const res = await fetch(`${AUTH_BASE}/admin/users/${id}/password`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, "Failed to set password"));
+}
+
 export async function deleteUser(id: string): Promise<void> {
   const res = await fetch(`${AUTH_BASE}/admin/users/${id}`, {
     method: "DELETE",

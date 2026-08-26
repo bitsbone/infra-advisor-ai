@@ -111,8 +111,11 @@ The **Sandbox** tab lets users invoke MCP tools directly without going through t
 Visible only to admin users. Supports:
 - View all registered users
 - Create user accounts (any email domain)
+- Set a replacement password for any account, including the current administrator, without storing the password in browser storage or telemetry
 - Delete users (cannot delete own account)
 - Toggle admin / service account flags
+
+The password dialog requires confirmation and explains that outstanding email reset links are invalidated while existing JWT sessions remain active until expiry. A successful operation produces a safe browser resource and corresponding Auth API trace; Datadog RUM and Session Replay retain the interaction context while password inputs remain masked and no password value is added as a custom attribute.
 
 ### Guided tour
 
@@ -138,7 +141,7 @@ src/
                                    backend/model toggles, conversation state
     ConversationSidebar.tsx      Left rail: conversation list, new/delete/select actions
     CitationPanel.tsx            Right sidebar: tool sources with expand/link
-    AdminPanel.tsx               User management table (admin only)
+    AdminTab.tsx                 User management table and password controls (admin only)
     Sandbox.tsx                  Direct MCP tool invocation playground
   lib/
     api.ts                       HTTP client: sendQuery, fetchModels, submitFeedback,

@@ -172,3 +172,19 @@ Implementation is complete. Image/audio parity follows the existing web/backend 
 Local verification on 2026-08-26 passed 44 Release tests, a zero-warning Android R8 Release build, Android Debug build and emulator startup, iOS Debug and linked Release simulator builds, iOS simulator startup, documentation build/link checks, and repository hygiene. Debug startup eagerly resolved every Login, Chat, Errors, and Info page on both platforms; root and cross-template XAML bindings are compiled and guarded as errors against future type regressions. Debugger-free SIGSEGV tests terminated and relaunched both apps; Datadog received crash events with stacks from Android and iOS. The final Android Release mapping for build ID `a9abef8fb495b1ce` was uploaded through `kyletaylored.Datadog.MAUI.Symbols` 0.1.0. Live US3 data showed Android and iOS MAUI sessions, named Login views, Session Replay, controlled logs, a correlated 401 login resource with trace/span IDs, and a continued trace containing both `infra-advisor-mobile-maui` and `infra-advisor-auth-api`.
 
 The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM because the installed .NET iOS workload requires the iOS 26.2 SDK. The manual `macos-26` workflow is the authoritative signed-device path and runs on a GitHub image with a compatible newer Xcode. The remaining unchecked acceptance work requires publishing the uncommitted workflow, supplying its signing/Mobile App Testing configuration, and using a valid public-deployment account to exercise authenticated Chat, both backends, multimodal AI/tool spans, identity clearing, masked replay inspection, and symbolicated Release crashes.
+
+---
+
+# Admin-managed passwords
+
+- [x] Add an admin-only Auth API endpoint that securely sets a user's password, enforces the shared minimum length, clears outstanding reset tokens, and emits safe audit telemetry.
+- [x] Add an admin user-management dialog with new-password confirmation, accessible controls, loading/error states, and no password persistence.
+- [x] Cover authorization, validation, missing users, password hashing, and reset-token invalidation with Auth API tests.
+- [x] Document the admin workflow, security boundary, and observability signals in the public Auth API and UI content.
+- [x] Run Auth API tests, the UI production build, documentation checks, secret hygiene, and `git diff --check`.
+
+## Review
+
+- Added `PUT /admin/users/{user_id}/password` behind the existing administrator dependency. It applies the shared 8-character/72-byte policy, bcrypt-hashes the replacement, invalidates outstanding reset tokens, returns no credential material, and logs only the actor and target UUIDs.
+- Added a responsive Password action and dedicated confirmation dialog to the admin user table. Password values remain ephemeral component state, use masked inputs, and are cleared on success or closure; the UI also states that existing JWT sessions are not revoked.
+- Verification passed on Python 3.12 with 16 Auth API tests, the TypeScript/Vite production build, a 62-page documentation build with zero broken internal links, a changed-lines credential-pattern scan, and `git diff --check`.

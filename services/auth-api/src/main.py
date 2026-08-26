@@ -66,7 +66,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -142,6 +142,10 @@ class AdminPatchUserRequest(BaseModel):
     is_service_account: bool | None = None
 
 
+class AdminSetPasswordRequest(BaseModel):
+    new_password: str
+
+
 # ─── Helper ───────────────────────────────────────────────────────────────────
 
 def _user_dict_to_out(u: dict) -> UserOut:
@@ -152,6 +156,14 @@ def _user_dict_to_out(u: dict) -> UserOut:
         is_service_account=u["is_service_account"],
         created_at=u["created_at"],
     )
+
+
+def _validate_password(password: str) -> None:
+    """Apply one password policy before passing user input to bcrypt."""
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if len(password.encode("utf-8")) > 72:
+        raise HTTPException(status_code=400, detail="Password must be at most 72 bytes")
 
 
 # ─── Email helper ─────────────────────────────────────────────────────────────
@@ -218,6 +230,8 @@ def health():
 def register(body: RegisterRequest):
     email = body.email.strip().lower()
 
+    _validate_password(body.password)
+
     if not email.endswith(ALLOWED_DOMAIN):
         raise HTTPException(
             status_code=400,
@@ -280,8 +294,7 @@ def forgot_password(body: ForgotPasswordRequest):
 @app.post("/reset-password", response_model=TokenResponse)
 def reset_password(body: ResetPasswordRequest):
     """Consume a reset token and set a new password."""
-    if len(body.new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    _validate_password(body.new_password)
 
     token_hash = hash_reset_token(body.token)
     user = get_user_by_reset_token(token_hash)
@@ -320,6 +333,8 @@ def admin_list_users(admin: UserOut = Depends(require_admin)):
 def admin_create_user(body: AdminCreateUserRequest, admin: UserOut = Depends(require_admin)):
     email = body.email.strip().lower()
 
+    _validate_password(body.password)
+
     # Service accounts bypass domain restriction; regular users must match
     if not body.is_service_account and not email.endswith(ALLOWED_DOMAIN):
         raise HTTPException(
@@ -338,6 +353,34 @@ def admin_create_user(body: AdminCreateUserRequest, admin: UserOut = Depends(req
         is_service_account=body.is_service_account,
     )
     return _user_dict_to_out(user)
+
+
+@app.put("/admin/users/{user_id}/password")
+def admin_set_password(
+    user_id: str,
+    body: AdminSetPasswordRequest,
+    admin: UserOut = Depends(require_admin),
+):
+    """Set a user's password without exposing it in the response or telemetry."""
+    _validate_password(body.new_password)
+
+    if get_user_by_id(user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    updated = update_user(user_id, password_hash=hash_password(body.new_password))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # An administrator-set password supersedes any emailed reset link. Only
+    # opaque IDs are logged so the audit signal remains useful without adding
+    # email addresses, password material, or reset tokens to telemetry.
+    clear_reset_token(user_id)
+    logger.info(
+        "Admin set user password: admin_user_id=%s target_user_id=%s",
+        admin.id,
+        user_id,
+    )
+    return {"updated": True}
 
 
 @app.delete("/admin/users/{user_id}")
