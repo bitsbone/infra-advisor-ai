@@ -17,6 +17,7 @@
 		A10000000000000000000007 /* InfraAdvisorMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* InfraAdvisorMobileApp.swift */; };
 		A10000000000000000000008 /* APIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* APIClientTests.swift */; };
 		A10000000000000000000009 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* XCTest.framework */; };
+		A1000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* Assets.xcassets */; };
 		EBC168C4B852DC6665A24987 /* Pods_InfraAdvisorMobile.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5B58DEEA39C7744AA93E0E87 /* Pods_InfraAdvisorMobile.framework */; };
 /* End PBXBuildFile section */
 
@@ -52,6 +53,7 @@
 		A2000000000000000000000F /* Tests.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Tests.xcconfig; sourceTree = "<group>"; };
 		A20000000000000000000010 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
 		A20000000000000000000011 /* TestsRelease.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = TestsRelease.xcconfig; sourceTree = "<group>"; };
+		A20000000000000000000012 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B8A74908B267F668C693E7D5 /* Pods-InfraAdvisorMobileTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-InfraAdvisorMobileTests.release.xcconfig"; path = "Target Support Files/Pods-InfraAdvisorMobileTests/Pods-InfraAdvisorMobileTests.release.xcconfig"; sourceTree = "<group>"; };
 		BB59C8588B5F77FAF8ABBA49 /* Pods-InfraAdvisorMobileTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-InfraAdvisorMobileTests.debug.xcconfig"; path = "Target Support Files/Pods-InfraAdvisorMobileTests/Pods-InfraAdvisorMobileTests.debug.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -120,6 +122,7 @@
 				A20000000000000000000004 /* SessionStore.swift */,
 				A20000000000000000000005 /* LoginView.swift */,
 				A20000000000000000000006 /* ChatView.swift */,
+				A20000000000000000000012 /* Assets.xcassets */,
 				A2000000000000000000000A /* Info.plist */,
 			);
 			path = InfraAdvisorMobile;
@@ -241,6 +244,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1000000000000000000000A /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -399,7 +403,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = InfraAdvisorMobile/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.kyletaylor.infraadvisor.mobile.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -421,7 +425,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = InfraAdvisorMobile/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.kyletaylor.infraadvisor.mobile.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

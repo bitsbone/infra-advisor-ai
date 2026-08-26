@@ -57,6 +57,18 @@ Datadog RUM application IDs and client tokens are public client identifiers desi
 - [`Config/Shared.xcconfig`](Config/Shared.xcconfig) is the single build-time configuration surface.
 - [`Podfile`](Podfile) declares the modular Datadog dependencies installed through CocoaPods.
 - [`scripts/upload-dsyms.sh`](scripts/upload-dsyms.sh) is the release symbolication boundary. The Xcode build phase skips Debug and simulator builds, reads `DATADOG_API_KEY` only from the build environment, defaults `DATADOG_SITE` to `us3.datadoghq.com`, and uploads device dSYMs with `@datadog/datadog-ci`.
+- [`mobile-release.yml`](../../../.github/workflows/mobile-release.yml) is the manual, selective release boundary. It imports ephemeral Development signing assets, exports and validates an IPA, and writes to Datadog only when the operator selects `build-and-sync`.
+- [`Assets.xcassets/AppIcon.appiconset`](InfraAdvisorMobile/Assets.xcassets/AppIcon.appiconset) contains the full-bleed iOS icon generated from the shared documentation favicon.
+
+## App icon
+
+The iOS and Android icons share [`docs/public/favicon.svg`](../../../docs/public/favicon.svg) as their source. After changing that SVG, regenerate both platform asset sets from the repository root. The script prefers Inkscape and can alternatively use Quick Look, `sips`, Perl, and FFmpeg on macOS:
+
+```bash
+./mobile/scripts/generate-app-icons.sh
+```
+
+The generator removes transparency from the iOS export because App Store icons must be opaque and preserves adaptive-icon padding for Android. Commit the generated PNG files with the source change so local and CI builds do not require Inkscape.
 
 ## Logs and Error Lab
 
@@ -78,6 +90,65 @@ xcodebuild archive -workspace InfraAdvisorMobile.xcworkspace -scheme InfraAdviso
 ```
 
 Do not place the API key in `Shared.xcconfig`, `Local.xcconfig`, the Xcode project, or an application scheme. The client token initializes the shipped SDK; the API key is privileged CI-only upload authorization.
+
+## Mobile App Testing application versions
+
+Datadog does not accept an `.xcarchive` as a Mobile App Testing application. Exporting the required `.ipa` requires an Apple Development or Ad Hoc signing identity and matching provisioning profile. Datadog recommends Development or Ad Hoc provisioning because Mobile App Testing re-signs the uploaded application and some entitlements can otherwise be lost.
+
+Set the Apple Developer team only in the local command or CI secret configuration, create a signed device archive, and export it with Xcode's Development distribution method. Xcode 26 names that method `debugging`; older Xcode versions accept the deprecated name `development`.
+
+```bash
+export DEVELOPMENT_TEAM=<YOUR_APPLE_TEAM_ID>
+xcodebuild archive \
+  -workspace InfraAdvisorMobile.xcworkspace \
+  -scheme InfraAdvisorMobile \
+  -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -archivePath build/0.1.0-signed/InfraAdvisorMobile.xcarchive \
+  DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+  CODE_SIGN_STYLE=Automatic \
+  -allowProvisioningUpdates
+```
+
+Create an ignored export-options plist with `method` set to `debugging`, `signingStyle` set to `automatic`, and `teamID` set to the same local team, then export the IPA:
+
+```bash
+xcodebuild -exportArchive \
+  -archivePath build/0.1.0-signed/InfraAdvisorMobile.xcarchive \
+  -exportPath build/0.1.0-signed/export \
+  -exportOptionsPlist build/0.1.0-signed/ExportOptions.mobile-testing.plist \
+  -allowProvisioningUpdates
+```
+
+The first IPA must be uploaded manually in Datadog under **Digital Experience → Settings → Mobile Applications → Create Application**. Choose native iOS, upload the signed IPA, name the version `0.1.0`, and optionally mark it latest. The Mobile Application ID created by this workflow is not the iOS RUM Application ID and must not replace `DD_RUM_APPLICATION_ID`.
+
+After the application exists, store its Mobile Application ID as `DATADOG_SYNTHETICS_IOS_APPLICATION_ID` in a local secret manager or CI secret store. New IPA versions can then be uploaded with Datadog CI:
+
+```bash
+# Set DD_API_KEY, DD_APP_KEY, and DATADOG_SYNTHETICS_IOS_APPLICATION_ID through a secret manager.
+export DATADOG_SITE=us3.datadoghq.com
+npx @datadog/datadog-ci synthetics upload-application \
+  --mobileApplicationId "$DATADOG_SYNTHETICS_IOS_APPLICATION_ID" \
+  --mobileApplicationVersionFilePath build/0.1.0-signed/InfraAdvisorMobile-0.1.0-ios.ipa \
+  --versionName "0.1.0" \
+  --latest
+```
+
+Archives, IPAs, and upload credentials remain ignored and must not be committed. The dSYM upload occurs while archiving and does not depend on the later IPA upload; Datadog matches the crash and dSYM by UUID.
+
+## GitHub Actions releases
+
+Run **Build and sync native mobile applications** from the repository's Actions tab. Select `ios` or `both`, choose a semantic version, optionally provide a positive build number, and choose `build-only` or `build-and-sync`. An omitted build number uses the GitHub run number. Every successful job retains the Development IPA and its matching dSYM bundles for 14 days.
+
+Configure these GitHub Actions secrets for every iOS release:
+
+- `IOS_SIGNING_CERTIFICATE_BASE64` — base64-encoded `.p12` containing an Apple Development certificate and its private key.
+- `IOS_SIGNING_CERTIFICATE_PASSWORD` — password used when exporting the `.p12`.
+- `IOS_PROVISIONING_PROFILE_BASE64` — base64-encoded Development `.mobileprovision` valid for `dev.kyletaylor.infraadvisor.mobile.ios` or a compatible wildcard App ID.
+
+Configure `IOS_DEVELOPMENT_TEAM` as a repository variable. For `build-and-sync`, also configure `DD_API_KEY` and `DD_APP_KEY` as secrets and `DATADOG_SYNTHETICS_IOS_APPLICATION_ID` as a repository variable after the first manual application creation.
+
+The workflow decodes signing files only under the ephemeral runner temporary directory, creates a temporary keychain, verifies that the profile belongs to the configured team, authorizes this app's bundle ID, and has Development entitlement `get-task-allow=true`. Xcode automatically selects the installed Development profile for the archive and Development export, which supports both Xcode-managed and manually created Development profiles; the export method is `development` through Xcode 16 and `debugging` beginning with Xcode 26. The workflow validates the embedded profile, uploads matching dSYMs during the archive phase, and finally uploads the IPA with pinned Datadog CI. An `always()` cleanup step removes the temporary keychain, certificate, and provisioning-profile files even after failure.
 
 For a crash smoke test, first build and run the Debug app normally, then press Xcode's **Stop** button. Return to the Simulator home screen and tap the **Infra Advisor** icon directly; launching from the icon ensures LLDB is not attached. Sign in again, open Errors, tap **Trigger test crash**, and confirm **Crash now**. The app should close immediately. Tap its Simulator icon again: the app returns to Login because authentication is intentionally memory-only, and the SDK uploads the stored crash report after startup. If Xcode's debugger is still attached, the app blocks the crash and displays these instructions because LLDB would otherwise pause on `fatalError` and make the simulator appear frozen or blank. Simulator crashes validate capture, but Datadog symbolication uses dSYMs from physical-device builds.
 

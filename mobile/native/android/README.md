@@ -69,8 +69,20 @@ The Volley adapter in `observability/` manually records RUM resources, creates m
 - [`InfoActivity.java`](app/src/main/java/dev/kyletaylor/infraadvisor/mobile/InfoActivity.java) shows the authenticated user and safe API/Datadog configuration without displaying the client token.
 - [`AppTabs.java`](app/src/main/java/dev/kyletaylor/infraadvisor/mobile/AppTabs.java) provides shared Chat/Error Lab/Info navigation, while [`SystemBarInsets.java`](app/src/main/java/dev/kyletaylor/infraadvisor/mobile/SystemBarInsets.java) keeps every activity below system bars and display cutouts.
 - [`app/build.gradle`](app/build.gradle) declares the Datadog modules, exposes non-secret build-time settings as `BuildConfig` fields, enables Java desugaring, configures release R8, and applies the Datadog mapping upload plugin.
+- [`mobile-release.yml`](../../../.github/workflows/mobile-release.yml) is the manual, selective release boundary. It builds signed native artifacts on GitHub-hosted runners and writes to Datadog only when the operator selects `build-and-sync`.
+- [`AndroidManifest.xml`](app/src/main/AndroidManifest.xml), [`mipmap-anydpi-v26`](app/src/main/res/mipmap-anydpi-v26), and the density-specific `mipmap-*` directories provide adaptive and legacy launcher icons generated from the shared documentation favicon.
 - Enabling RUM installs Datadog's uncaught Java exception collection. Error Lab exposes a confirmation-gated debug-only crash trigger; release builds keep that destructive control hidden.
 - The Datadog Gradle plugin adds a unique build ID to obfuscated release artifacts and registers `uploadMappingRelease` so R8 stack frames can be deobfuscated in Error Tracking.
+
+## App icon
+
+The Android and iOS icons share [`docs/public/favicon.svg`](../../../docs/public/favicon.svg) as their source. After changing that SVG, regenerate both platform asset sets from the repository root. The script prefers Inkscape and can alternatively use Quick Look, `sips`, Perl, and FFmpeg on macOS:
+
+```bash
+./mobile/scripts/generate-app-icons.sh
+```
+
+The generator creates density-specific fallback PNGs for Android API 23–25 and a padded foreground plus full-bleed blue background for adaptive icons on API 26+. Commit the generated PNG files with the source change so local and CI builds do not require Inkscape.
 
 ## Logs and Error Lab
 
@@ -93,6 +105,39 @@ cd mobile/native/android
 The plugin is configured for US3 and also accepts `DD_API_KEY`. Never add `datadog-ci.json`, an API key, or an application key to the repository or `BuildConfig`; only the public mobile client token belongs in the application binary. Debug builds are not obfuscated and therefore do not have a mapping upload task.
 
 For a crash smoke test, run the Debug app, open Errors, and tap **Trigger test crash**. Relaunch the application and confirm the uncaught `IllegalStateException` appears in RUM Error Tracking. Release crashes become readable after their matching `uploadMappingRelease` task succeeds.
+
+## Mobile App Testing application versions
+
+The first APK must be uploaded manually in Datadog under **Digital Experience → Settings → Mobile Applications → Create Application**. Choose native Android, upload a signed APK, name the version `0.1.0`, and optionally mark it latest. The Mobile Application ID created by this workflow is not the Android RUM Application ID and must not replace `DD_RUM_APPLICATION_ID`.
+
+After the application exists, store its Mobile Application ID as `DATADOG_SYNTHETICS_ANDROID_APPLICATION_ID` in a local secret manager or CI secret store. New signed APK versions can then be uploaded with Datadog CI:
+
+```bash
+# Set DD_API_KEY, DD_APP_KEY, and DATADOG_SYNTHETICS_ANDROID_APPLICATION_ID through a secret manager.
+export DATADOG_SITE=us3.datadoghq.com
+npx @datadog/datadog-ci synthetics upload-application \
+  --mobileApplicationId "$DATADOG_SYNTHETICS_ANDROID_APPLICATION_ID" \
+  --mobileApplicationVersionFilePath app/build/outputs/apk/release/InfraAdvisorMobile-0.1.0-android.apk \
+  --versionName "0.1.0" \
+  --latest
+```
+
+Release artifacts remain under ignored `app/build/outputs/` and must not be committed. The local `InfraAdvisorMobile-0.1.0-android.apk` demo artifact is aligned and signed with the machine-local Android debug certificate for Datadog device testing only; use an organization-controlled release key for any distributed build.
+
+## GitHub Actions releases
+
+Run **Build and sync native mobile applications** from the repository's Actions tab. Select `android` or `both`, choose a semantic version, optionally provide a positive version code, and choose `build-only` or `build-and-sync`. An omitted version code uses the GitHub run number. Every successful job retains the signed APK and matching `mapping.txt` for 14 days.
+
+Configure these GitHub Actions secrets for every Android release:
+
+- `ANDROID_KEYSTORE_BASE64` — base64-encoded organization-controlled keystore file.
+- `ANDROID_KEYSTORE_PASSWORD` — keystore password.
+- `ANDROID_KEY_ALIAS` — signing key alias.
+- `ANDROID_KEY_PASSWORD` — signing key password.
+
+Configure `DD_API_KEY` and `DD_APP_KEY` as secrets only for `build-and-sync`, and configure `DATADOG_SYNTHETICS_ANDROID_APPLICATION_ID` as a repository variable after the first manual application creation. The workflow validates presence without printing values, writes the decoded keystore only under the ephemeral runner temporary directory, pins Datadog CI, uploads the R8 mapping generated for the exact build, signs and verifies the APK, and then uploads that APK as a uniquely named Datadog application version. An `always()` cleanup step removes the decoded keystore even after failure.
+
+The workflow passes `MOBILE_VERSION_NAME` and `MOBILE_VERSION_CODE` to Gradle. Local builds retain the tracked `0.1.0` and version-code `1` defaults, while CI can create new versions without editing source files.
 
 See [`../../OBSERVABILITY_PATTERNS.md`](../../OBSERVABILITY_PATTERNS.md) for the event lifecycle, field-sanitization rules, and comparison with iOS automatic instrumentation.
 

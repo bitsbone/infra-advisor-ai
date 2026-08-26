@@ -1,0 +1,398 @@
+name: Build and sync native mobile applications
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Native application to build
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - android
+          - ios
+      operation:
+        description: Build artifacts only or also upload symbols and the application version to Datadog
+        required: true
+        default: build-only
+        type: choice
+        options:
+          - build-only
+          - build-and-sync
+      version_name:
+        description: Public semantic version stored in each application
+        required: true
+        default: 0.1.0
+        type: string
+      build_number:
+        description: Positive integer version code/build number; leave empty to use the GitHub run number
+        required: false
+        type: string
+      mark_latest:
+        description: Mark uploaded Datadog application versions as latest
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-mobile-release-${{ inputs.platform }}
+  cancel-in-progress: false
+
+env:
+  DATADOG_CI_VERSION: 5.21.2
+  DATADOG_SITE: us3.datadoghq.com
+
+jobs:
+  prepare:
+    name: Validate release inputs
+    runs-on: ubuntu-latest
+    outputs:
+      version_name: ${{ steps.release.outputs.version_name }}
+      build_number: ${{ steps.release.outputs.build_number }}
+      artifact_suffix: ${{ steps.release.outputs.artifact_suffix }}
+      datadog_version_name: ${{ steps.release.outputs.datadog_version_name }}
+    steps:
+      - name: Validate and normalize version metadata
+        id: release
+        shell: bash
+        env:
+          INPUT_VERSION_NAME: ${{ inputs.version_name }}
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          version_name="$INPUT_VERSION_NAME"
+          build_number="${INPUT_BUILD_NUMBER:-$GITHUB_RUN_NUMBER}"
+          if [[ ! "$version_name" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "version_name must be a semantic version such as 0.1.0 or 0.2.0-rc.1." >&2
+            exit 1
+          fi
+          if [[ ! "$build_number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "build_number must be a positive integer." >&2
+            exit 1
+          fi
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
+          echo "artifact_suffix=$version_name-$build_number" >> "$GITHUB_OUTPUT"
+          echo "datadog_version_name=$version_name ($build_number)" >> "$GITHUB_OUTPUT"
+
+  android:
+    name: Android release
+    if: ${{ inputs.platform == 'android' || inputs.platform == 'both' }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: mobile/native/android
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install Android SDK platform
+        shell: bash
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37"
+
+      - name: Validate Android release configuration
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+          DD_APP_KEY: ${{ secrets.DD_APP_KEY }}
+          MOBILE_APPLICATION_ID: ${{ vars.DATADOG_SYNTHETICS_ANDROID_APPLICATION_ID }}
+          SYNC_TO_DATADOG: ${{ inputs.operation == 'build-and-sync' }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if [[ "$SYNC_TO_DATADOG" == "true" ]]; then
+            for name in DD_API_KEY DD_APP_KEY MOBILE_APPLICATION_ID; do
+              [[ -n "${!name:-}" ]] || missing+=("$name")
+            done
+          fi
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing Android release secrets or variables: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Test, lint, and build the obfuscated release
+        env:
+          MOBILE_VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
+          MOBILE_VERSION_CODE: ${{ needs.prepare.outputs.build_number }}
+        run: ./gradlew test lint assembleRelease
+
+      - name: Upload the matching R8 mapping to Datadog
+        if: ${{ inputs.operation == 'build-and-sync' }}
+        env:
+          DATADOG_API_KEY: ${{ secrets.DD_API_KEY }}
+          MOBILE_VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
+          MOBILE_VERSION_CODE: ${{ needs.prepare.outputs.build_number }}
+        run: ./gradlew uploadMappingRelease
+
+      - name: Align and sign the release APK
+        id: package
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ARTIFACT_SUFFIX: ${{ needs.prepare.outputs.artifact_suffix }}
+        run: |
+          set -euo pipefail
+          keystore_path="$RUNNER_TEMP/android-release.keystore"
+          unsigned_apk="app/build/outputs/apk/release/app-release-unsigned.apk"
+          signed_apk="app/build/outputs/apk/release/InfraAdvisorMobile-$ARTIFACT_SUFFIX-android.apk"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          "$build_tools_dir/zipalign" -p -f 4 "$unsigned_apk" "$signed_apk"
+          "$build_tools_dir/apksigner" sign --ks "$keystore_path" --ks-key-alias "$ANDROID_KEY_ALIAS" --ks-pass "env:ANDROID_KEYSTORE_PASSWORD" --key-pass "env:ANDROID_KEY_PASSWORD" "$signed_apk"
+          "$build_tools_dir/apksigner" verify --verbose "$signed_apk"
+          echo "apk_path=$signed_apk" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js for Datadog CI
+        if: ${{ inputs.operation == 'build-and-sync' }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Upload the Android application version to Datadog
+        if: ${{ inputs.operation == 'build-and-sync' }}
+        shell: bash
+        env:
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+          DD_APP_KEY: ${{ secrets.DD_APP_KEY }}
+          MOBILE_APPLICATION_ID: ${{ vars.DATADOG_SYNTHETICS_ANDROID_APPLICATION_ID }}
+          APK_PATH: ${{ steps.package.outputs.apk_path }}
+          VERSION_NAME: ${{ needs.prepare.outputs.datadog_version_name }}
+          MARK_LATEST: ${{ inputs.mark_latest }}
+        run: |
+          set -euo pipefail
+          latest_arguments=()
+          [[ "$MARK_LATEST" == "true" ]] && latest_arguments+=(--latest)
+          npx --yes "@datadog/datadog-ci@$DATADOG_CI_VERSION" synthetics upload-application \
+            --mobileApplicationId "$MOBILE_APPLICATION_ID" \
+            --mobileApplicationVersionFilePath "$APK_PATH" \
+            --versionName "$VERSION_NAME" \
+            "${latest_arguments[@]}"
+
+      - name: Retain Android release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: infra-advisor-android-${{ needs.prepare.outputs.artifact_suffix }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            mobile/native/android/${{ steps.package.outputs.apk_path }}
+            mobile/native/android/app/build/outputs/mapping/release/mapping.txt
+
+      - name: Remove Android signing assets from the runner
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/android-release.keystore"
+
+  ios:
+    name: iOS release
+    if: ${{ inputs.platform == 'ios' || inputs.platform == 'both' }}
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile/native/ios
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Validate iOS release configuration
+        shell: bash
+        env:
+          IOS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.IOS_SIGNING_CERTIFICATE_BASE64 }}
+          IOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.IOS_SIGNING_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_DEVELOPMENT_TEAM: ${{ vars.IOS_DEVELOPMENT_TEAM }}
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+          DD_APP_KEY: ${{ secrets.DD_APP_KEY }}
+          MOBILE_APPLICATION_ID: ${{ vars.DATADOG_SYNTHETICS_IOS_APPLICATION_ID }}
+          SYNC_TO_DATADOG: ${{ inputs.operation == 'build-and-sync' }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in IOS_SIGNING_CERTIFICATE_BASE64 IOS_SIGNING_CERTIFICATE_PASSWORD IOS_PROVISIONING_PROFILE_BASE64 IOS_DEVELOPMENT_TEAM; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if [[ "$SYNC_TO_DATADOG" == "true" ]]; then
+            for name in DD_API_KEY DD_APP_KEY MOBILE_APPLICATION_ID; do
+              [[ -n "${!name:-}" ]] || missing+=("$name")
+            done
+          fi
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing iOS release secrets or variables: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Install Development signing assets
+        shell: bash
+        env:
+          IOS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.IOS_SIGNING_CERTIFICATE_BASE64 }}
+          IOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.IOS_SIGNING_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_DEVELOPMENT_TEAM: ${{ vars.IOS_DEVELOPMENT_TEAM }}
+        run: |
+          set -euo pipefail
+          certificate_path="$RUNNER_TEMP/mobile-signing-certificate.p12"
+          profile_source_path="$RUNNER_TEMP/mobile-development.mobileprovision"
+          profile_plist_path="$RUNNER_TEMP/mobile-development.plist"
+          keychain_path="$RUNNER_TEMP/mobile-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$IOS_SIGNING_CERTIFICATE_BASE64" | base64 -D > "$certificate_path"
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | base64 -D > "$profile_source_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$IOS_SIGNING_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security cms -D -i "$profile_source_path" > "$profile_plist_path"
+          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$profile_plist_path")"
+          profile_team="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$profile_plist_path")"
+          profile_app_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$profile_plist_path")"
+          get_task_allow="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$profile_plist_path")"
+          if [[ "$profile_team" != "$IOS_DEVELOPMENT_TEAM" ]]; then
+            echo "The provisioning profile team does not match IOS_DEVELOPMENT_TEAM." >&2
+            exit 1
+          fi
+          if [[ "$get_task_allow" != "true" ]]; then
+            echo "The provisioning profile is not a Development profile accepted by this workflow." >&2
+            exit 1
+          fi
+          profile_bundle_pattern="${profile_app_identifier#"$IOS_DEVELOPMENT_TEAM."}"
+          profile_bundle_prefix="${profile_bundle_pattern%\*}"
+          if [[ "$profile_bundle_pattern" != "dev.kyletaylor.infraadvisor.mobile.ios" && ( "$profile_bundle_pattern" == "$profile_bundle_prefix" || "dev.kyletaylor.infraadvisor.mobile.ios" != "$profile_bundle_prefix"* ) ]]; then
+            echo "The provisioning profile does not authorize dev.kyletaylor.infraadvisor.mobile.ios." >&2
+            exit 1
+          fi
+          profile_directory="$HOME/Library/MobileDevice/Provisioning Profiles"
+          profile_destination="$profile_directory/$profile_uuid.mobileprovision"
+          mkdir -p "$profile_directory"
+          cp "$profile_source_path" "$profile_destination"
+          echo "IOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+          echo "IOS_PROFILE_DESTINATION=$profile_destination" >> "$GITHUB_ENV"
+
+      - name: Install CocoaPods dependencies
+        run: pod install --deployment
+
+      - name: Archive the signed Development build
+        shell: bash
+        env:
+          DATADOG_API_KEY: ${{ inputs.operation == 'build-and-sync' && secrets.DD_API_KEY || '' }}
+          IOS_DEVELOPMENT_TEAM: ${{ vars.IOS_DEVELOPMENT_TEAM }}
+          VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
+          BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+          ARTIFACT_SUFFIX: ${{ needs.prepare.outputs.artifact_suffix }}
+        run: |
+          set -euo pipefail
+          archive_path="$RUNNER_TEMP/InfraAdvisorMobile-$ARTIFACT_SUFFIX.xcarchive"
+          xcodebuild archive \
+            -workspace InfraAdvisorMobile.xcworkspace \
+            -scheme InfraAdvisorMobile \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$archive_path" \
+            MARKETING_VERSION="$VERSION_NAME" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
+            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_IDENTITY='Apple Development'
+          echo "IOS_ARCHIVE_PATH=$archive_path" >> "$GITHUB_ENV"
+
+      - name: Export and validate the Development IPA
+        shell: bash
+        env:
+          IOS_DEVELOPMENT_TEAM: ${{ vars.IOS_DEVELOPMENT_TEAM }}
+          ARTIFACT_SUFFIX: ${{ needs.prepare.outputs.artifact_suffix }}
+        run: |
+          set -euo pipefail
+          export_options="$RUNNER_TEMP/ExportOptions.mobile-testing.plist"
+          export_directory="$RUNNER_TEMP/ios-export"
+          xcode_major="$(xcodebuild -version | awk 'NR == 1 { split($2, version, "."); print version[1] }')"
+          export_method="development"
+          if (( xcode_major >= 26 )); then
+            export_method="debugging"
+          fi
+          /usr/libexec/PlistBuddy -c 'Add :destination string export' "$export_options"
+          /usr/libexec/PlistBuddy -c 'Add :manageAppVersionAndBuildNumber bool false' "$export_options"
+          /usr/libexec/PlistBuddy -c "Add :method string $export_method" "$export_options"
+          /usr/libexec/PlistBuddy -c 'Add :signingStyle string automatic' "$export_options"
+          /usr/libexec/PlistBuddy -c "Add :teamID string $IOS_DEVELOPMENT_TEAM" "$export_options"
+          /usr/libexec/PlistBuddy -c 'Add :thinning string <none>' "$export_options"
+          xcodebuild -exportArchive -archivePath "$IOS_ARCHIVE_PATH" -exportPath "$export_directory" -exportOptionsPlist "$export_options"
+          ipa_path="$RUNNER_TEMP/InfraAdvisorMobile-$ARTIFACT_SUFFIX-ios.ipa"
+          mv "$export_directory/InfraAdvisorMobile.ipa" "$ipa_path"
+          unzip -t "$ipa_path" >/dev/null
+          embedded_profile="$RUNNER_TEMP/exported-development.mobileprovision"
+          embedded_profile_plist="$RUNNER_TEMP/exported-development.plist"
+          unzip -p "$ipa_path" 'Payload/InfraAdvisorMobile.app/embedded.mobileprovision' > "$embedded_profile"
+          security cms -D -i "$embedded_profile" > "$embedded_profile_plist"
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$embedded_profile_plist")" == "true" ]]
+          echo "IOS_IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
+
+      - name: Set up Node.js for Datadog CI
+        if: ${{ inputs.operation == 'build-and-sync' }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Upload the iOS application version to Datadog
+        if: ${{ inputs.operation == 'build-and-sync' }}
+        shell: bash
+        env:
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+          DD_APP_KEY: ${{ secrets.DD_APP_KEY }}
+          MOBILE_APPLICATION_ID: ${{ vars.DATADOG_SYNTHETICS_IOS_APPLICATION_ID }}
+          VERSION_NAME: ${{ needs.prepare.outputs.datadog_version_name }}
+          MARK_LATEST: ${{ inputs.mark_latest }}
+        run: |
+          set -euo pipefail
+          latest_arguments=()
+          [[ "$MARK_LATEST" == "true" ]] && latest_arguments+=(--latest)
+          npx --yes "@datadog/datadog-ci@$DATADOG_CI_VERSION" synthetics upload-application \
+            --mobileApplicationId "$MOBILE_APPLICATION_ID" \
+            --mobileApplicationVersionFilePath "$IOS_IPA_PATH" \
+            --versionName "$VERSION_NAME" \
+            "${latest_arguments[@]}"
+
+      - name: Retain iOS release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: infra-advisor-ios-${{ needs.prepare.outputs.artifact_suffix }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ env.IOS_IPA_PATH }}
+            ${{ env.IOS_ARCHIVE_PATH }}/dSYMs
+
+      - name: Remove signing assets from the runner
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$IOS_KEYCHAIN_PATH" 2>/dev/null || true
+          rm -f "$IOS_PROFILE_DESTINATION" "$RUNNER_TEMP/mobile-signing-certificate.p12" "$RUNNER_TEMP/mobile-development.mobileprovision" "$RUNNER_TEMP/mobile-development.plist"

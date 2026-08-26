@@ -27,4 +27,4 @@ if ! command -v npx >/dev/null 2>&1; then
 fi
 
 export DATADOG_SITE="${DATADOG_SITE:-us3.datadoghq.com}"
-npx --yes @datadog/datadog-ci dsyms upload "$DSYM_PATH"
+npx --yes "@datadog/datadog-ci@${DATADOG_CI_VERSION:-5.21.2}" dsyms upload "$DSYM_PATH"

@@ -5,6 +5,7 @@ plugins {
 
 // Environment variables are the machine-local override; tracked Gradle properties provide demo defaults.
 def configValue = { String propertyName, String environmentName -> providers.environmentVariable(environmentName).orElse(providers.gradleProperty(propertyName)).get() }
+def versionValue = { String propertyName, String environmentName, String fallback -> providers.environmentVariable(environmentName).orElse(providers.gradleProperty(propertyName)).orElse(fallback).get() }
 
 android {
     namespace "dev.kyletaylor.infraadvisor.mobile"
@@ -14,8 +15,9 @@ android {
         applicationId "dev.kyletaylor.infraadvisor.mobile"
         minSdk 23
         targetSdk 37
-        versionCode 1
-        versionName "1.0"
+        // CI can create uniquely versioned artifacts without rewriting tracked source files.
+        versionCode versionValue('mobileVersionCode', 'MOBILE_VERSION_CODE', '1').toInteger()
+        versionName versionValue('mobileVersionName', 'MOBILE_VERSION_NAME', '0.1.0')
 
         buildConfigField "String", "API_BASE_URL", "\"${configValue('infraAdvisorApiBaseUrl', 'INFRA_ADVISOR_API_BASE_URL')}\""
         buildConfigField "String", "DD_SITE", "\"${configValue('datadogSite', 'DD_SITE')}\""
