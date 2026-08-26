@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-android;net10.0-ios</TargetFrameworks>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>InfraAdvisor.Mobile</RootNamespace>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <ApplicationTitle>Infra Advisor</ApplicationTitle>
+    <ApplicationId>dev.kyletaylor.infraadvisor.maui</ApplicationId>
+    <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">23.0</SupportedOSPlatformVersion>
+    <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
+    <DatadogUploadSymbols Condition="'$(DatadogUploadSymbols)' == ''">false</DatadogUploadSymbols>
+    <DatadogSite>US3</DatadogSite>
+    <DatadogServiceName>infra-advisor-mobile-maui</DatadogServiceName>
+    <InfraAdvisorApiBaseUrl Condition="'$(InfraAdvisorApiBaseUrl)' == ''">https://infra-advisor-ai.kyletaylor.dev/</InfraAdvisorApiBaseUrl>
+    <InfraAdvisorDatadogEnvironment Condition="'$(InfraAdvisorDatadogEnvironment)' == ''">demo</InfraAdvisorDatadogEnvironment>
+    <InfraAdvisorDatadogService Condition="'$(InfraAdvisorDatadogService)' == ''">infra-advisor-mobile-maui</InfraAdvisorDatadogService>
+    <InfraAdvisorDatadogClientToken Condition="'$(InfraAdvisorDatadogClientToken)' == ''">pub884d0800477e2d252b992acb168fc7a5</InfraAdvisorDatadogClientToken>
+    <InfraAdvisorDatadogRumApplicationId Condition="'$(InfraAdvisorDatadogRumApplicationId)' == ''">fe90f908-da00-4d7c-9b24-6af11cee68a4</InfraAdvisorDatadogRumApplicationId>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="InfraAdvisorApiBaseUrl" Value="$(InfraAdvisorApiBaseUrl)" />
+    <AssemblyMetadata Include="InfraAdvisorDatadogEnvironment" Value="$(InfraAdvisorDatadogEnvironment)" />
+    <AssemblyMetadata Include="InfraAdvisorDatadogService" Value="$(InfraAdvisorDatadogService)" />
+    <AssemblyMetadata Include="InfraAdvisorDatadogClientToken" Value="$(InfraAdvisorDatadogClientToken)" />
+    <AssemblyMetadata Include="InfraAdvisorDatadogRumApplicationId" Value="$(InfraAdvisorDatadogRumApplicationId)" />
+  </ItemGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <AndroidLinkTool>r8</AndroidLinkTool>
+    <AndroidCreateProguardMappingFile>true</AndroidCreateProguardMappingFile>
+    <MtouchDebug>false</MtouchDebug>
+  </PropertyGroup>
+  <ItemGroup>
+    <MauiIcon Include="../../../../../docs/public/favicon.svg" Link="Resources/AppIcon/appicon.svg" Color="#1D4ED8" />
+    <MauiSplashScreen Include="../../../../../docs/public/favicon.svg" Link="Resources/Splash/splash.svg" Color="#F8FAFC" BaseSize="128,128" />
+    <MauiImage Include="Resources/Images/*" />
+    <MauiFont Include="Resources/Fonts/*" />
+    <MauiAsset Include="Resources/Raw/**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Datadog.Maui" Version="0.2.0" />
+    <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.1" />
+    <PackageReference Include="Plugin.Maui.Audio" Version="4.0.0" />
+    <PackageReference Include="Syncfusion.Maui.Toolkit" Version="1.0.10" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../InfraAdvisor.Mobile.Core/InfraAdvisor.Mobile.Core.csproj" />
+  </ItemGroup>
+</Project>

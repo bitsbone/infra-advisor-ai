@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/InfraAdvisor.Mobile.Core/InfraAdvisor.Mobile.Core.csproj" />
+    <Project Path="src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/InfraAdvisor.Mobile.Core.Tests/InfraAdvisor.Mobile.Core.Tests.csproj" />
+  </Folder>
+</Solution>

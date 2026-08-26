@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<ResourceDictionary xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" x:Class="InfraAdvisor.Mobile.Resources.Styles.Styles">
+    <Style TargetType="ContentPage"><Setter Property="BackgroundColor" Value="{StaticResource Canvas}" /></Style>
+    <Style TargetType="Label"><Setter Property="TextColor" Value="{StaticResource TextPrimary}" /></Style>
+    <Style x:Key="PageTitle" TargetType="Label"><Setter Property="FontSize" Value="28" /><Setter Property="FontAttributes" Value="Bold" /></Style>
+    <Style x:Key="SectionTitle" TargetType="Label"><Setter Property="FontSize" Value="18" /><Setter Property="FontAttributes" Value="Bold" /></Style>
+    <Style TargetType="Entry"><Setter Property="BackgroundColor" Value="{StaticResource Surface}" /><Setter Property="TextColor" Value="{StaticResource TextPrimary}" /><Setter Property="PlaceholderColor" Value="{StaticResource TextSecondary}" /><Setter Property="MinimumHeightRequest" Value="52" /></Style>
+    <Style TargetType="Editor"><Setter Property="BackgroundColor" Value="{StaticResource Surface}" /><Setter Property="TextColor" Value="{StaticResource TextPrimary}" /><Setter Property="PlaceholderColor" Value="{StaticResource TextSecondary}" /></Style>
+    <Style TargetType="Button"><Setter Property="BackgroundColor" Value="{StaticResource Primary}" /><Setter Property="TextColor" Value="White" /><Setter Property="CornerRadius" Value="12" /><Setter Property="MinimumHeightRequest" Value="48" /><Setter Property="FontAttributes" Value="Bold" /></Style>
+    <Style x:Key="SecondaryButton" TargetType="Button"><Setter Property="BackgroundColor" Value="{StaticResource PrimarySoft}" /><Setter Property="TextColor" Value="{StaticResource PrimaryDark}" /></Style>
+    <Style x:Key="DangerButton" TargetType="Button"><Setter Property="BackgroundColor" Value="#FEE2E2" /><Setter Property="TextColor" Value="{StaticResource Danger}" /></Style>
+    <Style x:Key="Card" TargetType="Border"><Setter Property="BackgroundColor" Value="{StaticResource Surface}" /><Setter Property="Stroke" Value="{StaticResource Border}" /><Setter Property="StrokeThickness" Value="1" /><Setter Property="Padding" Value="16" /><Setter Property="StrokeShape" Value="RoundRectangle 16" /></Style>
+</ResourceDictionary>

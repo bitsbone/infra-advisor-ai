@@ -70,6 +70,18 @@ To reuse the pattern for another Volley request type, keep telemetry ownership i
 
 The wrapper accepts the real HTTP method so model discovery appears as a GET resource. Agent queries receive a 90-second timeout and no automatic retries: AI latency can exceed Volley's short default, while retrying a POST could execute the same prompt twice. `ApiError` converts timeouts, offline failures, authentication errors, and backend responses into distinct user-facing messages without exposing payload bodies.
 
+## .NET MAUI: shared automatic HttpClient instrumentation
+
+The .NET 10 MAUI application under `cross-platform/maui` shows the automatic path for one Android/iOS codebase. `MauiProgram.cs` initializes Datadog Core, Logs, Trace, RUM, and Session Replay before registering the application services. RUM sessions, first-party resource traces, and replays use 100% sampling for deterministic demonstrations, and replay uses `TextAndInputPrivacy.MaskSensitiveInputs`.
+
+`InfraAdvisorApiClient` is the only application HTTP boundary and receives one DI-managed `HttpClient`. Because it uses standard `HttpClient` requests, `Datadog.Maui` creates the RUM resource and correlated client span automatically and injects Datadog plus W3C trace context only for `infra-advisor-ai.kyletaylor.dev`. The client adds application correlation headers for the stable AI session, current RUM session, authenticated user, and selected conversation. Do not add manual RUM resources or spans around these same requests.
+
+The streaming query parser reads SSE by line rather than by arbitrary transport buffer. Named `event:` fields are combined with multiline `data:` fields, fragmented responses remain valid, cancellation stops enumeration, malformed events become sanitized application errors, and query POSTs are never automatically replayed. Tool and pipeline events can therefore update the UI while the network resource stays correlated with the backend agent, model, MCP, vision, or transcription spans.
+
+The MAUI observability facade deliberately exposes only controlled logs/errors, user association, and session lifecycle. Login calls `DdSdk.SetUserInfo`; logout clears the in-memory JWT, calls `DdSdk.ClearUserInfo`, and stops the current RUM session. Attachment events record modality, byte size, status, and duration only. The Error Lab uses a handled exception, a missing authenticated API route, fixed logs, and `Environment.FailFast` for a genuine process crash; relaunch is required for stored crash delivery.
+
+Release builds preserve portable PDB information, enable Android R8 mapping output, and generate iOS dSYMs. The `DatadogUploadSymbols` MSBuild property remains off by default and is enabled only in an authorized release job where `DATADOG_API_KEY` is supplied from a secret store. Mobile App Testing upload remains a separate `datadog-ci synthetics upload-application` step using a manually created platform application ID and a signed APK or development/ad-hoc IPA.
+
 ## Data minimization boundary
 
 Recorded fields are intentionally limited to:
