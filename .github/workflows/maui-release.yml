@@ -131,7 +131,10 @@ jobs:
           security cms -D -i "$profile" > "$RUNNER_TEMP/maui-ios-profile.plist"; profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/maui-ios-profile.plist")"; profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/maui-ios-profile.plist")"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"; cp "$profile" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
           codesign_key="$(security find-identity -v -p codesigning "$keychain" | sed -n '1s/.*"\(.*\)".*/\1/p')"; [[ -n "$codesign_key" ]] || { echo "No signing identity found." >&2; exit 1; }
-          echo "MAUI_IOS_PROFILE_NAME=$profile_name" >> "$GITHUB_ENV"; echo "MAUI_IOS_PROFILE_UUID=$profile_uuid" >> "$GITHUB_ENV"; echo "MAUI_IOS_CODESIGN_KEY=$codesign_key" >> "$GITHUB_ENV"; echo "MAUI_IOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          application_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/maui-ios-profile.plist")"; profile_bundle_id="${application_identifier#*.}"
+          [[ "$profile_bundle_id" != "*" ]] || profile_bundle_id="dev.kyletaylor.infraadvisor.maui"
+          [[ "$profile_bundle_id" != *"*" ]] || profile_bundle_id="${profile_bundle_id%\*}infraadvisor.maui"
+          echo "MAUI_IOS_PROFILE_NAME=$profile_name" >> "$GITHUB_ENV"; echo "MAUI_IOS_PROFILE_UUID=$profile_uuid" >> "$GITHUB_ENV"; echo "MAUI_IOS_CODESIGN_KEY=$codesign_key" >> "$GITHUB_ENV"; echo "MAUI_IOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"; echo "MAUI_IOS_BUNDLE_ID=$profile_bundle_id" >> "$GITHUB_ENV"
       - name: Build signed test IPA and upload symbols
         if: ${{ inputs.operation != 'build-only' }}
         shell: bash
@@ -141,7 +144,7 @@ jobs:
           set -euo pipefail
           : "${DATADOG_API_KEY:?Missing DD_API_KEY}"
           publish_log="$RUNNER_TEMP/maui-ios-publish.log"
-          dotnet publish "$PROJECT" -f net10.0-ios -c Release -p:InfraAdvisorBuildPlatform=ios -p:RuntimeIdentifier=ios-arm64 -p:ArchiveOnBuild=true -p:BuildIpa=true -p:ApplicationDisplayVersion="${{ inputs.version_name }}" -p:ApplicationVersion="$GITHUB_RUN_NUMBER" -p:CodesignKey="$MAUI_IOS_CODESIGN_KEY" -p:CodesignProvision="$MAUI_IOS_PROFILE_NAME" -p:DatadogUploadSymbols=true -v n -tl:off 2>&1 | tee "$publish_log"
+          dotnet publish "$PROJECT" -f net10.0-ios -c Release -p:InfraAdvisorBuildPlatform=ios -p:RuntimeIdentifier=ios-arm64 -p:ArchiveOnBuild=true -p:BuildIpa=true -p:ApplicationId="$MAUI_IOS_BUNDLE_ID" -p:ApplicationDisplayVersion="${{ inputs.version_name }}" -p:ApplicationVersion="$GITHUB_RUN_NUMBER" -p:CodesignKey="$MAUI_IOS_CODESIGN_KEY" -p:CodesignProvision="$MAUI_IOS_PROFILE_NAME" -p:DatadogUploadSymbols=true -v n -tl:off 2>&1 | tee "$publish_log"
           grep -Fq "Datadog: Uploading iOS dSYM" "$publish_log" || { echo "iOS symbol upload did not start." >&2; exit 1; }
           ipa_path="$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-ios -name '*.ipa' -type f -print -quit)"; [[ -n "$ipa_path" ]] || { echo "IPA was not generated." >&2; exit 1; }
           echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
