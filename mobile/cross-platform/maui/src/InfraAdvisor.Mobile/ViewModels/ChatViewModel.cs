@@ -37,19 +37,21 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     public IReadOnlyList<string> Backends { get; } = ["Python", ".NET"];
 
     [ObservableProperty] private string prompt = string.Empty;
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanSend)), NotifyPropertyChangedFor(nameof(SendLabel))] private bool isBusy;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanSend)), NotifyPropertyChangedFor(nameof(SendLabel)), NotifyPropertyChangedFor(nameof(CanChangeBackend)), NotifyPropertyChangedFor(nameof(CanChangeModel))] private bool isBusy;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasError))] private string? errorMessage;
     [ObservableProperty] private string selectedBackend = "Python";
     [ObservableProperty] private int? selectedBackendIndex = 0;
     [ObservableProperty] private string? selectedModel;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasSelectedConversation))] private ConversationSummary? selectedConversation;
-    [ObservableProperty] private bool isHistoryVisible;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsModalVisible)), NotifyPropertyChangedFor(nameof(IsAdvisorInteractive))] private bool isHistoryVisible;
     [ObservableProperty] private bool isHistoryLoading;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasHistoryError))] private string? historyErrorMessage;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(RecordLabel))] private bool isRecording;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(RecordLabel))] private TimeSpan recordingDuration;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanChangeBackend))] private bool isConversationLocked;
     [ObservableProperty] private bool isStillWorking;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsEvidenceVisible)), NotifyPropertyChangedFor(nameof(IsModalVisible)), NotifyPropertyChangedFor(nameof(IsAdvisorInteractive))] private ChatMessageItem? selectedEvidenceMessage;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanSend)), NotifyPropertyChangedFor(nameof(CanChangeBackend)), NotifyPropertyChangedFor(nameof(CanChangeModel))] private bool isMetadataLoading;
 
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
     public bool HasMessages => Messages.Count > 0;
@@ -57,10 +59,14 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     public bool HasNoConversations => Conversations.Count == 0;
     public bool HasSelectedConversation => SelectedConversation is not null;
     public bool HasHistoryError => !string.IsNullOrWhiteSpace(HistoryErrorMessage);
-    public bool CanSend => !IsBusy && !string.IsNullOrWhiteSpace(Prompt) && SelectedModel is not null && Attachments.All(item => item.Remote is not null);
+    public bool CanSend => !IsBusy && !IsMetadataLoading && (!string.IsNullOrWhiteSpace(Prompt) || Attachments.Count > 0) && SelectedModel is not null && Attachments.All(item => item.Remote is not null);
     public string SendLabel => IsBusy ? "Working…" : "Ask Infra Advisor";
     public string RecordLabel => IsRecording ? $"Stop {RecordingDuration:mm\\:ss}" : "Record";
-    public bool CanChangeBackend => !IsConversationLocked;
+    public bool CanChangeBackend => !IsConversationLocked && !IsBusy && !IsMetadataLoading;
+    public bool CanChangeModel => !IsBusy && !IsMetadataLoading;
+    public bool IsEvidenceVisible => SelectedEvidenceMessage is not null;
+    public bool IsModalVisible => IsHistoryVisible || IsEvidenceVisible;
+    public bool IsAdvisorInteractive => !IsModalVisible;
 
     partial void OnPromptChanged(string value) => OnPropertyChanged(nameof(CanSend));
 
@@ -84,6 +90,8 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         if (session.Backend != next && session.ConversationId is null)
         {
             session.Backend = next;
+            Models.Clear();
+            SelectedModel = null;
             _ = LoadBackendMetadataAsync();
         }
     }
@@ -110,6 +118,7 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     {
         if (initialized)
         {
+            await OpenRequestedConversationAsync();
             return;
         }
 
@@ -119,6 +128,7 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         session.Model = preferences.Get("chat.model", null);
         SelectedBackend = session.Backend.DisplayName();
         await Task.WhenAll(LoadBackendMetadataAsync(), LoadHistoryAsync());
+        await OpenRequestedConversationAsync();
     }
 
     [RelayCommand]
@@ -316,6 +326,30 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     }
 
     [RelayCommand]
+    private void OpenEvidence(ChatMessageItem message)
+    {
+        if (message.HasEvidence)
+        {
+            SelectedEvidenceMessage = message;
+            observability.Info("Evidence sheet opened", new Dictionary<string, object> { ["evidence_count"] = message.Evidence.Count, ["screen"] = "advisor" });
+        }
+    }
+
+    [RelayCommand]
+    private void CloseEvidence() => SelectedEvidenceMessage = null;
+
+    [RelayCommand]
+    private async Task OpenEvidenceSourceAsync(EvidenceCardItem evidence)
+    {
+        var sanitizedUrl = evidence.Value.Source.Url is { } value ? TelemetrySanitizer.SanitizeUrl(value) : null;
+        if (evidence.HasLink && Uri.TryCreate(sanitizedUrl, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+        {
+            observability.Info("Evidence source opened", new Dictionary<string, object> { ["evidence_kind"] = evidence.Value.OpportunityType, ["evidence_source"] = evidence.Value.Provider });
+            await linkLauncher.OpenAsync(uri);
+        }
+    }
+
+    [RelayCommand]
     private async Task SendAsync()
     {
         if (!CanSend || SelectedModel is null)
@@ -339,9 +373,10 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
 
         try
         {
+            var receivedDone = false;
             if (session.ConversationId is null)
             {
-                var title = query.Length <= 64 ? query : string.Concat(query.AsSpan(0, 61), "…");
+                var title = BuildConversationTitle(query, messageAttachments);
                 var conversation = await api.CreateConversationAsync(title, SelectedModel, queryCancellation.Token);
                 session.ConversationId = conversation.Id;
                 IsConversationLocked = true;
@@ -353,6 +388,12 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
             {
                 ResetStillWorkingTimer();
                 ApplyStreamEvent(streamEvent, assistantMessage);
+                receivedDone |= streamEvent.Event == "done";
+            }
+
+            if (!receivedDone)
+            {
+                throw new ApiException("The response stream ended before completion. Try again.", category: "incomplete_stream");
             }
 
             observability.Info("AI query stream completed", new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue(), ["result"] = "success" });
@@ -415,6 +456,7 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     private async Task LoadBackendMetadataAsync()
     {
         var generation = Interlocked.Increment(ref metadataGeneration);
+        IsMetadataLoading = true;
         try
         {
             var models = await api.GetModelsAsync(sessionCancellation.Token);
@@ -430,18 +472,34 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
             }
 
             SelectedModel = session.Model is { } savedModel && Models.Contains(savedModel) ? savedModel : models.DefaultModel;
-            var suggestions = await api.GetInitialSuggestionsAsync(sessionCancellation.Token);
-            if (generation != metadataGeneration)
+            try
             {
-                return;
-            }
+                var suggestions = await api.GetInitialSuggestionsAsync(sessionCancellation.Token);
+                if (generation != metadataGeneration)
+                {
+                    return;
+                }
 
-            SetSuggestions(suggestions.Count > 0 ? suggestions : FallbackSuggestions);
+                SetSuggestions(suggestions.Count > 0 ? suggestions : FallbackSuggestions);
+            }
+            catch (OperationCanceledException) when (sessionCancellation.IsCancellationRequested)
+            {
+            }
+            catch (Exception exception) when (exception is ApiException or HttpRequestException or OperationCanceledException)
+            {
+                if (generation == metadataGeneration)
+                {
+                    SetSuggestions(FallbackSuggestions);
+                    observability.Warning("Chat suggestions unavailable", new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue(), ["error_type"] = exception.GetType().Name });
+                }
+            }
         }
-        catch (Exception exception) when (exception is ApiException or HttpRequestException)
+        catch (Exception exception) when (exception is ApiException or HttpRequestException or OperationCanceledException)
         {
             if (generation == metadataGeneration)
             {
+                Models.Clear();
+                SelectedModel = null;
                 SetSuggestions(FallbackSuggestions);
                 observability.Error("Chat metadata load failed", exception, new Dictionary<string, object> { ["backend"] = session.Backend.ApiValue() });
             }
@@ -449,16 +507,35 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         catch (OperationCanceledException) when (sessionCancellation.IsCancellationRequested)
         {
         }
+        finally
+        {
+            if (generation == metadataGeneration)
+            {
+                IsMetadataLoading = false;
+            }
+        }
     }
 
     private async Task OpenConversationAsync(ConversationSummary summary)
     {
         var generation = Interlocked.Increment(ref conversationGeneration);
         var previousBackend = session.Backend;
+        var conversationBackend = BackendKindExtensions.ParseBackend(summary.Backend);
+        var backendChanged = previousBackend != conversationBackend;
         try
         {
-            session.Backend = BackendKindExtensions.ParseBackend(summary.Backend);
+            session.Backend = conversationBackend;
             SelectedBackend = session.Backend.DisplayName();
+            if (backendChanged)
+            {
+                // Model catalogs belong to a backend. Refresh the newly selected backend before restoring the conversation's saved model so the picker cannot retain stale options from the previous service.
+                await LoadBackendMetadataAsync();
+                if (generation != conversationGeneration)
+                {
+                    return;
+                }
+            }
+
             var detail = await api.GetConversationAsync(summary.Id, sessionCancellation.Token);
             if (generation != conversationGeneration)
             {
@@ -470,7 +547,8 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
             Messages.Clear();
             foreach (var message in detail.Messages)
             {
-                var item = new ChatMessageItem { Role = message.Role, Content = message.Content, Sources = message.Sources ?? [], Attachments = message.Attachments ?? [], SourceText = message.Sources is { Count: > 0 } ? $"Sources: {string.Join(", ", message.Sources)}" : string.Empty, Metadata = message.TraceId is null ? string.Empty : $"Trace {message.TraceId}", MessageId = message.Id, TraceId = message.TraceId, SpanId = message.SpanId, Timestamp = DateTimeOffset.TryParse(message.CreatedAt, out var created) ? created : DateTimeOffset.Now };
+                var restoredEvidence = ArtifactPresentationMapper.ToCards(message.Artifacts ?? []);
+                var item = new ChatMessageItem { Role = message.Role, Content = message.Content, Sources = message.Sources ?? [], Attachments = message.Attachments ?? [], Evidence = restoredEvidence, SourceText = message.Sources is { Count: > 0 } ? $"Sources: {string.Join(", ", message.Sources)}" : string.Empty, Metadata = message.TraceId is null ? string.Empty : $"Trace {message.TraceId}", MessageId = message.Id, TraceId = message.TraceId, SpanId = message.SpanId, Timestamp = DateTimeOffset.TryParse(message.CreatedAt, out var created) ? created : DateTimeOffset.Now };
                 foreach (var step in message.Steps ?? [])
                 {
                     item.Steps.Add(new PipelineStepItem(step.Id, step.Kind, step.Name, step.Status, step.Detail ?? step.ResultSummary, step.Sources, step.DurationMs));
@@ -479,7 +557,15 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
                 Messages.Add(item);
             }
 
-            SelectedModel = detail.Model ?? SelectedModel;
+            if (!string.IsNullOrWhiteSpace(detail.Model))
+            {
+                // A saved conversation may reference a model that was retired after it was created. Keep that model visible while the conversation is open instead of leaving the Picker in an invalid state.
+                if (!Models.Contains(detail.Model))
+                {
+                    Models.Add(detail.Model);
+                }
+                SelectedModel = detail.Model;
+            }
             IsHistoryVisible = false;
             NotifyMessageState();
         }
@@ -493,6 +579,11 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
             session.Backend = previousBackend;
             session.ConversationId = null;
             SelectedBackend = previousBackend.DisplayName();
+            if (backendChanged)
+            {
+                // A failed cross-backend restore must also put the model picker and suggestions back on the original service.
+                await LoadBackendMetadataAsync();
+            }
             IsConversationLocked = false;
             SelectedConversation = null;
             ErrorMessage = "That conversation could not be loaded.";
@@ -513,6 +604,9 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
                 var step = ToPipelineStep(streamEvent);
                 UpsertStep(PipelineSteps, step);
                 UpsertStep(assistant.Steps, step);
+                break;
+            case "artifact":
+                MergeArtifact(assistant, streamEvent.Artifact);
                 break;
             case "text_chunk": assistant.Content += streamEvent.Chunk; break;
             case "done":
@@ -682,6 +776,61 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         "tool_call_end" => new PipelineStepItem(streamEvent.Id ?? $"tool:{streamEvent.Name ?? "unknown"}", "tool", streamEvent.Name ?? "Tool call", streamEvent.Status ?? "complete", streamEvent.ResultSummary, streamEvent.Sources, streamEvent.DurationMs),
         _ => throw new ArgumentOutOfRangeException(nameof(streamEvent)),
     };
+
+    private async Task OpenRequestedConversationAsync()
+    {
+        if (session.ConsumeNewConversationRequest())
+        {
+            await NewConversationAsync();
+            return;
+        }
+
+        var requestedId = session.ConsumeRequestedConversation();
+        if (requestedId is null)
+        {
+            return;
+        }
+
+        var summary = Conversations.FirstOrDefault(value => value.Id == requestedId);
+        if (summary is null)
+        {
+            await LoadHistoryAsync();
+            summary = Conversations.FirstOrDefault(value => value.Id == requestedId);
+        }
+
+        if (summary is not null)
+        {
+            SelectedConversation = summary;
+        }
+    }
+
+    private static void MergeArtifact(ChatMessageItem message, ChatArtifact? artifact)
+    {
+        if (artifact is null)
+        {
+            return;
+        }
+
+        message.Evidence = message.Evidence.Concat(ArtifactPresentationMapper.ToCards(artifact)).GroupBy(value => value.Value.Id).Select(group => group.First()).ToArray();
+    }
+
+    private static string BuildConversationTitle(string query, IReadOnlyList<MediaReference> attachments)
+    {
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            return query.Length <= 64 ? query : string.Concat(query.AsSpan(0, 61), "…");
+        }
+
+        var hasImage = attachments.Any(value => value.Kind == "image");
+        var hasAudio = attachments.Any(value => value.Kind == "audio");
+        return (hasImage, hasAudio) switch
+        {
+            (true, true) => "Image and audio assessment",
+            (true, false) => "Image assessment",
+            (false, true) => "Audio assessment",
+            _ => "New Conversation",
+        };
+    }
 
     private static void UpsertStep(ObservableCollection<PipelineStepItem> steps, PipelineStepItem value)
     {

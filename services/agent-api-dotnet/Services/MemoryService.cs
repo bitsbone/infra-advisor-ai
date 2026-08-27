@@ -8,8 +8,8 @@ namespace InfraAdvisor.AgentApi.Services;
 // Conversation history is now owned by AgentSessionStore (which serializes
 // the whole AgentSession to Redis via agent.SerializeSessionAsync). The
 // only thing still managed here is the user's last-selected model per
-// session, so subsequent /query calls without an explicit model body pick
-// up the right deployment from where they left off.
+// tenant-scoped session, so subsequent /query calls without an explicit model
+// body pick up the right deployment without sharing state across JWT subjects.
 public class MemoryService
 {
     private readonly IConnectionMultiplexer _redis;
@@ -33,7 +33,7 @@ public class MemoryService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("get_session_model failed for session={SessionId}: {Error}", sessionId, ex.Message);
+            _logger.LogWarning("get_session_model failed error_type={ErrorType}", ex.GetType().Name);
             return "gpt-4.1-mini";
         }
     }
@@ -47,7 +47,7 @@ public class MemoryService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("set_session_model failed for session={SessionId}: {Error}", sessionId, ex.Message);
+            _logger.LogWarning("set_session_model failed error_type={ErrorType}", ex.GetType().Name);
         }
     }
 
@@ -65,7 +65,7 @@ public class MemoryService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("clear_session failed for session={SessionId}: {Error}", sessionId, ex.Message);
+            _logger.LogWarning("clear_session failed error_type={ErrorType}", ex.GetType().Name);
             return false;
         }
     }

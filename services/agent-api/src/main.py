@@ -10,18 +10,19 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from agent import build_llm, build_mcp_client, run_agent, run_agent_stream
 from auth import limiter, require_auth
 from conversations import (
+    conversation_access,
     create_conversation,
     delete_conversation,
     get_conversation,
@@ -30,7 +31,7 @@ from conversations import (
     save_messages,
 )
 from kafka_consumer import start_consumer_thread
-from media import MediaTooLarge, UnsupportedMediaType, upload_media
+from media import InvalidAttachmentReference, MediaTooLarge, UnsupportedMediaType, upload_media, validate_attachment_reference
 from memory import (
     append_exchange_with_attachments,
     clear_session,
@@ -40,6 +41,7 @@ from memory import (
 )
 from observability.llm_obs import enable_llm_obs, submit_user_feedback
 from observability.tracing import current_span_id, current_trace_id
+from tenant import tenant_session_key
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -78,7 +80,7 @@ async def lifespan(app: FastAPI):
     try:
         init_db()
     except Exception as exc:
-        logger.warning("conversation DB init failed (non-fatal): %s", exc)
+        logger.warning("conversation DB init failed error_type=%s", type(exc).__name__)
 
     # Build MCP client
     try:
@@ -88,8 +90,7 @@ async def lifespan(app: FastAPI):
         _mcp_connected = True
         logger.info("MCP client connected")
     except Exception as exc:
-        logger.warning(
-            "MCP client failed to connect (will retry per-request): %s", exc)
+        logger.warning("MCP client failed to connect error_type=%s", type(exc).__name__)
         _mcp_connected = False
 
     # Build LLM
@@ -98,7 +99,7 @@ async def lifespan(app: FastAPI):
         _llm_connected = True
         logger.info("LLM client initialized")
     except Exception as exc:
-        logger.warning("LLM client failed to initialize: %s", exc)
+        logger.warning("LLM client failed to initialize error_type=%s", type(exc).__name__)
         _llm_connected = False
 
     # Parse available model list from env
@@ -113,8 +114,7 @@ async def lifespan(app: FastAPI):
         try:
             start_consumer_thread(_mcp_client)
         except Exception as exc:
-            logger.warning(
-                "Kafka consumer thread failed to start (non-fatal): %s", exc)
+            logger.warning("Kafka consumer thread failed to start error_type=%s", type(exc).__name__)
 
     # Seed suggestion pool and start background top-up loop
     if _llm:
@@ -149,11 +149,19 @@ async def _ratelimit_handler(request: Request, exc: RateLimitExceeded) -> JSONRe
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     trace_id = current_trace_id()
-    logger.exception("Unhandled exception on %s %s",
-                     request.method, request.url.path)
+    logger.error(
+        "Unhandled exception method=%s path=%s error_type=%s",
+        request.method,
+        request.url.path,
+        type(exc).__name__,
+    )
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc), "trace_id": trace_id},
+        content={
+            "detail": "The service encountered an unexpected error.",
+            "error_type": type(exc).__name__,
+            "trace_id": trace_id,
+        },
     )
 
 
@@ -162,7 +170,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
 
 class Attachment(BaseModel):
     url: str
-    kind: str  # "image" | "audio"
+    kind: Literal["image", "audio"]
     mime_type: str
     size_bytes: int
 
@@ -181,6 +189,30 @@ class QueryResponse(BaseModel):
     span_id: str | None
     session_id: str
     model: str
+    artifacts: list[dict] = Field(default_factory=list)
+
+
+def _validate_attachments(attachments: list[Attachment] | None) -> list[dict] | None:
+    """Apply the fail-closed Blob/SAS contract before any outbound fetch."""
+    if not attachments:
+        return None
+    try:
+        return [validate_attachment_reference(item.model_dump()) for item in attachments]
+    except (InvalidAttachmentReference, ValueError) as exc:
+        logger.info("attachment rejected error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=422, detail="Invalid attachment reference") from exc
+
+
+def _require_owned_conversation(conversation_id: str | None, user_id: str) -> None:
+    """Authorize a continuation before restoring memory or invoking the agent."""
+    if not conversation_id:
+        return
+    access = conversation_access(conversation_id, user_id)
+    if access == "unavailable":
+        raise HTTPException(status_code=503, detail="Conversation storage unavailable")
+    if access != "owned":
+        # Do not disclose whether the identifier exists for another tenant.
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
 
 class SuggestionsRequest(BaseModel):
@@ -377,7 +409,7 @@ def _pool_add(items: list[SuggestionItem]) -> None:
         if size > _POOL_MAX:
             client.ltrim(_POOL_KEY, size - _POOL_MAX, -1)
     except Exception as exc:
-        logger.warning("pool_add failed: %s", exc)
+        logger.warning("pool_add failed error_type=%s", type(exc).__name__)
 
 
 async def _fill_pool(llm: Any) -> None:
@@ -391,7 +423,7 @@ async def _fill_pool(llm: Any) -> None:
             _pool_add(items)
             logger.info("suggestion pool refilled: +%d items (pool=%d)", len(items), _pool_size())
     except Exception as exc:
-        logger.warning("_fill_pool failed: %s", exc)
+        logger.warning("_fill_pool failed error_type=%s", type(exc).__name__)
 
 
 async def _pool_maintenance_loop(llm: Any) -> None:
@@ -470,9 +502,9 @@ async def media_upload(
             session_id=session_id,
         )
     except UnsupportedMediaType as exc:
-        raise HTTPException(status_code=415, detail=f"Unsupported content type: {exc}")
+        raise HTTPException(status_code=415, detail="Unsupported media type") from exc
     except MediaTooLarge as exc:
-        raise HTTPException(status_code=413, detail=f"File too large: {exc} bytes")
+        raise HTTPException(status_code=413, detail="Attachment exceeds the 10 MB limit") from exc
 
     return Attachment(
         url=attachment.url,
@@ -490,11 +522,14 @@ async def query(
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
     x_dd_rum_session_id: str | None = Header(default=None, alias="X-DD-RUM-Session-ID"),
     x_conversation_id: str | None = Header(default=None, alias="X-Conversation-ID"),
-    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
     _user: dict = Depends(require_auth),
 ) -> QueryResponse:
     """Run the InfraAdvisor agent against a user query."""
     session_id = x_session_id or body.session_id or str(uuid.uuid4())
+    user_id = _user["sub"]
+    _require_owned_conversation(x_conversation_id, user_id)
+    attachments = _validate_attachments(body.attachments)
+    agent_session_key = tenant_session_key(user_id, x_conversation_id or session_id)
 
     if not _mcp_client or not _llm:
         raise HTTPException(
@@ -506,52 +541,71 @@ async def query(
     if body.model and body.model in _AVAILABLE_MODELS:
         deployment = body.model
     else:
-        deployment = get_session_model(session_id)
+        deployment = get_session_model(agent_session_key)
         if deployment not in _AVAILABLE_MODELS and _AVAILABLE_MODELS:
             deployment = _AVAILABLE_MODELS[0]
 
-    result = await run_agent(
-        query=body.query,
-        session_id=session_id,
-        mcp_client=_mcp_client,
-        deployment=deployment,
-        rum_session_id=x_dd_rum_session_id,
-        attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
-    )
+    try:
+        result = await run_agent(
+            query=body.query,
+            session_id=agent_session_key,
+            mcp_client=_mcp_client,
+            deployment=deployment,
+            rum_session_id=x_dd_rum_session_id,
+            attachments=attachments,
+        )
+    except Exception as exc:
+        trace_id = current_trace_id()
+        logger.error("Query failed error_type=%s", type(exc).__name__)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "The service encountered an unexpected error.",
+                "error_type": type(exc).__name__,
+                "trace_id": trace_id,
+            },
+        )
 
     append_exchange_with_attachments(
-        session_id,
+        agent_session_key,
         body.query,
         result["answer"],
-        attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
+        attachments=attachments,
     )
-    set_session_model(session_id, deployment)
+    set_session_model(agent_session_key, deployment)
 
     trace_id = current_trace_id()
     span_id = current_span_id()
 
     # Persist exchange to conversation DB (non-blocking, non-fatal)
-    if x_conversation_id and x_user_id:
+    if x_conversation_id:
         try:
             save_messages(
                 conv_id=x_conversation_id,
+                user_id=user_id,
                 user_query=body.query,
                 ai_answer=result["answer"],
-                sources=result["tools_called"],
+                # `sources` contains the normalized citations extracted from
+                # tool output. Tool names are operational metadata and must not
+                # be persisted in the citation column or returned to clients as
+                # if they were source references.
+                sources=result.get("sources", []),
                 trace_id=trace_id,
                 span_id=span_id,
-                attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
+                attachments=attachments,
+                artifacts=result.get("artifacts", []),
             )
         except Exception as exc:
-            logger.warning("save_messages failed (non-fatal): %s", exc)
+            logger.warning("save_messages failed error_type=%s", type(exc).__name__)
 
     return QueryResponse(
         answer=result["answer"],
-        sources=result["tools_called"],
+        sources=result.get("sources", []),
         trace_id=trace_id,
         span_id=span_id,
         session_id=session_id,
         model=deployment,
+        artifacts=result.get("artifacts", []),
     )
 
 
@@ -563,7 +617,6 @@ async def query_stream(
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
     x_dd_rum_session_id: str | None = Header(default=None, alias="X-DD-RUM-Session-ID"),
     x_conversation_id: str | None = Header(default=None, alias="X-Conversation-ID"),
-    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
     _user: dict = Depends(require_auth),
 ) -> StreamingResponse:
     """SSE streaming counterpart to /query. Same session/model resolution as
@@ -571,6 +624,10 @@ async def query_stream(
     constructed so it's a normal HTTP error, not a mid-stream one — same
     shape as agent-api-dotnet's /query/stream (Program.cs)."""
     session_id = x_session_id or body.session_id or str(uuid.uuid4())
+    user_id = _user["sub"]
+    _require_owned_conversation(x_conversation_id, user_id)
+    attachments = _validate_attachments(body.attachments)
+    agent_session_key = tenant_session_key(user_id, x_conversation_id or session_id)
 
     if not _mcp_client or not _llm:
         raise HTTPException(
@@ -581,13 +638,15 @@ async def query_stream(
     if body.model and body.model in _AVAILABLE_MODELS:
         deployment = body.model
     else:
-        deployment = get_session_model(session_id)
+        deployment = get_session_model(agent_session_key)
         if deployment not in _AVAILABLE_MODELS and _AVAILABLE_MODELS:
             deployment = _AVAILABLE_MODELS[0]
 
     async def event_stream():
         answer_parts: list[str] = []
         tools_called: list[str] = []
+        sources: list[str] = []
+        artifacts: list[dict] = []
 
         # Tool-call / pipeline-step reasoning, accumulated as step/
         # tool_call_start/tool_call_end events arrive so it can be persisted
@@ -607,11 +666,11 @@ async def query_stream(
 
         async for evt in run_agent_stream(
             query=body.query,
-            session_id=session_id,
+            session_id=agent_session_key,
             mcp_client=_mcp_client,
             deployment=deployment,
             rum_session_id=x_dd_rum_session_id,
-            attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
+            attachments=attachments,
         ):
             event_name = evt["event"]
 
@@ -659,11 +718,16 @@ async def query_stream(
                 })
             elif event_name == "done":
                 tools_called = evt["tools_called"]
+                sources = evt.get("sources", [])
                 evt = {
                     **evt,
                     "trace_id": current_trace_id(),
                     "span_id": current_span_id(),
                 }
+            elif event_name == "artifact":
+                artifact = evt.get("artifact")
+                if artifact:
+                    artifacts.append(artifact)
             elif event_name == "error":
                 evt = {**evt, "trace_id": current_trace_id()}
 
@@ -672,27 +736,33 @@ async def query_stream(
 
         full_answer = "".join(answer_parts)
         append_exchange_with_attachments(
-            session_id,
+            agent_session_key,
             body.query,
             full_answer,
-            attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
+            attachments=attachments,
         )
-        set_session_model(session_id, deployment)
+        set_session_model(agent_session_key, deployment)
 
-        if x_conversation_id and x_user_id:
+        if x_conversation_id:
             try:
                 save_messages(
                     conv_id=x_conversation_id,
+                    user_id=user_id,
                     user_query=body.query,
                     ai_answer=full_answer,
-                    sources=tools_called,
+                    # Citations and invoked tool names are separate contracts.
+                    # Persist the normalized source values emitted by the done
+                    # event so a reopened conversation cannot display an
+                    # internal tool identifier as evidence.
+                    sources=sources,
                     trace_id=current_trace_id(),
                     span_id=current_span_id(),
                     steps=steps,
-                    attachments=[a.model_dump() for a in body.attachments] if body.attachments else None,
+                    attachments=attachments,
+                    artifacts=artifacts,
                 )
             except Exception as exc:
-                logger.warning("save_messages failed (non-fatal): %s", exc)
+                logger.warning("save_messages failed error_type=%s", type(exc).__name__)
 
     return StreamingResponse(
         event_stream(),
@@ -733,7 +803,7 @@ async def suggestions(
         if parsed:
             return SuggestionsResponse(suggestions=parsed)
     except Exception as exc:
-        logger.warning("Suggestions LLM call failed: %s", exc)
+        logger.warning("Suggestions LLM call failed error_type=%s", type(exc).__name__)
 
     return SuggestionsResponse(suggestions=_FALLBACK_SUGGESTIONS)
 
@@ -764,7 +834,7 @@ async def initial_suggestions(
             _pool_add(parsed)
             return SuggestionsResponse(suggestions=parsed[:4])
     except Exception as exc:
-        logger.warning("initial_suggestions fallback LLM call failed: %s", exc)
+        logger.warning("initial_suggestions fallback LLM call failed error_type=%s", type(exc).__name__)
     return SuggestionsResponse(suggestions=_FALLBACK_SUGGESTIONS)
 
 
@@ -808,9 +878,11 @@ async def invoke_tool(
     try:
         result = await tool.ainvoke(params)
     except Exception as exc:
+        logger.warning("direct tool invocation failed error_type=%s", type(exc).__name__)
         return {
             "tool_name": tool_name,
-            "error": str(exc),
+            "error": "Tool invocation failed",
+            "error_type": type(exc).__name__,
             "duration_ms": round((time.monotonic() - start) * 1000, 2),
             "trace_id": current_trace_id(),
             "span_id": current_span_id(),
@@ -925,11 +997,24 @@ async def health() -> dict:
     }
 
 
+@app.get("/livez")
+async def livez() -> dict:
+    """Shallow process liveness; never contacts MCP, Redis, or the LLM."""
+    return {"status": "ok", "service": os.environ.get("DD_SERVICE", "infraadvisor-agent-api")}
+
+
+@app.get("/readyz")
+async def readyz() -> JSONResponse:
+    """Readiness from cached startup connectivity; never calls a provider."""
+    ready = _mcp_connected and _llm_connected
+    return JSONResponse(status_code=200 if ready else 503, content={"status": "ready" if ready else "not_ready", "service": os.environ.get("DD_SERVICE", "infraadvisor-agent-api"), "mcp_connected": _mcp_connected, "llm_connected": _llm_connected})
+
+
 @app.delete("/session/{session_id}")
 async def delete_session(
     session_id: str,
     _user: dict = Depends(require_auth),
 ) -> dict:
     """Clear Redis session memory for the given session ID."""
-    deleted = clear_session(session_id)
+    deleted = clear_session(tenant_session_key(_user["sub"], session_id))
     return {"session_id": session_id, "cleared": deleted}

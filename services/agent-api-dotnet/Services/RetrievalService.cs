@@ -41,7 +41,7 @@ public class RetrievalService
     {
         using var activity = ActivitySource.StartActivity("retrieve_best_practices", ActivityKind.Internal);
         activity?.SetTag("dd.llmobs.span.kind", "retrieval");
-        activity?.SetTag("input.value", query);
+        activity?.SetTag("query.characters", query.Length);
         activity?.SetTag("retrieval.top_k", topK);
 
         try
@@ -66,7 +66,6 @@ public class RetrievalService
                 .ToList();
 
             var output = ranked.Select(r => $"[{r.Title}] {r.Content}").ToList();
-            activity?.SetTag("output.value", string.Join("\n\n", output));
             activity?.SetTag("retrieval.documents.count", ranked.Count);
             activity?.SetTag("retrieval.top_score", ranked[0].Score);
 
@@ -74,7 +73,7 @@ public class RetrievalService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("Retrieval failed; agent will proceed without context: {Error}", ex.Message);
+            _logger.LogWarning("Retrieval failed; agent will proceed without context error_type={ErrorType}", ex.GetType().Name);
             activity?.SetTag("retrieval.degraded", "true");
             activity?.SetTag("error.type", ex.GetType().Name);
             return new List<string>();

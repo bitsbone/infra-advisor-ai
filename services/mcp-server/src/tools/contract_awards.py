@@ -256,7 +256,7 @@ async def get_contract_awards(input_data: ContractAwardsInput) -> list | dict:
     raw_results: list = body.get("results", [])
 
     if not raw_results:
-        logger.info("USASpending returned zero results for query=%r", input_data.query)
+        logger.info("USASpending returned zero awards")
         emit_tool_call("get_contract_awards", (time.monotonic() - tool_start) * 1000, "success", result_count=0)
         return []
 
@@ -285,5 +285,5 @@ async def get_contract_awards(input_data: ContractAwardsInput) -> list | dict:
     emit_tool_call(
         "get_contract_awards", (time.monotonic() - tool_start) * 1000, "success", result_count=len(awards)
     )
-    logger.info("USASpending returned %d awards for query=%r", len(awards), input_data.query)
+    logger.info("USASpending returned %d awards", len(awards))
     return awards

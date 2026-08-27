@@ -74,6 +74,16 @@ interface PendingUpload {
   file: File;                // kept for retry
 }
 
+function conversationTitle(query: string, attachments: Attachment[]): string {
+  if (query) return query.length > 60 ? `${query.slice(0, 57)}…` : query;
+  const hasImage = attachments.some((attachment) => attachment.kind === "image");
+  const hasAudio = attachments.some((attachment) => attachment.kind === "audio");
+  if (hasImage && hasAudio) return "Image and audio assessment";
+  if (hasImage) return "Image assessment";
+  if (hasAudio) return "Audio assessment";
+  return "New Conversation";
+}
+
 interface Message {
   role: "user" | "assistant";
   content: string;
@@ -858,7 +868,7 @@ export function Chat() {
       // Ensure a conversation exists before streaming the query
       let convId = conversationId;
       if (!convId && user?.id) {
-        const shortTitle = query.length > 60 ? query.slice(0, 57) + "…" : query;
+        const shortTitle = conversationTitle(query, attachments);
         const conv = await createConversation(user.id, shortTitle, selectedModel, selectedBackend);
         if (conv) {
           convId = conv.id;

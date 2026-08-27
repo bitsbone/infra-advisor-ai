@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ with DAG(
 
     Pulls state-level electricity generation capacity data from the EIA Open Data
     API for southeastern states (FL, GA, AL, MS, LA, TX, AR, TN, SC, NC, VA),
-    stores raw records as Parquet in Azure Blob Storage (`infra-advisor-raw`),
+    stores raw records as Parquet in Azure Blob Storage (`raw-data`),
     and indexes them into Azure AI Search under domain='energy'.
 
     **Schedule:** Weekly — Sunday 04:00 UTC
@@ -45,6 +45,11 @@ with DAG(
     def fetch_eia_data(**context):
         """Pull EIA electric power operational data for southeastern states."""
         import requests
+        from _blob_manifest import (
+            build_run_blob_path,
+            get_container_client,
+            write_records_manifest,
+        )
 
         eia_api_key = os.environ["EIA_API_KEY"]
         all_records = []
@@ -81,7 +86,18 @@ with DAG(
                     break
 
         log.info("Total EIA records fetched: %d across %d states", len(all_records), len(SOUTHEASTERN_STATES))
-        context["ti"].xcom_push(key="eia_records", value=all_records)
+        run_id = str(context.get("run_id") or context.get("ds") or "manual")
+        blob_path = build_run_blob_path("eia/manifests", "southeast", run_id, ".jsonl")
+        manifest = write_records_manifest(
+            get_container_client(RAW_CONTAINER),
+            container_name=RAW_CONTAINER,
+            blob_path=blob_path,
+            records=all_records,
+            source="eia.electric_power_operational_data",
+            run_id=run_id,
+            dag_id="eia_refresh",
+        )
+        context["ti"].xcom_push(key="records_manifest", value=manifest)
         return len(all_records)
 
     # -----------------------------------------------------------------------
@@ -90,33 +106,46 @@ with DAG(
     def store_raw_parquet(**context):
         """Persist raw EIA records as Parquet in Azure Blob Storage."""
         import pandas as pd
-        from azure.storage.blob import BlobServiceClient
-        from _dd_blob import dd_upload_blob
+        from _blob_manifest import (
+            build_run_blob_path,
+            get_container_client,
+            read_records_manifest,
+            write_blob_manifest,
+        )
 
-        records = context["ti"].xcom_pull(key="eia_records", task_ids="fetch_eia_data")
+        manifest = context["ti"].xcom_pull(
+            key="records_manifest", task_ids="fetch_eia_data"
+        )
+        container = get_container_client(RAW_CONTAINER)
+        records = read_records_manifest(
+            container, manifest, expected_source="eia.electric_power_operational_data"
+        )
         if not records:
             raise ValueError("No EIA records received from fetch step.")
 
         df = pd.DataFrame(records)
-        run_date = context["ds"]
-        blob_path = f"eia/eia_southeast_{run_date.replace('-', '')}.parquet"
+        blob_path = build_run_blob_path(
+            "eia", "eia_southeast", manifest["run_id"], ".parquet"
+        )
 
         parquet_buf = BytesIO()
         df.to_parquet(parquet_buf, index=False)
         parquet_buf.seek(0)
 
-        conn_str = os.environ["AZURE_STORAGE_CONNECTION_STRING"]
-        blob_client = BlobServiceClient.from_connection_string(conn_str)
-        container = blob_client.get_container_client(RAW_CONTAINER)
-
-        try:
-            container.create_container()
-        except Exception:
-            pass
-
-        dd_upload_blob(container, blob_path, parquet_buf, dag_id="eia_refresh")
+        parquet_manifest = write_blob_manifest(
+            container,
+            container_name=RAW_CONTAINER,
+            blob_path=blob_path,
+            payload=parquet_buf.getvalue(),
+            source="eia.electric_power_operational_data.parquet",
+            run_id=manifest["run_id"],
+            record_count=len(records),
+            content_type="application/vnd.apache.parquet",
+            content_encoding=None,
+            dag_id="eia_refresh",
+        )
         log.info("Stored raw EIA Parquet at: %s/%s", RAW_CONTAINER, blob_path)
-        context["ti"].xcom_push(key="parquet_blob_path", value=blob_path)
+        context["ti"].xcom_push(key="parquet_manifest", value=parquet_manifest)
 
     # -----------------------------------------------------------------------
     # Task 3 — index_to_search
@@ -127,8 +156,16 @@ with DAG(
         from azure.core.credentials import AzureKeyCredential
         from azure.search.documents import SearchClient
         from openai import AzureOpenAI
+        from _blob_manifest import get_container_client, read_records_manifest
 
-        records = context["ti"].xcom_pull(key="eia_records", task_ids="fetch_eia_data")
+        manifest = context["ti"].xcom_pull(
+            key="records_manifest", task_ids="fetch_eia_data"
+        )
+        records = read_records_manifest(
+            get_container_client(RAW_CONTAINER),
+            manifest,
+            expected_source="eia.electric_power_operational_data",
+        )
         if not records:
             raise ValueError("No EIA records to index.")
 
@@ -137,6 +174,9 @@ with DAG(
         index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
         openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         openai_api_key = os.environ["AZURE_OPENAI_API_KEY"]
+        embedding_deployment = os.environ.get(
+            "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"
+        )
 
         oai_client = AzureOpenAI(
             azure_endpoint=openai_endpoint,
@@ -189,7 +229,7 @@ with DAG(
                 doc_id = f"eia_{state}_{period}_{idx}_{chunk_idx}".replace(" ", "_")
 
                 embedding_resp = oai_client.embeddings.create(
-                    model="text-embedding-ada-002",
+                    model=embedding_deployment,
                     input=chunk_text,
                 )
                 vector = embedding_resp.data[0].embedding

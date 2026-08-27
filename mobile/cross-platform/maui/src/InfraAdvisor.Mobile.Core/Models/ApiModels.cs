@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace InfraAdvisor.Mobile.Models;
@@ -50,6 +51,45 @@ public sealed record MediaUploadResponse(
     [property: JsonPropertyName("mime_type")] string MimeType,
     [property: JsonPropertyName("size_bytes")] long SizeBytes);
 
+/// <summary>
+/// Versioned, presentation-safe artifact emitted by the procurement MCP tool.
+/// Unknown future SSE events remain harmless because the stream parser uses a
+/// tolerant event record rather than polymorphic deserialization.
+/// </summary>
+public sealed record ChatArtifact(
+    string? Kind,
+    [property: JsonPropertyName("schema_version")] string? SchemaVersion,
+    string? Status,
+    [property: JsonPropertyName("generated_at")] string? GeneratedAt,
+    JsonElement Items,
+    JsonElement Meta,
+    [property: JsonPropertyName("tool_name")] string? ToolName = null,
+    [property: JsonPropertyName("tool_call_id")] string? ToolCallId = null);
+
+public sealed record ProcurementOpportunity(
+    string Id,
+    string Provider,
+    [property: JsonPropertyName("provider_id")] string ProviderId,
+    [property: JsonPropertyName("opportunity_type")] string OpportunityType,
+    string Title,
+    ProcurementAgency Agency,
+    string Summary,
+    string Status,
+    [property: JsonPropertyName("posted_at")] string? PostedAt,
+    [property: JsonPropertyName("deadline_at")] string? DeadlineAt,
+    ProcurementLocation Location,
+    ProcurementClassifications Classifications,
+    ProcurementFunding Funding,
+    ProcurementSource Source,
+    [property: JsonPropertyName("data_quality")] ProcurementDataQuality DataQuality);
+
+public sealed record ProcurementAgency(string Name, string? Code);
+public sealed record ProcurementLocation([property: JsonPropertyName("state_code")] string? StateCode, [property: JsonPropertyName("state_name")] string? StateName, string? City);
+public sealed record ProcurementClassifications(IReadOnlyList<string> Naics, [property: JsonPropertyName("assistance_listing")] IReadOnlyList<string> AssistanceListing, [property: JsonPropertyName("set_aside")] string? SetAside);
+public sealed record ProcurementFunding(string Currency, decimal? Minimum, decimal? Maximum, decimal? Total, [property: JsonPropertyName("expected_awards")] int? ExpectedAwards);
+public sealed record ProcurementSource(string? Url, [property: JsonPropertyName("retrieved_at")] string? RetrievedAt);
+public sealed record ProcurementDataQuality([property: JsonPropertyName("missing_fields")] IReadOnlyList<string> MissingFields);
+
 public sealed record QueryStreamRequest(
     string Query,
     [property: JsonPropertyName("session_id")] string SessionId,
@@ -84,7 +124,8 @@ public sealed record ConversationMessage(
     [property: JsonPropertyName("span_id")] string? SpanId,
     [property: JsonPropertyName("created_at")] string? CreatedAt,
     IReadOnlyList<StoredStep>? Steps,
-    IReadOnlyList<MediaReference>? Attachments);
+    IReadOnlyList<MediaReference>? Attachments,
+    IReadOnlyList<ChatArtifact>? Artifacts = null);
 
 public sealed record StoredStep(
     string Kind,
@@ -130,4 +171,5 @@ public sealed record StreamEvent(
     [property: JsonPropertyName("query_domain")] string? QueryDomain = null,
     [property: JsonPropertyName("message_id")] string? MessageId = null,
     string? Message = null,
-    string? Category = null);
+    string? Category = null,
+    ChatArtifact? Artifact = null);

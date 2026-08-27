@@ -22,7 +22,9 @@ public partial class ErrorLabViewModel(InfraAdvisorApiClient api, IObservability
     private void SendSampleLogs()
     {
         observability.Info("Error Lab informational sample", new Dictionary<string, object> { ["demo.type"] = "log", ["demo.severity"] = "info" });
-        ResultMessage = "Sample application logs sent. Open Datadog Logs and filter service:infra-advisor-mobile-maui.";
+        observability.Warning("Error Lab warning sample", new Dictionary<string, object> { ["demo.type"] = "log", ["demo.severity"] = "warning" });
+        observability.ErrorLog("Error Lab error sample", new Dictionary<string, object> { ["demo.type"] = "log", ["demo.severity"] = "error" });
+        ResultMessage = "Info, warning, and error log samples sent. Open Datadog Logs and filter service:infra-advisor-mobile-maui.";
     }
 
     [RelayCommand]

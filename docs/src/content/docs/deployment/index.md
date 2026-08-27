@@ -28,9 +28,8 @@ Phase 2: Kubernetes Workloads
     └── Airflow (Helm install)
 
 Phase 3: Data Initialization
-  make sync-dags && make run-dags
-    ├── kubectl cp DAG files to PVC
-    └── Trigger all 9 Airflow DAGs
+  make run-dags
+    └── Trigger the approved Airflow canary DAGs from the immutable image
 ```
 
 ## Makefile reference
@@ -50,6 +49,7 @@ Phase 3: Data Initialization
 |--------|-------------|
 | `make create-secrets` | Create all K8s secrets at once |
 | `make create-ghcr-secret` | GHCR image pull secret |
+| `make create-airflow-ghcr-secret` | GHCR image pull secret in the `airflow` namespace |
 | `make create-mcp-server-secret` | Azure Search, OpenAI, EIA, SAM.gov |
 | `make create-agent-api-secret` | Azure OpenAI endpoint + key (+ optional DATABASE_URL) |
 | `make create-agent-api-dotnet-secret` | Azure OpenAI endpoint + key (+ optional DATABASE_URL) |
@@ -63,10 +63,11 @@ Phase 3: Data Initialization
 
 | Target | Description |
 |--------|-------------|
-| `make install-airflow` | Fresh Helm install (removes existing release first) |
-| `make upgrade-airflow` | Helm upgrade with `k8s/airflow/values.yaml` |
-| `make sync-dags` | `kubectl cp` DAG files to scheduler PVC |
-| `make run-dags` | Trigger all 9 Airflow DAGs |
+| `make install-airflow` | Initial non-destructive Helm install; refuses to replace an existing release |
+| `make upgrade-airflow` | Preflight, image-contract verification, and atomic Helm upgrade |
+| `make recover-airflow-destructive AIRFLOW_DESTRUCTIVE_RECOVERY=delete-airflow-release-and-namespace` | Explicit data-loss recovery after metadata/log backup or deliberate disposal |
+| `make sync-dags` | Explain immutable image-based DAG delivery; retained as a compatibility target |
+| `make run-dags` | Trigger the approved Airflow canary DAGs |
 
 ### Testing & verification
 
@@ -86,13 +87,14 @@ Two workflows automate build and deployment on every merge to `main`:
 
 **`ci.yml`** — Runs on every PR and push:
 - pytest matrix for mcp-server and agent-api
+- Locked ingestion tests, a real Airflow DagBag import, and the built container's runtime contract
 - TypeScript type check (`tsc --noEmit`)
 
 **`build-push.yml`** — Runs on merge to `main`:
 - Detects which services changed (dorny/paths-filter)
 - Builds and pushes Docker images to GHCR
-- For changed services: `kubectl rollout restart deployment/<service>` on AKS
-- For Airflow changes: `make upgrade-airflow` + `make sync-dags`
+- For changed services: applies the manifest and pins each changed deployment to the immutable short-SHA image on AKS
+- For Airflow changes: verifies the exact SHA-tagged image before publishing it, then runs preflight + an atomic Helm upgrade using that SHA
 
 ## Sections in this chapter
 

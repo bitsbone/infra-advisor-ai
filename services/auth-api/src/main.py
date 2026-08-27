@@ -101,7 +101,7 @@ def _bootstrap_admin() -> None:
         is_admin=True,
         is_service_account=False,
     )
-    logger.info("Bootstrap admin user created: %s", email)
+    logger.info("Bootstrap admin user created")
 
 
 # ─── Request / response models ────────────────────────────────────────────────
@@ -172,17 +172,12 @@ APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:5173")
 
 
 def _send_reset_email(to_email: str, token: str) -> None:
-    """Send a password reset email via SMTP, or log the link if SMTP is not configured."""
+    """Send a password reset email without exposing identity or token material to logs."""
     reset_url = f"{APP_BASE_URL}?reset_token={token}"
 
     smtp_host = os.environ.get("SMTP_HOST")
     if not smtp_host:
-        # No SMTP configured — log the link so devs can use it directly
-        logger.info(
-            "PASSWORD RESET LINK (no SMTP configured) — %s — %s",
-            to_email,
-            reset_url,
-        )
+        logger.warning("Password reset email was not sent because SMTP is not configured")
         return
 
     smtp_port = int(os.environ.get("SMTP_PORT", "587"))
@@ -213,17 +208,31 @@ def _send_reset_email(to_email: str, token: str) -> None:
             if smtp_user and smtp_password:
                 server.login(smtp_user, smtp_password)
             server.sendmail(smtp_from, [to_email], msg.as_string())
-        logger.info("Password reset email sent to %s", to_email)
+        logger.info("Password reset email sent")
     except Exception as exc:
-        logger.warning("Failed to send reset email to %s: %s", to_email, exc)
-        logger.info("PASSWORD RESET LINK (SMTP failed) — %s — %s", to_email, reset_url)
+        # SMTP exception messages can echo a recipient, server response, or
+        # credentials. Preserve an operational error category only.
+        logger.warning("Password reset email delivery failed error_type=%s", type(exc).__name__)
 
 
 # ─── Public endpoints ─────────────────────────────────────────────────────────
 
+@app.get("/livez", include_in_schema=False)
+def liveness():
+    """Return process health without calling a database or external service."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz", include_in_schema=False)
+def readiness():
+    """Return readiness after application startup has completed."""
+    return {"status": "ok"}
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    """Backward-compatible public health endpoint."""
+    return readiness()
 
 
 @app.post("/register", response_model=TokenResponse, status_code=201)

@@ -20,7 +20,7 @@ All 11 tools are implemented identically to the Python version:
 | `get_ercot_energy_storage` | ERCOT real-time energy storage capacity |
 | `search_txdot_open_data` | TxDOT open data portal search |
 | `search_project_knowledge` | Azure AI Search vector + keyword search |
-| `get_procurement_opportunities` | SAM.gov contract opportunities |
+| `get_procurement_opportunities` | Normalized SAM.gov contracts and Grants.gov Search2 assistance opportunities |
 | `get_contract_awards` | USASpending.gov contract awards |
 | `search_web_procurement` | Azure OpenAI `web_search_preview` for state/local procurement context |
 | `draft_document` | Generate infrastructure documents from Scriban templates |
@@ -44,7 +44,7 @@ Templates live in `services/mcp-server-dotnet/Templates/` and are converted from
 
 | Span | Instrumented by |
 |------|----------------|
-| HTTP requests (`POST /mcp`, `GET /health`) | `AddAspNetCoreInstrumentation` (auto) |
+| HTTP requests (`POST /mcp`, `GET /health`) | `AddAspNetCoreInstrumentation` (auto); Kubernetes `/livez` and `/readyz` are filtered before export |
 | Outbound HTTP (government APIs, Azure OpenAI Responses) | `AddHttpClientInstrumentation` (auto) |
 | Azure AI Search calls | `AddHttpClientInstrumentation` (auto, via REST) |
 
@@ -75,7 +75,19 @@ dotnet run --urls http://localhost:8004
 Health check:
 ```bash
 curl http://localhost:8004/health
+curl http://localhost:8004/livez
+curl http://localhost:8004/readyz
 ```
+
+`get_procurement_opportunities` returns the same bounded `procurement_opportunities` artifact version `1.0` as the Python MCP service, including inclusive `min_value_usd` and `max_value_usd` filtering, safe provider counts, and partial-failure metadata. Both producers rebuild records from the v1 allowlist, validate dates and numeric bounds, sanitize source URLs, and discard unknown nested provider fields before serialization. The agent transports and persists that envelope without exposing raw provider bodies or query-string credentials. See [Structured Chat Artifacts](/infra-advisor-ai/llm-engineering/chat-artifacts/).
+
+## Tests
+
+```bash
+dotnet test services/mcp-server-dotnet.Tests/InfraAdvisor.McpServer.Tests.csproj -c Release
+```
+
+The provider-contract tests supply invented and adversarial SAM.gov and Grants.gov responses through a local HTTP stub. They verify state normalization, funding-range filtering, the 20-result boundary, exact nested property sets, provider/type identity, classifications, sanitized source links, and removal of API keys, contacts, and unknown provider fields. Telemetry tests separately verify that contract-award and web-procurement logs omit query filters and provider response bodies. CI runs this project through the `test-dotnet` matrix job in `.github/workflows/ci.yml`.
 
 ## Required secrets
 

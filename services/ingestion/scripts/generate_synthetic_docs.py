@@ -211,7 +211,7 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "coastal Texas municipality in Region N (South Texas) facing freshwater supply shortages. "
             "The study evaluated seawater reverse osmosis (SWRO) at two intake configurations, "
             "brackish groundwater RO as an alternative, and a hybrid surface water/RO option. "
-            "Reference TWDB 2026 State Water Plan (Region N water supply deficits), AWWA "
+            "Reference TWDB 2027 State Water Plan (Region N water supply deficits), AWWA "
             "desalination best practices, Texas water rights law Chapter 11 Water Code, and EPA "
             "concentrate management guidelines. Include capital cost estimates, energy cost modeling, "
             "TCEQ permitting timeline, and recommendation for a pilot test program. Study cost: $890K."
@@ -226,7 +226,7 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "Write an 800–1000 word close-out report for a potable water reuse project expanding "
             "the Dos Rios Water Recycling Center effluent to Edwards Aquifer recharge. Reference "
             "TCEQ Chapter 210 Water Reuse regulations, EPA Guidelines for Water Reuse, AWWA water "
-            "reuse standards, and TWDB 2026 Water Plan Region J (Plateau) strategies. Include "
+            "reuse standards, and TWDB 2027 Water Plan Region J (Plateau) strategies. Include "
             "advanced treatment train design (MF/RO/UV-AOP), aquifer recharge permitting outcomes, "
             "groundwater monitoring well results, public engagement outcomes, and O&M cost per "
             "acre-foot compared to fresh surface water. Contract: $62M. CWSRF financing."
@@ -274,7 +274,7 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "in the Rio Grande Valley (Hidalgo and Cameron Counties, TWDB Region M). Scope included "
             "14 miles of drainage channel improvements, 3 detention ponds, pump station upgrades, "
             "and FEMA floodplain remapping. Reference FEMA NFIP requirements, ASCE 7 flood load "
-            "criteria, TWDB 2026 water plan flood mitigation strategies for Region M, and EPA "
+            "criteria, TWDB 2027 water plan flood mitigation strategies for Region M, and EPA "
             "Clean Water Act Section 404 wetland permitting. Include hydraulic modeling results, "
             "post-construction flood level reduction estimates, FEMA LOMR submittal outcomes, and "
             "FEMA BRIC grant compliance. Contract: $28.6M."
@@ -432,12 +432,12 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
         "document_type": "proposal_template",
         "prompt": (
             "Write an 800–1100 word proposal template for a desalination feasibility study for a "
-            "coastal Texas water utility facing supply shortfalls identified in the TWDB 2026 State "
+            "coastal Texas water utility facing supply shortfalls identified in the TWDB 2027 State "
             "Water Plan. Include scope sections for: source water characterization (seawater and "
             "brackish groundwater), technology screening (SWRO vs BWRO vs electrodialysis), "
             "concentrate management alternatives, capital and O&M cost modeling, energy cost "
             "analysis, water rights and TCEQ permitting pathway, and TWDB SWIFT financing strategy. "
-            "Reference AWWA desalination best practices, TWDB 2026 Plan Region L/N coastal "
+            "Reference AWWA desalination best practices, TWDB 2027 Plan Region L/N coastal "
             "scenarios, EPA concentrate disposal guidance, and Texas Water Code. Include team "
             "qualifications template, 18-month schedule, and fee range $350K–$900K."
         ),
@@ -453,7 +453,7 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "pilot injection and recovery testing, native groundwater and recharged water quality "
             "compatibility analysis, full-scale design, and Groundwater Conservation District "
             "coordination. Reference TWDB ASR guidance manual, Texas Water Code Chapter 27, TCEQ "
-            "UIC rules (30 TAC Chapter 331), AWWA ASR guidelines, and TWDB 2026 State Water Plan "
+            "UIC rules (30 TAC Chapter 331), AWWA ASR guidelines, and TWDB 2027 State Water Plan "
             "ASR strategies for drought-prone regions. Include qualifications, project phasing, "
             "regulatory schedule, and fee breakdown."
         ),
@@ -514,7 +514,7 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "analysis, infrastructure condition assessment, hydraulic model development (EPANET or "
             "WaterGEMS), CIP prioritization, rate study, and TWDB SWIFT financing package preparation. "
             "Reference AWWA M50 Water Resources Planning, TCEQ Chapter 290 capacity development "
-            "criteria, TWDB 2026 State Water Plan regional context, and EPA drinking water "
+            "criteria, TWDB 2027 State Water Plan regional context, and EPA drinking water "
             "infrastructure needs survey methodology. Fee range: $280K–$650K."
         ),
     },
@@ -639,7 +639,7 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "reverse osmosis (RO) water treatment systems in Texas. Cover brackish groundwater RO, "
             "surface water MF/UF pretreatment, and RO concentrate management (deep well injection, "
             "evaporation ponds, concentrate discharge). Reference AWWA desalination cost tools, "
-            "EPA WaterSense data, TWDB 2026 State Water Plan cost assumptions for desalination "
+            "EPA WaterSense data, TWDB 2027 State Water Plan cost assumptions for desalination "
             "strategies, and WRRF membrane market data. Provide capital cost per installed MGD "
             "for MF, BWRO, and SWRO; energy cost per acre-foot; and concentrate disposal cost "
             "ranges. Include Texas-specific regulatory cost factors (TCEQ Chapter 290, UIC Class I)."
@@ -936,9 +936,9 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "supplies in Texas. Cover: TWDB water availability model data interpretation, "
             "historical drought of record (1950s drought vs. 2011 drought), reservoir yield "
             "analysis under drought conditions, aquifer sustainable yield under multi-year "
-            "drought, supply-demand gap analysis methodology per TWDB 2026 State Water Plan "
+            "drought, supply-demand gap analysis methodology per TWDB 2027 State Water Plan "
             "approach, and trigger level setting for drought contingency plans. Reference "
-            "TCEQ 30 TAC Chapter 288 Drought Contingency Plan requirements, TWDB 2026 State "
+            "TCEQ 30 TAC Chapter 288 Drought Contingency Plan requirements, TWDB 2027 State "
             "Water Plan shortage projections by region, and TexasWaterTracker data sources. "
             "Include a 5-level drought response framework with action triggers."
         ),
@@ -988,7 +988,7 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "reservoir yields and groundwater, extreme precipitation impact on treatment plant "
             "flooding and combined sewer overflows, temperature increase impact on water "
             "demand and treatment chemistry, saltwater intrusion into coastal aquifers, and "
-            "supply portfolio diversification strategies. Reference TWDB 2026 State Water Plan "
+            "supply portfolio diversification strategies. Reference TWDB 2027 State Water Plan "
             "climate scenario analysis, EPA Climate Resilience Evaluation and Awareness Tool "
             "(CREAT), AWWA climate change and water sector guidance, and TCEQ Climate "
             "Adaptation Plan. Include a water utility climate vulnerability scorecard."
@@ -1032,11 +1032,11 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
     },
     {
         "slug": "briefing_template_water_plan_strategy",
-        "title": "Client Briefing Template: TWDB 2026 State Water Plan — Regional Strategy Summary",
+        "title": "Client Briefing Template: TWDB 2027 State Water Plan — Regional Strategy Summary",
         "domain": "water",
         "document_type": "client_briefing_template",
         "prompt": (
-            "Write a 700–900 word client briefing template for presenting TWDB 2026 State "
+            "Write a 700–900 word client briefing template for presenting TWDB 2027 State "
             "Water Plan findings to a municipal water utility board or county commissioners. "
             "Cover: the $174B statewide funding gap context, the region-specific supply deficit "
             "projections through 2080, recommended strategies relevant to the client's region "
@@ -1125,7 +1125,7 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "Wilcox Aquifer targets), TCEQ UIC Class V permitting pathway, Groundwater "
             "Conservation District coordination requirements, recovery efficiency benchmarks "
             "from Texas pilot programs, water quality degradation risks and mitigation, and "
-            "the San Antonio Water System ASR program as a case study. Reference TWDB 2026 "
+            "the San Antonio Water System ASR program as a case study. Reference TWDB 2027 "
             "State Water Plan ASR strategies by planning region, TWDB ASR guidance manual, "
             "and AWWA ASR market sizing. Discuss drought cycle optimization for ASR systems "
             "in a Texas climate context."
@@ -1140,7 +1140,7 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "Write a 700–950 word market intelligence document on brackish groundwater "
             "treatment opportunities in Texas. Cover: brackish aquifer extent (Carrizo-Wilcox, "
             "Gulf Coast Aquifer System, Ogallala saline zone), TDS concentration ranges and "
-            "treatment technology selection (NF vs. BWRO vs. EDR), TWDB 2026 State Water Plan "
+            "treatment technology selection (NF vs. BWRO vs. EDR), TWDB 2027 State Water Plan "
             "brackish strategies by region (especially Regions A, B, L, M), TCEQ permitting "
             "for new brackish wells, market size estimate (MGD capacity in development/planned), "
             "and key project examples. Reference TWDB Brackish Groundwater Assessment, AWWA "
@@ -1229,7 +1229,7 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "mechanisms (sales, leases, temporary permits), Gulf Coast Aquifer groundwater "
             "markets, and inter-basin transfer requirements. Reference Texas Water Code, TCEQ "
             "Water Rights Permitting procedures, Texas Supreme Court Edwards Aquifer Authority "
-            "v. Day ruling, and TWDB 2026 State Water Plan water rights context."
+            "v. Day ruling, and TWDB 2027 State Water Plan water rights context."
         ),
     },
     {
@@ -1283,9 +1283,9 @@ DOCUMENT_SPECS: list[dict[str, Any]] = [
             "rate for political subdivisions, up to 30-year amortization, subordinate lien option), "
             "application cycle (quarterly intake windows), required documentation (engineering "
             "feasibility report, financial assessment, asset management plan), scoring criteria "
-            "alignment with TWDB 2026 State Water Plan strategies, and how to position a project "
+            "alignment with TWDB 2027 State Water Plan strategies, and how to position a project "
             "for maximum scoring. Reference 31 TAC Chapter 363 (SWIFT rules), TWDB Financial "
-            "Assistance Program Guide, and TWDB 2026 State Water Plan priority project types."
+            "Assistance Program Guide, and TWDB 2027 State Water Plan priority project types."
         ),
     },
     {

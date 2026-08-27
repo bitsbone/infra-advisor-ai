@@ -195,3 +195,48 @@ def test_media_upload_requires_auth():
                 files={"file": ("photo.jpg", b"fake-image-bytes", "image/jpeg")},
             )
         assert resp.status_code == 401
+
+
+def test_blob_name_and_upload_span_exclude_filename_session_and_sas_query():
+    """Regression: provider credentials and user identifiers stay out of storage IDs/telemetry."""
+    from media import upload_media
+
+    sentinel_filename = "PRIVATE-FILENAME-DO-NOT-TRACE.jpg"
+    sentinel_session = "PRIVATE-SESSION-DO-NOT-TRACE"
+    sentinel_sas = "sig=PRIVATE-SAS-DO-NOT-TRACE"
+
+    service_client = MagicMock()
+    service_client.account_name = "testaccount"
+    service_client.credential.account_key = "test-key"
+    blob_client = MagicMock()
+    blob_client.url = "https://testaccount.blob.core.windows.net/chat-media/generated"
+    container_client = MagicMock()
+    container_client.upload_blob.return_value = blob_client
+    service_client.get_container_client.return_value = container_client
+
+    span = MagicMock()
+    span_context = MagicMock()
+    span_context.__enter__.return_value = span
+    span_context.__exit__.return_value = False
+
+    with (
+        patch("media.get_blob_service_client", return_value=service_client),
+        patch("media.generate_blob_sas", return_value=sentinel_sas),
+        patch("media.tracer.trace", return_value=span_context),
+    ):
+        attachment = upload_media(
+            b"safe-test-bytes",
+            sentinel_filename,
+            "image/jpeg;private=PRIVATE-CONTENT-TYPE-PARAM",
+            sentinel_session,
+        )
+
+    blob_name = container_client.upload_blob.call_args.kwargs["name"]
+    assert blob_name.startswith("image/")
+    assert sentinel_filename not in blob_name
+    assert sentinel_session not in blob_name
+    assert "PRIVATE-CONTENT-TYPE-PARAM" not in repr(span.set_tag.call_args_list)
+    assert sentinel_filename not in repr(span.set_tag.call_args_list)
+    assert sentinel_session not in repr(span.set_tag.call_args_list)
+    assert sentinel_sas not in repr(span.set_tag.call_args_list)
+    assert attachment.url.endswith(sentinel_sas)  # still returned to the provider workflow

@@ -45,13 +45,6 @@ public class MediaService
             ? hours
             : 168;
 
-    private static string SafeFilename(string? filename)
-    {
-        var name = string.IsNullOrWhiteSpace(filename) ? "attachment" : Path.GetFileName(filename);
-        name = name.Replace("/", "_").Replace("\\", "_");
-        return string.IsNullOrWhiteSpace(name) ? "attachment" : name;
-    }
-
     public async Task<AttachmentDto> UploadAsync(
         Stream fileStream,
         long contentLength,
@@ -69,13 +62,15 @@ public class MediaService
             throw new MediaTooLargeException(contentLength);
 
         var containerName = MediaContainerName();
-        var blobName = $"{sessionId}/{Guid.NewGuid()}-{SafeFilename(filename)}";
+        // Never persist user-controlled filenames or chat session IDs in an
+        // object key. Content-Type metadata is sufficient to serve the blob.
+        var blobName = CreateBlobName(kind, filename, sessionId);
 
         using var activity = ActivitySource.StartActivity("azure.blob.upload");
         activity?.SetTag("blob.container", containerName);
-        activity?.SetTag("blob.name", blobName);
+        activity?.SetTag("media.kind", kind);
         activity?.SetTag("blob.size_bytes", contentLength);
-        activity?.SetTag("blob.content_type", contentType);
+        activity?.SetTag("blob.content_type", bareContentType);
 
         var connectionString = Environment.GetEnvironmentVariable("AZURE_STORAGE_CONNECTION_STRING")
             ?? throw new InvalidOperationException(
@@ -110,6 +105,15 @@ public class MediaService
             Kind: kind,
             MimeType: bareContentType,
             SizeBytes: contentLength);
+    }
+
+    internal static string CreateBlobName(string kind, string filename, string sessionId)
+    {
+        // Keep the ignored values explicit at this privacy boundary so future
+        // refactors cannot accidentally reintroduce either into object names.
+        _ = filename;
+        _ = sessionId;
+        return $"{kind}/{Guid.NewGuid():N}";
     }
 }
 

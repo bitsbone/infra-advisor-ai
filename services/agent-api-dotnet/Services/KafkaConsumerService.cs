@@ -127,13 +127,15 @@ public class KafkaConsumerService : BackgroundService
 
                     result = await agentService.RunAgentAsync(
                         query: evt.Query,
-                        sessionId: evt.SessionId,
+                        // Synthetic load has no JWT subject; reserve a system
+                        // tenant so it cannot collide with authenticated state.
+                        sessionId: TenantSessionKey.Create("system:kafka", evt.SessionId),
                         deployment: "",
                         ct: stoppingToken);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning("Agent run failed for query_id={QueryId}: {Error}", evt.QueryId, ex.Message);
+                    _logger.LogWarning("Agent run failed for query_id={QueryId} error_type={ErrorType}", evt.QueryId, ex.GetType().Name);
                     continue;
                 }
 

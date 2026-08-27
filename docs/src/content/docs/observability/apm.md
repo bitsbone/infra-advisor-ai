@@ -5,7 +5,7 @@ description: Distributed tracing span coverage, log-trace correlation, DBM, and 
 
 All Python services and the Airflow scheduler use `ddtrace` for automatic instrumentation. `import ddtrace.auto` is the **first import** in every Python service entrypoint.
 
-The .NET services (`agent-api-dotnet`, `mcp-server-dotnet`) use **OpenTelemetry** with OTLP HTTP export to the Datadog Agent at port 4318. This is the standard path for non-Python Datadog customers — no ddtrace involved.
+The .NET services (`agent-api-dotnet`, `mcp-server-dotnet`) use **OpenTelemetry** with OTLP HTTP export to the Datadog Agent at port 4318. The Agent API also loads the Datadog .NET profiler for App and API Protection, but `DD_APM_TRACING_ENABLED=false` prevents that profiler from producing a parallel application trace tree. See [App & API Protection](/infra-advisor-ai/observability/app-api-protection/) for the tracer-versus-gateway decision and the exact security boundary.
 
 ## Span coverage — Python services
 
@@ -131,6 +131,20 @@ When the Agent API returns a 500, the response body includes the ddtrace trace I
 ```
 
 The UI renders a **"View trace →"** link that opens `https://us3.datadoghq.com/apm/trace/{trace_id}`.
+
+## Health probes without trace noise
+
+Application workloads expose three compatible health routes:
+
+- `/livez` is a shallow process check and never calls a database, model, MCP server, or third-party provider.
+- `/readyz` uses startup state or cached connectivity to decide whether the pod should receive traffic; it does not invoke paid or external APIs.
+- `/health` remains available for human diagnostics and older integrations.
+
+Kubernetes uses a startup probe every five seconds for up to two minutes, readiness every 30 seconds, and liveness every 60 seconds. This keeps rollout and recovery behavior while substantially reducing the steady stream of probe requests that previously ran every 15 and 30 seconds.
+
+Python services keep 100% sampling for real demo traffic but apply first-match `DD_TRACE_SAMPLING_RULES` with a zero sample rate for the verified `GET /livez` and `GET /readyz` resources. The .NET services apply the equivalent exclusion in `AddAspNetCoreInstrumentation` before export. This source-level control reduces ingested spans; an APM retention filter alone would only change indexing. Kubernetes health metrics and pod conditions remain the authoritative probe signals.
+
+After deployment, compare ingested span volume by service/resource and confirm that real login, query, model, tool, media, conversation, and error traces remain complete. If a tracer upgrade changes route resource names, inspect a canary pod before adjusting the sampling rule rather than broadening the filter to all health-like paths.
 
 ## Service map
 

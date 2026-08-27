@@ -64,10 +64,11 @@ public static class TelemetrySetup
                 // those requests; the redundant HTTP spans create duplicate edges
                 // and inflate span-link counts in the trace graph).
                 // Npgsql command spans (every SQL query).
-                .AddAspNetCoreInstrumentation()
+                .AddAspNetCoreInstrumentation(opts => opts.Filter = context => context.Request.Path != "/livez" && context.Request.Path != "/readyz")
                 .AddHttpClientInstrumentation(opts =>
                     opts.FilterHttpRequestMessage = req =>
-                        req.RequestUri?.Host?.Contains("mcp-server-dotnet") != true)
+                        req.RequestUri?.Host?.Contains("mcp-server-dotnet") != true &&
+                        req.RequestUri?.Host?.EndsWith(".blob.core.windows.net", StringComparison.OrdinalIgnoreCase) != true)
                 .AddNpgsql()
 
                 // GenAI span sources.

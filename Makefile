@@ -1,8 +1,11 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-redis-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-redis-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm run-dags apply-datadog-agent install-airflow recover-airflow-destructive preflight-airflow-cluster verify-airflow-image upgrade-airflow sync-dags build-airflow-image test-airflow test-airflow-container otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector help
 
-# Load .env if present (for local dev)
+# Load .env for normal local operation. Set SKIP_DOTENV=1 for documentation,
+# static analysis, and dry runs so Make never expands local credentials.
+ifneq ($(SKIP_DOTENV),1)
 -include .env
 export
+endif
 
 RESOURCE_GROUP ?= rg-tola-infra-advisor-ai
 AKS_NAME ?= aks-infra-advisor-dev
@@ -10,6 +13,11 @@ LOCATION ?= eastus
 NAMESPACE ?= infra-advisor
 GHCR_PAT ?=
 GITHUB_EMAIL ?=
+AIRFLOW_CHART_VERSION ?= 1.21.0
+AIRFLOW_IMAGE_REPOSITORY ?= ghcr.io/kyletaylored/infra-advisor-ai/airflow
+AIRFLOW_IMAGE_TAG ?= latest
+AIRFLOW_NAMESPACE ?= airflow
+AIRFLOW_DESTRUCTIVE_RECOVERY ?=
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -18,8 +26,8 @@ check-env: ## Verify all required env vars are set before deploying
 	@echo "→ Checking required environment variables..."
 	@for var in \
 		AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY \
-		AZURE_SEARCH_ENDPOINT AZURE_SEARCH_API_KEY \
-		EIA_API_KEY DD_API_KEY \
+		AZURE_SEARCH_ENDPOINT AZURE_SEARCH_API_KEY AZURE_STORAGE_CONNECTION_STRING \
+		EIA_API_KEY SAMGOV_API_KEY DD_API_KEY \
 		GHCR_PAT GITHUB_EMAIL \
 		POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB \
 		DD_POSTGRES_PASSWORD \
@@ -58,21 +66,25 @@ get-credentials: ## Fetch AKS kubeconfig
 
 create-airflow-secret: ## Create airflow-azure-secret K8s Secret in airflow namespace
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
+	@if [ -z "$(AZURE_STORAGE_CONNECTION_STRING)" ]; then echo "ERROR: AZURE_STORAGE_CONNECTION_STRING is not set"; exit 1; fi
 	@if [ -z "$(EIA_API_KEY)" ]; then echo "ERROR: EIA_API_KEY is not set"; exit 1; fi
+	@if [ -z "$(SAMGOV_API_KEY)" ]; then echo "ERROR: SAMGOV_API_KEY is not set"; exit 1; fi
 	@if [ -z "$(DD_API_KEY)" ]; then echo "ERROR: DD_API_KEY is not set (required for DJM OpenLineage transport)"; exit 1; fi
 	@if [ -z "$(AIRFLOW_WEBSERVER_SECRET_KEY)" ]; then echo "ERROR: AIRFLOW_WEBSERVER_SECRET_KEY is not set — generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""; exit 1; fi
+	@kubectl create namespace $(AIRFLOW_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret generic airflow-azure-secret \
-		--namespace airflow \
+		--namespace $(AIRFLOW_NAMESPACE) \
 		--from-literal=AZURE_OPENAI_ENDPOINT="$(AZURE_OPENAI_ENDPOINT)" \
 		--from-literal=AZURE_OPENAI_API_KEY="$(AZURE_OPENAI_API_KEY)" \
 		--from-literal=AZURE_SEARCH_ENDPOINT="$(AZURE_SEARCH_ENDPOINT)" \
 		--from-literal=AZURE_SEARCH_API_KEY="$(AZURE_SEARCH_API_KEY)" \
-		--from-literal=AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=placeholder;AccountKey=placeholder;EndpointSuffix=core.windows.net" \
+		--from-literal=AZURE_STORAGE_CONNECTION_STRING="$(AZURE_STORAGE_CONNECTION_STRING)" \
 		--from-literal=EIA_API_KEY="$(EIA_API_KEY)" \
+		--from-literal=SAMGOV_API_KEY="$(SAMGOV_API_KEY)" \
 		--from-literal=DD_API_KEY="$(DD_API_KEY)" \
 		--from-literal=webserver-secret-key="$(AIRFLOW_WEBSERVER_SECRET_KEY)" \
 		--dry-run=client -o yaml | kubectl apply -f -
-	@echo "✓ airflow-azure-secret created in namespace airflow"
+	@echo "✓ airflow-azure-secret created in namespace $(AIRFLOW_NAMESPACE)"
 
 create-mcp-server-secret: ## Create mcp-server-secret K8s Secret (Azure, EIA, ERCOT, SAM.gov keys)
 	@if [ -z "$(AZURE_SEARCH_ENDPOINT)" ];  then echo "ERROR: AZURE_SEARCH_ENDPOINT is not set";  exit 1; fi
@@ -276,6 +288,19 @@ create-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in infra-advisor names
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ ghcr-pull-secret created in namespace $(NAMESPACE)"
 
+create-airflow-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in the Airflow namespace
+	@if [ -z "$(GHCR_PAT)" ]; then echo "ERROR: GHCR_PAT is not set"; exit 1; fi
+	@if [ -z "$(GITHUB_EMAIL)" ]; then echo "ERROR: GITHUB_EMAIL is not set"; exit 1; fi
+	@kubectl create namespace $(AIRFLOW_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	@kubectl create secret docker-registry ghcr-pull-secret \
+		--namespace $(AIRFLOW_NAMESPACE) \
+		--docker-server=ghcr.io \
+		--docker-username=kyletaylored \
+		--docker-password=$(GHCR_PAT) \
+		--docker-email=$(GITHUB_EMAIL) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ ghcr-pull-secret created in namespace $(AIRFLOW_NAMESPACE)"
+
 deploy-k8s: check-env ## Apply all Kubernetes manifests
 	@echo "→ Applying namespaces..."
 	kubectl apply -f k8s/namespace.yaml
@@ -300,11 +325,17 @@ deploy-k8s: check-env ## Apply all Kubernetes manifests
 
 	@echo "→ Creating Airflow Azure secret..."
 	$(MAKE) create-airflow-secret
+	@echo "→ Creating Airflow GHCR pull secret..."
+	$(MAKE) create-airflow-ghcr-secret
 
 	@echo "→ Deploying Airflow..."
 	helm repo add apache-airflow https://airflow.apache.org || true
 	helm repo update
-	$(MAKE) install-airflow
+	@if helm status airflow -n $(AIRFLOW_NAMESPACE) >/dev/null 2>&1; then \
+		$(MAKE) upgrade-airflow; \
+	else \
+		$(MAKE) install-airflow; \
+	fi
 
 	@echo "→ Creating GHCR pull secret..."
 	$(MAKE) create-ghcr-secret
@@ -341,7 +372,7 @@ rollout-status: ## Check rollout status for all infra-advisor deployments
 
 # ─── Airflow DAGs ─────────────────────────────────────────────────────────────
 
-run-dags: ## Manually trigger all 5 Airflow DAGs
+run-dags: ## Manually trigger the selected Airflow canary DAGs
 	@echo "→ Triggering knowledge_base_init DAG..."
 	kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger knowledge_base_init
 	@echo "→ Triggering nbi_refresh DAG..."
@@ -361,86 +392,86 @@ apply-datadog-agent: ## Apply DatadogAgent CR from datadog/datadog-agent.yaml
 	kubectl apply -f datadog/datadog-agent.yaml
 	@echo "✓ DatadogAgent CR applied"
 
-install-airflow: ## Fresh install of Airflow (nukes existing release)
+install-airflow: verify-airflow-image ## Install Airflow only when the Helm release does not already exist
 	@if [ -z "$(AIRFLOW_ADMIN_USERNAME)" ]; then echo "ERROR: AIRFLOW_ADMIN_USERNAME is not set (override Airflow admin user)"; exit 1; fi
 	@if [ -z "$(AIRFLOW_ADMIN_PASSWORD)" ]; then echo "ERROR: AIRFLOW_ADMIN_PASSWORD is not set — generate one with: openssl rand -base64 32"; exit 1; fi
+	@if helm status airflow -n $(AIRFLOW_NAMESPACE) >/dev/null 2>&1; then echo "ERROR: Airflow already exists; use make upgrade-airflow for a non-destructive rollout"; exit 1; fi
 	helm repo add apache-airflow https://airflow.apache.org || true
 	helm repo update
-	-helm uninstall airflow -n airflow --no-hooks 2>/dev/null || true
-	kubectl delete namespace airflow 2>/dev/null || true
-	kubectl create namespace airflow
+	@kubectl create namespace $(AIRFLOW_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	$(MAKE) create-airflow-ghcr-secret
 	$(MAKE) create-airflow-secret
-	@echo "→ Installing Airflow (no wait — avoids post-install hook deadlock)..."
+	@echo "→ Installing Airflow and waiting for migration jobs..."
 	helm install airflow apache-airflow/airflow \
-		--namespace airflow \
+		--version $(AIRFLOW_CHART_VERSION) \
+		--namespace $(AIRFLOW_NAMESPACE) \
 		--values k8s/airflow/values.yaml \
-		--set createUserJob.defaultUser.username='$(AIRFLOW_ADMIN_USERNAME)' \
-		--set createUserJob.defaultUser.password='$(AIRFLOW_ADMIN_PASSWORD)' \
-		--timeout 20m
-	@echo "→ Waiting for PostgreSQL to be ready..."
-	kubectl wait --for=condition=ready pod \
-		-l app.kubernetes.io/name=postgresql \
-		-n airflow --timeout=3m
-	@echo "→ Running DB migration manually (chart hook unreliable on fresh install)..."
-	kubectl run airflow-migrate \
-		--image=apache/airflow:3.1.8 \
-		--restart=Never \
-		--namespace=airflow \
-		--env="AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@airflow-postgresql:5432/postgres" \
-		--env="AIRFLOW__CORE__FERNET_KEY=$$(kubectl get secret airflow-fernet-key -n airflow -o jsonpath='{.data.fernet-key}' | base64 -d)" \
-		--env="AIRFLOW__API__SECRET_KEY=$$(kubectl get secret airflow-api-secret-key -n airflow -o jsonpath='{.data.api-secret-key}' | base64 -d)" \
-		-- airflow db migrate
-	@echo "→ Waiting for migration to complete..."
-	kubectl wait --for=condition=ready pod/airflow-migrate \
-		-n airflow --timeout=5m
-	kubectl logs -n airflow airflow-migrate --follow
-	kubectl delete pod airflow-migrate -n airflow
-	@echo "→ Waiting for all Airflow pods to be ready..."
-	kubectl wait --for=condition=ready pod \
-		-l tier=airflow -n airflow \
-		--timeout=15m \
-		--field-selector=status.phase!=Succeeded
-	@echo "✓ Airflow installed and ready"
-	@echo "→ Creating admin user..."
-	kubectl exec -n airflow airflow-scheduler-0 -- \
-		airflow users create \
-		--role Admin --username admin \
-		--email admin@infra-advisor.local \
-		--firstname Admin --lastname User \
-		--password admin 2>/dev/null || true
-
-upgrade-airflow: ## Upgrade Airflow Helm release from k8s/airflow/values.yaml
-	helm repo add apache-airflow https://airflow.apache.org || true
-	helm repo update
-	@STATUS=$$(helm status airflow -n airflow -o json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['status'])" 2>/dev/null || echo "not-found"); \
-	if [ "$$STATUS" = "pending-install" ] || [ "$$STATUS" = "pending-upgrade" ] || [ "$$STATUS" = "pending-rollback" ] || [ "$$STATUS" = "failed" ]; then \
-		echo "Release in $$STATUS — rolling back to clear the lock"; \
-		helm rollback airflow 0 --namespace airflow 2>/dev/null || helm uninstall airflow -n airflow --no-hooks 2>/dev/null || true; \
-	fi
-	@if [ -z "$(AIRFLOW_ADMIN_USERNAME)" ]; then echo "ERROR: AIRFLOW_ADMIN_USERNAME is not set"; exit 1; fi
-	@if [ -z "$(AIRFLOW_ADMIN_PASSWORD)" ]; then echo "ERROR: AIRFLOW_ADMIN_PASSWORD is not set"; exit 1; fi
-	-kubectl delete job airflow-create-user -n airflow --ignore-not-found=true 2>/dev/null
-	helm upgrade airflow apache-airflow/airflow \
-		--namespace airflow \
-		--values k8s/airflow/values.yaml \
+		--set images.airflow.repository='$(AIRFLOW_IMAGE_REPOSITORY)' \
+		--set images.airflow.tag='$(AIRFLOW_IMAGE_TAG)' \
 		--set createUserJob.defaultUser.username='$(AIRFLOW_ADMIN_USERNAME)' \
 		--set createUserJob.defaultUser.password='$(AIRFLOW_ADMIN_PASSWORD)' \
 		--timeout 20m \
-		--cleanup-on-fail
-	@echo "→ Waiting for migration job..."
-	kubectl wait --for=condition=complete job/airflow-run-airflow-migrations \
-		-n airflow --timeout=10m
-	@echo "→ Waiting for pods..."
-	kubectl wait --for=condition=ready pod \
-		-l tier=airflow -n airflow --timeout=15m
+		--wait \
+		--wait-for-jobs \
+		--atomic
+	@echo "✓ Airflow installed and ready"
+
+recover-airflow-destructive: ## Delete and reinstall Airflow only after explicit data-loss acknowledgement
+	@if [ "$(AIRFLOW_DESTRUCTIVE_RECOVERY)" != "delete-airflow-release-and-namespace" ]; then \
+		echo "ERROR: destructive recovery is disabled"; \
+		echo "After backing up metadata and logs, rerun with AIRFLOW_DESTRUCTIVE_RECOVERY=delete-airflow-release-and-namespace"; \
+		exit 1; \
+	fi
+	helm uninstall airflow -n $(AIRFLOW_NAMESPACE) --no-hooks
+	kubectl delete namespace $(AIRFLOW_NAMESPACE) --wait=true
+	$(MAKE) install-airflow
+
+preflight-airflow-cluster: ## Verify the current Airflow release is coherent before an upgrade
+	EXPECTED_AIRFLOW_IMAGE="$(EXPECTED_AIRFLOW_IMAGE)" services/ingestion/scripts/cluster_preflight.sh
+
+verify-airflow-image: ## Pull and verify the exact Airflow image before a Helm install or upgrade
+	docker pull '$(AIRFLOW_IMAGE_REPOSITORY):$(AIRFLOW_IMAGE_TAG)'
+	docker run --rm \
+		--env DD_TRACE_ENABLED=false \
+		'$(AIRFLOW_IMAGE_REPOSITORY):$(AIRFLOW_IMAGE_TAG)' \
+		python /opt/airflow/scripts/verify_image_contract.py
+
+upgrade-airflow: preflight-airflow-cluster create-airflow-ghcr-secret verify-airflow-image ## Upgrade a healthy Airflow Helm release from k8s/airflow/values.yaml
+	helm repo add apache-airflow https://airflow.apache.org || true
+	helm repo update
+	helm upgrade airflow apache-airflow/airflow \
+		--version $(AIRFLOW_CHART_VERSION) \
+		--namespace $(AIRFLOW_NAMESPACE) \
+		--values k8s/airflow/values.yaml \
+		--set images.airflow.repository='$(AIRFLOW_IMAGE_REPOSITORY)' \
+		--set images.airflow.tag='$(AIRFLOW_IMAGE_TAG)' \
+		--set createUserJob.enabled=false \
+		--timeout 20m \
+		--wait \
+		--wait-for-jobs \
+		--cleanup-on-fail \
+		--atomic
+	EXPECTED_AIRFLOW_IMAGE="$(AIRFLOW_IMAGE_REPOSITORY):$(AIRFLOW_IMAGE_TAG)" services/ingestion/scripts/cluster_preflight.sh
 	@echo "✓ Airflow upgraded"
 
-sync-dags: ## Copy DAGs from repo to airflow-scheduler PVC
-	@echo "→ Syncing DAGs to airflow PVC..."
-	kubectl cp services/ingestion/dags/. \
-		airflow/airflow-scheduler-0:/opt/airflow/dags/ \
-		-c scheduler
-	@echo "✓ DAGs synced — dag-processor will pick them up within 30s"
+sync-dags: ## Explain immutable DAG delivery (kept for backwards compatibility)
+	@echo "DAGs and helper scripts are bundled in $(AIRFLOW_IMAGE_REPOSITORY):$(AIRFLOW_IMAGE_TAG)."
+	@echo "Build the image, push it, then run make upgrade-airflow AIRFLOW_IMAGE_TAG=<immutable-tag>."
+
+build-airflow-image: ## Build the pinned local Airflow ingestion image
+	docker build --pull \
+		--tag infra-advisor-airflow:test \
+		services/ingestion
+
+test-airflow: ## Run ingestion unit tests and the real Airflow DAG import contract
+	cd services/ingestion && DD_TRACE_ENABLED=false uv run --frozen --all-extras pytest -x tests/
+	cd services/ingestion && uv run --frozen python scripts/verify_image_contract.py
+
+test-airflow-container: build-airflow-image ## Verify packages, scripts, and DAG imports inside the image
+	docker run --rm \
+		--env DD_TRACE_ENABLED=false \
+		infra-advisor-airflow:test \
+		python /opt/airflow/scripts/verify_image_contract.py
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 

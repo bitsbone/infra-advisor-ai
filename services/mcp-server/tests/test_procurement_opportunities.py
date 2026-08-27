@@ -4,11 +4,15 @@ All external HTTP calls are mocked with respx so no real credentials
 or network access are required.
 """
 
+import json
+import logging
 import os
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from jsonschema import Draft202012Validator, FormatChecker
 
 # ---------------------------------------------------------------------------
 # Environment setup — must happen before any ddtrace imports
@@ -34,6 +38,13 @@ from tools.procurement_opportunities import (
     _ALL_NAICS,
     get_procurement_opportunities,
 )
+
+_CONTRACT = Path(__file__).resolve().parents[3] / "contracts/chat-artifacts/procurement-opportunities.v1.schema.json"
+
+
+def _assert_v1_schema(value: dict) -> None:
+    schema = json.loads(_CONTRACT.read_text())
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(value)
 
 
 # ---------------------------------------------------------------------------
@@ -83,12 +94,13 @@ def _make_grants_opportunity(
         "estimatedTotalProgramFunding": 5000000,
         "expectedNumberOfAwards": 10,
         "description": "Funding for water infrastructure improvements.",
-        "cfdaList": [{"programNumber": cfda_number}],
+        "alnist": [cfda_number],
+        "oppStatus": "posted",
     }
 
 
 def _make_grants_response(opportunities: list) -> dict:
-    return {"opportunities": opportunities}
+    return {"data": {"oppHits": opportunities}}
 
 
 # ---------------------------------------------------------------------------
@@ -120,16 +132,134 @@ async def test_successful_merged_results(monkeypatch):
         inp = ProcurementOpportunitiesInput(query="water treatment plant")
         result = await get_procurement_opportunities(inp)
 
-    assert isinstance(result, list), f"Expected list, got: {type(result)}: {result}"
-    assert len(result) == 3
+    assert result["kind"] == "procurement_opportunities"
+    assert result["schema_version"] == "1.0"
+    assert len(result["items"]) == 3
 
-    sources = {r["_source"] for r in result}
-    assert "SAM.gov" in sources
+    sources = {r["provider"] for r in result["items"]}
+    assert "sam.gov" in sources
     assert "grants.gov" in sources
 
     # Sorted by deadline soonest first: grants.gov 2025-06-15 < SAM.gov 2025-07-01 < SAM.gov 2025-08-01
-    assert result[0]["_source"] == "grants.gov"
-    assert result[0]["closeDate"] == "2025-06-15"
+    assert result["items"][0]["provider"] == "grants.gov"
+    assert result["items"][0]["deadline_at"] == "2025-06-15"
+    _assert_v1_schema(result)
+
+
+@pytest.mark.asyncio
+async def test_value_range_filters_unknown_and_out_of_range_funding(monkeypatch):
+    monkeypatch.setenv("SAMGOV_API_KEY", "SAM-test-key")
+    below = _make_sam_opportunity("SAM-BELOW")
+    below["award"] = {"amount": 750_000}
+    unknown = _make_sam_opportunity("SAM-UNKNOWN")
+    in_range = _make_grants_opportunity(20_001)
+    in_range["estimatedTotalProgramFunding"] = 5_000_000
+    above = _make_grants_opportunity(20_002)
+    above["estimatedTotalProgramFunding"] = 15_000_000
+
+    with respx.mock() as mock:
+        mock.get(SAMGOV_API_URL).mock(return_value=Response(200, json=_make_sam_response([below, unknown])))
+        mock.post(GRANTSGOV_SEARCH_URL).mock(return_value=Response(200, json=_make_grants_response([in_range, above])))
+        result = await get_procurement_opportunities(ProcurementOpportunitiesInput(query="water", min_value_usd=1_000_000, max_value_usd=10_000_000))
+
+    assert [item["provider_id"] for item in result["items"]] == ["20001"]
+    assert result["meta"]["returned_count"] == 1
+    _assert_v1_schema(result)
+
+
+@pytest.mark.asyncio
+async def test_live_shaped_adversarial_provider_fields_are_rebuilt_to_exact_v1(monkeypatch):
+    monkeypatch.setenv("SAMGOV_API_KEY", "SAM-test-key")
+    sentinel = "PROVIDER-SECRET-MUST-NOT-ESCAPE"
+    sam = _make_sam_opportunity("SAM-ADV")
+    sam.update({"postedDate": "not-a-date", "responseDeadLine": "2026-99-99", "uiLink": f"https://user:{sentinel}@sam.gov/opp/SAM-ADV?api_key={sentinel}#contact", "contactInformation": {"email": sentinel}, "api_key": sentinel})
+    sam["award"] = {"amount": -1, "internal": {"api_key": sentinel}}
+    sam["placeOfPerformance"] = {"state": {"code": "TX", "name": "Texas", "api_key": sentinel}, "city": {"name": "Austin", "contact": sentinel}, "private": sentinel}
+    grant = _make_grants_opportunity(30_001)
+    grant.update({"expectedNumberOfAwards": 2_000_000, "estimatedTotalProgramFunding": 2_000_000_000_000_000, "contactEmail": sentinel, "providerPayload": {"api_key": sentinel}, "alnist": ["66.458", "invalid", sentinel]})
+
+    with respx.mock() as mock:
+        mock.get(SAMGOV_API_URL).mock(return_value=Response(200, json=_make_sam_response([sam])))
+        mock.post(GRANTSGOV_SEARCH_URL).mock(return_value=Response(200, json=_make_grants_response([grant])))
+        result = await get_procurement_opportunities(ProcurementOpportunitiesInput(query="water"))
+
+    _assert_v1_schema(result)
+    serialized = json.dumps(result)
+    assert sentinel not in serialized
+    assert "contactInformation" not in serialized
+    sam_item = next(item for item in result["items"] if item["provider"] == "sam.gov")
+    grant_item = next(item for item in result["items"] if item["provider"] == "grants.gov")
+    assert sam_item["posted_at"] is None
+    assert sam_item["deadline_at"] is None
+    assert sam_item["source"]["url"] == "https://sam.gov/opp/SAM-ADV"
+    assert sam_item["funding"]["total"] is None
+    assert grant_item["classifications"]["assistance_listing"] == ["66.458"]
+    assert grant_item["funding"]["total"] is None
+    assert grant_item["funding"]["expected_awards"] is None
+
+
+@pytest.mark.asyncio
+async def test_structured_summary_log_is_bounded_and_query_free(monkeypatch, caplog):
+    monkeypatch.setenv("SAMGOV_API_KEY", "SAM-test-key")
+    sentinel_query = "SENTINEL-QUERY-MUST-NOT-BE-LOGGED"
+    opp = _make_sam_opportunity()
+    opp["uiLink"] = "https://sam.gov/opp/NOTICE-001?api_key=SENTINEL-SECRET"
+
+    with caplog.at_level(logging.INFO, logger="tools.procurement_opportunities"):
+        with respx.mock() as mock:
+            mock.get(SAMGOV_API_URL).mock(return_value=Response(200, json=_make_sam_response([opp])))
+            await get_procurement_opportunities(ProcurementOpportunitiesInput(query=sentinel_query, opportunity_types=["contract"]))
+
+    record = next(r for r in caplog.records if getattr(r, "event", None) == "procurement.artifact.normalized")
+    assert record.__dict__["tool.name"] == "get_procurement_opportunities"
+    assert record.__dict__["artifact.kind"] == "procurement_opportunities"
+    assert record.__dict__["artifact.schema_version"] == "1.0"
+    assert record.__dict__["artifact.returned_count"] == 1
+    assert record.__dict__["duration_ms"] >= 0
+    serialized = json.dumps(record.__dict__["artifact.sample"])
+    assert "opportunity_type" in serialized
+    assert "deadline_at" in serialized
+    assert sentinel_query not in serialized
+    assert "SENTINEL-SECRET" not in serialized
+    assert "source" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_source_url_drops_query_and_fragment(monkeypatch):
+    monkeypatch.setenv("SAMGOV_API_KEY", "SAM-test-key")
+    opp = _make_sam_opportunity()
+    opp["uiLink"] = "https://sam.gov/opp/NOTICE-001?api_key=must-not-escape#details"
+    with respx.mock() as mock:
+        mock.get(SAMGOV_API_URL).mock(return_value=Response(200, json=_make_sam_response([opp])))
+        result = await get_procurement_opportunities(ProcurementOpportunitiesInput(query="water", opportunity_types=["contract"]))
+    assert result["items"][0]["source"]["url"] == "https://sam.gov/opp/NOTICE-001"
+
+
+@pytest.mark.asyncio
+async def test_sam_location_objects_are_normalized_without_description_link(monkeypatch):
+    monkeypatch.setenv("SAMGOV_API_KEY", "SAM-test-key")
+    opp = _make_sam_opportunity()
+    opp["description"] = "https://api.sam.gov/opportunities/v2/search?api_key=must-not-escape"
+    opp["placeOfPerformance"] = {"state": {"code": "TX", "name": "Texas"}, "city": {"name": "Austin"}}
+    with respx.mock() as mock:
+        mock.get(SAMGOV_API_URL).mock(return_value=Response(200, json=_make_sam_response([opp])))
+        result = await get_procurement_opportunities(ProcurementOpportunitiesInput(query="water", opportunity_types=["contract"]))
+
+    item = result["items"][0]
+    assert item["summary"] == ""
+    assert item["location"] == {"state_code": "TX", "state_name": "Texas", "city": "Austin"}
+    assert "must-not-escape" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_grants_failure_is_a_partial_error(monkeypatch):
+    monkeypatch.setenv("SAMGOV_API_KEY", "SAM-test-key")
+    with respx.mock() as mock:
+        mock.get(SAMGOV_API_URL).mock(return_value=Response(200, json=_make_sam_response([_make_sam_opportunity()])))
+        mock.post(GRANTSGOV_SEARCH_URL).mock(return_value=Response(503, text="upstream details"))
+        result = await get_procurement_opportunities(ProcurementOpportunitiesInput(query="water"))
+    assert result["status"] == "partial"
+    assert result["meta"]["partial_errors"] == [{"provider": "grants.gov", "code": "http_503", "retriable": True}]
 
 
 # ---------------------------------------------------------------------------
@@ -196,16 +326,8 @@ async def test_date_range_clamped(monkeypatch):
         inp = ProcurementOpportunitiesInput(query="highway construction")
         result = await get_procurement_opportunities(inp)
 
-    # Clamping: _fetch_samgov wraps results in {"results": [...], "_note": "..."}
-    # The top-level result should include the _note when SAM returned a wrapped dict
-    # and grants returned nothing.
-    assert isinstance(result, (list, dict)), f"Unexpected type: {type(result)}"
-    if isinstance(result, dict):
-        assert "_note" in result or "results" in result
-    else:
-        # If merged as a plain list, check the note surfaced through partial-result envelope
-        # (only if grants also returned results would there be a dict envelope)
-        pass  # clamped note embedded in SAM result, merged list is acceptable
+    assert result["kind"] == "procurement_opportunities"
+    assert result["meta"]["returned_count"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -233,9 +355,8 @@ async def test_samgov_400_date_error(monkeypatch):
         )
         result = await get_procurement_opportunities(inp)
 
-    assert isinstance(result, dict), f"Expected error dict, got: {result}"
-    assert "error" in result
-    assert "1 year" in result["error"] or "1-year" in result["error"] or "1 year" in result["error"].lower()
+    assert result["status"] == "error"
+    assert result["meta"]["partial_errors"][0]["provider"] == "sam.gov"
 
 
 # ---------------------------------------------------------------------------
@@ -258,9 +379,8 @@ async def test_samgov_403(monkeypatch):
         )
         result = await get_procurement_opportunities(inp)
 
-    assert isinstance(result, dict)
-    assert "error" in result
-    assert "24 hours" in result["error"]
+    assert result["status"] == "error"
+    assert result["meta"]["partial_errors"][0]["provider"] == "sam.gov"
 
 
 # ---------------------------------------------------------------------------
@@ -291,8 +411,7 @@ async def test_samgov_401_logs_response_body(monkeypatch):
         )
         result = await get_procurement_opportunities(inp)
 
-    assert isinstance(result, dict)
-    assert "error" in result
+    assert result["status"] == "error"
 
     mock_log.assert_called_once()
     kwargs = mock_log.call_args.kwargs
@@ -325,15 +444,9 @@ async def test_samgov_timeout_partial_results(monkeypatch):
         result = await get_procurement_opportunities(inp)
 
     # Should return partial results (grants.gov) without crashing
-    assert result is not None
-    if isinstance(result, list):
-        assert len(result) == 1
-        assert result[0]["_source"] == "grants.gov"
-    else:
-        # May be wrapped in envelope dict with _samgov_error
-        assert "results" in result or "_source" in result
-        if "results" in result:
-            assert len(result["results"]) >= 1
+    assert result["status"] == "partial"
+    assert len(result["items"]) == 1
+    assert result["items"][0]["provider"] == "grants.gov"
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +473,5 @@ async def test_unknown_response_envelope(monkeypatch):
 
     # _fetch_samgov logs WARNING and returns a structured error dict when
     # 'opportunitiesData' key is missing from the response
-    assert isinstance(result, dict)
-    assert "error" in result
-    assert "opportunitiesData" in result["error"]
+    assert result["status"] == "error"
+    assert result["meta"]["partial_errors"][0]["provider"] == "sam.gov"

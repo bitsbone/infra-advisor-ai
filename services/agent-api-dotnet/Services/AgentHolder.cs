@@ -1,5 +1,6 @@
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using InfraAdvisor.AgentApi.Observability;
 
 namespace InfraAdvisor.AgentApi.Services;
 
@@ -64,7 +65,7 @@ public class AgentHolder
                 })
             .AsBuilder()
             .UseOpenTelemetry(sourceName: _otelSourceName,
-                              configure: cfg => cfg.EnableSensitiveData = true)
+                              configure: cfg => cfg.EnableSensitiveData = TelemetryPrivacy.EnableSensitiveData)
             .Build();
 
         lock (_lock)

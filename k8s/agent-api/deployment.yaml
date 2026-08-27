@@ -17,6 +17,9 @@ spec:
     metadata:
       labels:
         app: agent-api
+        # The Python image already pins ddtrace, but this opt-in label lets the
+        # Admission Controller inject the Agent connection and unified tags.
+        admission.datadoghq.com/enabled: "true"
         tags.datadoghq.com/env: dev
         tags.datadoghq.com/service: infra-advisor-agent-api
         tags.datadoghq.com/version: latest
@@ -31,15 +34,6 @@ spec:
           ports:
             - containerPort: 8001
               name: http
-          env:
-            - name: DD_LLMOBS_ENABLED
-              value: "true"
-            - name: DD_LLMOBS_ML_APP
-              value: "infra-advisor-ai"
-            - name: DD_LLMOBS_AGENTLESS_ENABLED
-              value: "false"
-            - name: DD_CODE_ORIGIN_FOR_SPANS_ENABLED
-              value: "true"
           env:
             - name: REDIS_PASSWORD
               valueFrom:
@@ -59,19 +53,27 @@ spec:
               drop: ["ALL"]
           livenessProbe:
             httpGet:
-              path: /health
+              path: /livez
               port: 8001
             initialDelaySeconds: 20
-            periodSeconds: 30
+            periodSeconds: 60
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: 8001
             initialDelaySeconds: 15
-            periodSeconds: 15
+            periodSeconds: 30
             timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: 8001
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
           resources:
             requests:
               memory: "512Mi"

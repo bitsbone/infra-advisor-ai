@@ -41,6 +41,16 @@ public sealed class DatadogObservability : IObservability
         DdLogs.LogWithAttributes("info", message, TelemetrySanitizer.FilterAttributes(attributes));
     }
 
+    public void Warning(string message, IReadOnlyDictionary<string, object>? attributes = null)
+    {
+        DdLogs.LogWithAttributes("warn", message, TelemetrySanitizer.FilterAttributes(attributes));
+    }
+
+    public void ErrorLog(string message, IReadOnlyDictionary<string, object>? attributes = null)
+    {
+        DdLogs.LogWithAttributes("error", message, TelemetrySanitizer.FilterAttributes(attributes));
+    }
+
     public void Error(string message, Exception exception, IReadOnlyDictionary<string, object>? attributes = null)
     {
         var safeAttributes = TelemetrySanitizer.FilterAttributes(attributes);

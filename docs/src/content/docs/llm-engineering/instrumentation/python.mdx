@@ -27,6 +27,8 @@ When `ddtrace.auto` is the first import and `DD_LLMOBS_ENABLED=true` is set, the
 
 Token counts, model name, prompt + completion content, and cost (when LLMObs has model pricing in its catalog) come along for free.
 
+This content-rich mode is limited to services whose data policy explicitly permits it. The MCP provider-adapter deployment forces `DD_LLMOBS_ENABLED=false`; it retains ordinary APM/HTTP timing and explicit bounded metrics but prevents automatic MCP, LangChain, OpenAI, and embedding payload extraction. Do not enable automatic LLMObs on that service unless its telemetry policy and tests are intentionally changed first.
+
 ## Bootstrap
 
 `ddtrace.auto` MUST be the first import — it patches downstream libraries on import. Putting it after `import langchain_openai` will leave `langchain_openai` un-patched and your trace will have a hole where the LLM call should be.

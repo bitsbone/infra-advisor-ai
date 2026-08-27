@@ -25,6 +25,7 @@ public sealed class ViewModelTests
         Assert.Equal(string.Empty, viewModel.Password);
         Assert.Equal(1, navigator.AuthenticatedNavigations);
         Assert.Equal("u1", telemetry.IdentifiedUserId);
+        Assert.Equal("person@example.com", telemetry.IdentifiedUserEmail);
         Assert.Contains(telemetry.SucceededOperations, operation => operation.Name == "authentication.login");
         Assert.DoesNotContain(telemetry.Attributes, pair => pair.Key.Contains("password", StringComparison.OrdinalIgnoreCase));
     }
@@ -74,7 +75,28 @@ public sealed class ViewModelTests
         var step = Assert.Single(assistant.Steps);
         Assert.Equal("get_bridge_condition", step.Label);
         Assert.Equal("ok", step.Status);
+        var evidence = Assert.Single(assistant.Evidence);
+        Assert.Equal("sam.gov", evidence.Source);
+        Assert.Equal("Resilience planning support", evidence.Title);
         Assert.Contains(telemetry.SucceededOperations, operation => operation.Name == "ai.query");
+    }
+
+    [Fact]
+    public async Task TruncatedStreamIsReportedAsFailureAndKeepsPartialAnswer()
+    {
+        var (viewModel, handler, _, telemetry, _) = CreateChatViewModel();
+        handler.TruncateQueryStream = true;
+        await viewModel.InitializeCommand.ExecuteAsync(null);
+        viewModel.Prompt = "Inspect Texas bridges";
+
+        await viewModel.SendCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsBusy);
+        Assert.True(viewModel.HasError);
+        Assert.Contains("ended before completion", viewModel.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Partial answer", viewModel.Messages[1].Content);
+        Assert.DoesNotContain(telemetry.SucceededOperations, operation => operation.Name == "ai.query");
+        Assert.Contains(telemetry.FailedOperations, operation => operation.Name == "ai.query" && !operation.Abandoned);
     }
 
     [Fact]
@@ -94,6 +116,42 @@ public sealed class ViewModelTests
     }
 
     [Fact]
+    public async Task CrossBackendConversationRefreshesDisjointModelsBeforeRestoringSavedModelAndStartsNewCleanly()
+    {
+        var (viewModel, handler, session, _, _) = CreateChatViewModel();
+        handler.IncludeConversation = true;
+        handler.ConversationBackend = BackendKind.DotNet;
+        handler.UseDisjointModels = true;
+        await viewModel.InitializeCommand.ExecuteAsync(null);
+
+        Assert.Equal(["python-model"], viewModel.Models);
+        Assert.Equal("python-model", viewModel.SelectedModel);
+
+        viewModel.SelectedConversation = Assert.Single(viewModel.Conversations);
+        await WaitUntilAsync(() => viewModel.Messages.Count == 2);
+
+        Assert.Equal(BackendKind.DotNet, session.Backend);
+        Assert.Equal(".NET", viewModel.SelectedBackend);
+        Assert.Equal(["dotnet-default", "dotnet-saved"], viewModel.Models);
+        Assert.Equal("dotnet-saved", viewModel.SelectedModel);
+        var modelRequestIndex = handler.RequestPaths.IndexOf("/api-dotnet/models");
+        var conversationRequestIndex = handler.RequestPaths.IndexOf("/api-dotnet/conversations/c1");
+        Assert.True(modelRequestIndex >= 0);
+        Assert.True(conversationRequestIndex > modelRequestIndex);
+        Assert.False(viewModel.CanChangeBackend);
+
+        await viewModel.NewConversationCommand.ExecuteAsync(null);
+
+        Assert.Equal(BackendKind.DotNet, session.Backend);
+        Assert.Null(session.ConversationId);
+        Assert.Null(viewModel.SelectedConversation);
+        Assert.Empty(viewModel.Messages);
+        Assert.True(viewModel.CanChangeBackend);
+        Assert.Equal(["dotnet-default", "dotnet-saved"], viewModel.Models);
+        Assert.Equal("dotnet-saved", viewModel.SelectedModel);
+    }
+
+    [Fact]
     public async Task BackendSelectionRoutesMetadataToDotNet()
     {
         var (viewModel, handler, session, _, _) = CreateChatViewModel();
@@ -108,6 +166,53 @@ public sealed class ViewModelTests
     }
 
     [Fact]
+    public async Task FailedBackendMetadataCannotReusePreviousBackendModel()
+    {
+        var (viewModel, handler, session, telemetry, _) = CreateChatViewModel();
+        await viewModel.InitializeCommand.ExecuteAsync(null);
+        Assert.Equal("gpt-4.1-mini", viewModel.SelectedModel);
+        handler.FailDotNetMetadata = true;
+
+        viewModel.SelectedBackendIndex = 1;
+        await WaitUntilAsync(() => telemetry.ErrorMessages.Any(message => message.Contains("metadata", StringComparison.OrdinalIgnoreCase)));
+
+        Assert.Equal(BackendKind.DotNet, session.Backend);
+        Assert.Empty(viewModel.Models);
+        Assert.Null(viewModel.SelectedModel);
+        Assert.False(viewModel.CanSend);
+        Assert.True(viewModel.CanChangeBackend);
+        Assert.Contains(viewModel.Suggestions, suggestion => suggestion.Label.Contains("Federal procurement", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task OptionalSuggestionFailureKeepsTheValidModelCatalog()
+    {
+        var (viewModel, handler, _, telemetry, _) = CreateChatViewModel();
+        handler.FailPythonSuggestions = true;
+
+        await viewModel.InitializeCommand.ExecuteAsync(null);
+
+        Assert.Equal(["gpt-4.1-mini"], viewModel.Models);
+        Assert.Equal("gpt-4.1-mini", viewModel.SelectedModel);
+        Assert.Contains(viewModel.Suggestions, suggestion => suggestion.Label.Contains("Federal procurement", StringComparison.Ordinal));
+        Assert.Contains(telemetry.LogMessages, message => message.Contains("suggestions", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task MetadataTimeoutEndsLoadingAndCannotEscapeTheCommand()
+    {
+        var (viewModel, handler, _, telemetry, _) = CreateChatViewModel();
+        handler.CancelPythonModels = true;
+
+        await viewModel.InitializeCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsMetadataLoading);
+        Assert.Empty(viewModel.Models);
+        Assert.Null(viewModel.SelectedModel);
+        Assert.Contains(telemetry.ErrorMessages, message => message.Contains("metadata", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void CompactHistoryCanBeOpenedAndDismissedWithoutChangingConversationState()
     {
         var (viewModel, _, session, _, _) = CreateChatViewModel();
@@ -118,6 +223,39 @@ public sealed class ViewModelTests
 
         viewModel.CloseHistoryCommand.Execute(null);
         Assert.False(viewModel.IsHistoryVisible);
+    }
+
+    [Fact]
+    public async Task HistorySelectionHandsConversationToAdvisorWithoutPersistingSensitiveContent()
+    {
+        var handler = new RoutingHandler { IncludeConversation = true };
+        var session = SignedInSession();
+        var navigator = new FakeNavigator();
+        var telemetry = new FakeObservability();
+        var viewModel = new HistoryViewModel(CreateApi(handler, session), session, navigator, telemetry);
+
+        await viewModel.LoadCommand.ExecuteAsync(null);
+        viewModel.SelectedConversation = Assert.Single(viewModel.Conversations);
+        await WaitUntilAsync(() => navigator.AdvisorNavigations == 1);
+
+        Assert.Equal("c1", session.RequestedConversationId);
+        Assert.DoesNotContain(telemetry.Attributes, value => value.Key.Contains("title", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task HistoryNewConversationClearsSelectionAndNavigatesToAdvisor()
+    {
+        var session = SignedInSession();
+        session.ConversationId = "existing";
+        var navigator = new FakeNavigator();
+        var viewModel = new HistoryViewModel(CreateApi(new RoutingHandler(), session), session, navigator, new FakeObservability());
+
+        await viewModel.NewConversationCommand.ExecuteAsync(null);
+
+        Assert.Null(session.ConversationId);
+        Assert.Null(session.RequestedConversationId);
+        Assert.True(session.IsNewConversationRequested);
+        Assert.Equal(1, navigator.AdvisorNavigations);
     }
 
     [Fact]
@@ -148,6 +286,22 @@ public sealed class ViewModelTests
 
         Assert.Empty(viewModel.Attachments);
         Assert.Equal(1, media.RemoveCount);
+    }
+
+    [Fact]
+    public async Task DotNetSelectedAttachmentUploadsThroughDotNetApi()
+    {
+        var media = new FakeMediaInputService { PickedItem = ImageAttachment() };
+        var (viewModel, handler, session, _, _) = CreateChatViewModel(media);
+        await viewModel.InitializeCommand.ExecuteAsync(null);
+        viewModel.SelectedBackendIndex = 1;
+        await WaitUntilAsync(() => session.Backend == BackendKind.DotNet && handler.RequestPaths.Contains("/api-dotnet/models"));
+
+        await viewModel.PickAttachmentCommand.ExecuteAsync(null);
+
+        Assert.Equal("Ready", Assert.Single(viewModel.Attachments).State);
+        Assert.Equal("/api-dotnet/media/upload", handler.LastMediaUploadPath);
+        Assert.DoesNotContain("/api/media/upload", handler.RequestPaths);
     }
 
     [Fact]
@@ -195,6 +349,23 @@ public sealed class ViewModelTests
     }
 
     [Fact]
+    public async Task UploadedAttachmentCanBeSubmittedWithoutTypedPrompt()
+    {
+        var media = new FakeMediaInputService { PickedItem = ImageAttachment() };
+        var (viewModel, handler, _, _, _) = CreateChatViewModel(media);
+        await viewModel.InitializeCommand.ExecuteAsync(null);
+        await viewModel.PickAttachmentCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.CanSend);
+        await viewModel.SendCommand.ExecuteAsync(null);
+
+        Assert.Equal("Image assessment", handler.LastConversationTitle);
+        var userMessage = viewModel.Messages[0];
+        Assert.Equal(string.Empty, userMessage.Content);
+        Assert.Equal("image", Assert.Single(userMessage.Attachments).Kind);
+    }
+
+    [Fact]
     public async Task LogoutCancelsAnActiveUploadAndRemovesItsLocalState()
     {
         var media = new FakeMediaInputService { PickedItem = ImageAttachment() };
@@ -222,6 +393,19 @@ public sealed class ViewModelTests
         await viewModel.PositiveFeedbackCommand.ExecuteAsync(message);
 
         Assert.Contains(telemetry.SucceededOperations, operation => operation.Name == "ai.feedback");
+    }
+
+    [Fact]
+    public async Task EvidenceSourceLaunchAllowsHttpAndRemovesQueryData()
+    {
+        var session = SignedInSession();
+        var launcher = new FakeLinkLauncher();
+        var viewModel = new ChatViewModel(CreateApi(new RoutingHandler(), session), session, new FakeObservability(), new FakeMediaInputService(), new FakePreferences(), new FakeClipboard(), launcher);
+        var card = EvidenceCard("https://sam.gov/opportunities/example?account=private#details");
+
+        await viewModel.OpenEvidenceSourceCommand.ExecuteAsync(card);
+
+        Assert.Equal("https://sam.gov/opportunities/example", launcher.LastOpened?.AbsoluteUri);
     }
 
     [Fact]
@@ -269,6 +453,8 @@ public sealed class ViewModelTests
         viewModel.CrashAppCommand.Execute(null);
 
         Assert.Contains(telemetry.LogMessages, message => message.Contains("informational", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(telemetry.LogMessages, message => message.Contains("warning", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(telemetry.LogMessages, message => message.Contains("error sample", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(telemetry.ErrorMessages, message => message.Contains("Handled", StringComparison.Ordinal));
         Assert.Contains(telemetry.ErrorMessages, message => message.Contains("API", StringComparison.Ordinal));
 #if DEBUG
@@ -304,6 +490,9 @@ public sealed class ViewModelTests
         OpenReadAsync = () => Task.FromResult<Stream>(new MemoryStream([1, 2, 3, 4])),
     };
 
+    private static EvidenceCardItem EvidenceCard(string url) => new(new ProcurementOpportunity(
+        "sam.gov:sample", "sam.gov", "sample", "contract", "Sample opportunity", new ProcurementAgency("Example Agency", null), "Sanitized sample.", "posted", "2026-08-01", "2026-09-30", new ProcurementLocation("TX", "Texas", null), new ProcurementClassifications([], [], null), new ProcurementFunding("USD", null, null, null, null), new ProcurementSource(url, null), new ProcurementDataQuality([])));
+
     private static InfraAdvisorApiClient CreateApi(HttpMessageHandler handler, AppSession session) =>
         new(new HttpClient(handler) { BaseAddress = new Uri("https://example.test/") }, session, new EmptyRumSessionProvider());
 
@@ -312,18 +501,37 @@ public sealed class ViewModelTests
         public int RequestCount { get; private set; }
         public int DotNetRequestCount { get; private set; }
         public bool IncludeConversation { get; set; }
+        public BackendKind ConversationBackend { get; set; } = BackendKind.Python;
+        public bool UseDisjointModels { get; set; }
         public int MediaUploadFailuresRemaining { get; set; }
         public bool BlockMediaUpload { get; set; }
+        public bool TruncateQueryStream { get; set; }
+        public bool FailDotNetMetadata { get; set; }
+        public bool FailPythonSuggestions { get; set; }
+        public bool CancelPythonModels { get; set; }
+        public string? LastConversationTitle { get; private set; }
+        public string? LastMediaUploadPath { get; private set; }
+        public List<string> RequestPaths { get; } = [];
         public TaskCompletionSource MediaUploadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestCount++;
             var path = request.RequestUri!.AbsolutePath;
+            lock (RequestPaths)
+            {
+                RequestPaths.Add(path);
+            }
             if (path.StartsWith("/api-dotnet/", StringComparison.Ordinal)) DotNetRequestCount++;
+            if (path.EndsWith("/media/upload", StringComparison.Ordinal)) LastMediaUploadPath = path;
             if (request.Content is not null)
             {
-                _ = await request.Content.ReadAsByteArrayAsync(cancellationToken);
+                var requestBody = await request.Content.ReadAsByteArrayAsync(cancellationToken);
+                if (path == "/api/conversations" && request.Method == HttpMethod.Post)
+                {
+                    using var body = System.Text.Json.JsonDocument.Parse(requestBody);
+                    LastConversationTitle = body.RootElement.GetProperty("title").GetString();
+                }
             }
 
             if (path == "/api/media/upload" && BlockMediaUpload)
@@ -335,17 +543,26 @@ public sealed class ViewModelTests
             return path switch
             {
                 "/auth/login" => Json("{\"token\":\"jwt\",\"user\":{\"id\":\"u1\",\"email\":\"person@example.com\",\"is_admin\":false,\"is_service_account\":false,\"created_at\":null}}"),
+                "/api/models" when CancelPythonModels => throw new TaskCanceledException("Synthetic metadata timeout"),
+                "/api/models" when UseDisjointModels => Json("{\"models\":[\"python-model\"],\"default\":\"python-model\"}"),
+                "/api-dotnet/models" when FailDotNetMetadata => Json("{\"detail\":\"Metadata unavailable\"}", HttpStatusCode.ServiceUnavailable),
+                "/api-dotnet/models" when UseDisjointModels => Json("{\"models\":[\"dotnet-default\",\"dotnet-saved\"],\"default\":\"dotnet-default\"}"),
                 "/api/models" or "/api-dotnet/models" => Json("{\"models\":[\"gpt-4.1-mini\"],\"default\":\"gpt-4.1-mini\"}"),
+                "/api/suggestions/initial" when FailPythonSuggestions => Json("{\"detail\":\"Suggestions unavailable\"}", HttpStatusCode.ServiceUnavailable),
                 "/api/suggestions/initial" => Json("{\"suggestions\":[{\"label\":\"Procurement\",\"query\":\"Find opportunities\"}]}"),
                 "/api-dotnet/suggestions/initial" => Json("{\"suggestions\":[{\"label\":\".NET resilience\",\"query\":\"Inspect resilience\"}]}"),
                 "/api/suggestions" => Json("{\"suggestions\":[{\"label\":\"Follow up\",\"query\":\"Show details\"}]}"),
+                "/api/conversations" when request.Method == HttpMethod.Get && IncludeConversation && ConversationBackend == BackendKind.DotNet => Json("{\"conversations\":[{\"id\":\"c1\",\"user_id\":\"u1\",\"title\":\"Inspection\",\"model\":\"dotnet-saved\",\"backend\":\"dotnet\",\"message_count\":2}]}"),
                 "/api/conversations" when request.Method == HttpMethod.Get && IncludeConversation => Json("{\"conversations\":[{\"id\":\"c1\",\"user_id\":\"u1\",\"title\":\"Inspection\",\"model\":\"gpt-4.1-mini\",\"backend\":\"python\",\"message_count\":2}]}"),
                 "/api/conversations" when request.Method == HttpMethod.Get => Json("{\"conversations\":[]}"),
                 "/api/conversations" when request.Method == HttpMethod.Post => Json("{\"id\":\"c1\",\"user_id\":\"u1\",\"title\":\"Inspection\",\"model\":\"gpt-4.1-mini\",\"backend\":\"python\",\"message_count\":0,\"messages\":[]}"),
                 "/api/conversations/c1" => Json("{\"id\":\"c1\",\"user_id\":\"u1\",\"title\":\"Inspection\",\"model\":\"gpt-4.1-mini\",\"backend\":\"python\",\"message_count\":2,\"messages\":[{\"id\":\"m1\",\"conversation_id\":\"c1\",\"role\":\"user\",\"content\":\"Inspect\",\"sources\":[],\"steps\":[],\"attachments\":[{\"url\":\"https://storage.example.test/item\",\"kind\":\"image\",\"mime_type\":\"image/png\",\"size_bytes\":4}]},{\"id\":\"m2\",\"conversation_id\":\"c1\",\"role\":\"assistant\",\"content\":\"Done\",\"sources\":[],\"trace_id\":\"42\",\"span_id\":\"7\",\"steps\":[{\"kind\":\"tool\",\"id\":\"tool-1\",\"name\":\"get_bridge_condition\",\"status\":\"ok\"}],\"attachments\":[]}]}"),
-                "/api/query/stream" => Sse("event: tool_call_start\ndata: {\"id\":\"tool-1\",\"name\":\"get_bridge_condition\"}\n\nevent: tool_call_end\ndata: {\"id\":\"tool-1\",\"name\":\"get_bridge_condition\",\"status\":\"ok\"}\n\nevent: text_chunk\ndata: {\"chunk\":\"Three bridges need review.\"}\n\nevent: done\ndata: {\"sources\":[\"https://example.test/source\"],\"trace_id\":\"42\",\"span_id\":\"7\",\"model\":\"gpt-4.1-mini\"}\n\n"),
+                "/api-dotnet/conversations/c1" => Json("{\"id\":\"c1\",\"user_id\":\"u1\",\"title\":\"Inspection\",\"model\":\"dotnet-saved\",\"backend\":\"dotnet\",\"message_count\":2,\"messages\":[{\"id\":\"m1\",\"conversation_id\":\"c1\",\"role\":\"user\",\"content\":\"Inspect\",\"sources\":[],\"steps\":[],\"attachments\":[]},{\"id\":\"m2\",\"conversation_id\":\"c1\",\"role\":\"assistant\",\"content\":\"Done\",\"sources\":[],\"steps\":[],\"attachments\":[]}]}"),
+                "/api/query/stream" when TruncateQueryStream => Sse("event: text_chunk\ndata: {\"chunk\":\"Partial answer\"}\n\n"),
+                "/api/query/stream" => Sse("event: tool_call_start\ndata: {\"id\":\"tool-1\",\"name\":\"get_bridge_condition\"}\n\nevent: tool_call_end\ndata: {\"id\":\"tool-1\",\"name\":\"get_bridge_condition\",\"status\":\"ok\"}\n\nevent: artifact\ndata: {\"artifact\":{\"kind\":\"procurement_opportunities\",\"schema_version\":\"1.0\",\"status\":\"ok\",\"generated_at\":\"2026-08-26T12:00:00Z\",\"items\":[{\"id\":\"sam.gov:notice-1\",\"provider\":\"sam.gov\",\"provider_id\":\"notice-1\",\"opportunity_type\":\"contract\",\"title\":\"Resilience planning support\",\"agency\":{\"name\":\"FEMA\",\"code\":null},\"summary\":\"Sanitized sample.\",\"status\":\"posted\",\"posted_at\":\"2026-08-01\",\"deadline_at\":\"2026-09-30\",\"location\":{\"state_code\":\"TX\",\"state_name\":\"Texas\",\"city\":null},\"classifications\":{\"naics\":[\"541330\"],\"assistance_listing\":[],\"set_aside\":null},\"funding\":{\"currency\":\"USD\",\"minimum\":null,\"maximum\":null,\"total\":null,\"expected_awards\":null},\"source\":{\"url\":\"https://sam.gov/opp/notice-1\",\"retrieved_at\":\"2026-08-26T12:00:00Z\"},\"data_quality\":{\"missing_fields\":[]}}],\"meta\":{\"returned_count\":1,\"provider_counts\":{\"sam.gov\":1},\"truncated\":false,\"partial_errors\":[]}}}\n\nevent: text_chunk\ndata: {\"chunk\":\"Three bridges need review.\"}\n\nevent: done\ndata: {\"sources\":[\"https://example.test/source\"],\"trace_id\":\"42\",\"span_id\":\"7\",\"model\":\"gpt-4.1-mini\"}\n\n"),
                 "/api/media/upload" when MediaUploadFailuresRemaining-- > 0 => Json("{\"detail\":\"Temporary upload failure\"}", HttpStatusCode.InternalServerError),
                 "/api/media/upload" => Json("{\"url\":\"https://storage.example.test/item\",\"kind\":\"image\",\"mime_type\":\"image/png\",\"size_bytes\":4}"),
+                "/api-dotnet/media/upload" => Json("{\"url\":\"https://storage.example.test/item\",\"kind\":\"image\",\"mime_type\":\"image/png\",\"size_bytes\":4}"),
                 "/api/feedback" => Json("{}", HttpStatusCode.NoContent),
                 "/api/observability-demo/not-found" => Json("{\"detail\":\"Expected missing route\"}", HttpStatusCode.NotFound),
                 _ => Json("{}", HttpStatusCode.NotFound),
@@ -370,8 +587,10 @@ public sealed class ViewModelTests
     {
         public int AuthenticatedNavigations { get; private set; }
         public int LoginNavigations { get; private set; }
+        public int AdvisorNavigations { get; private set; }
         public void ShowAuthenticatedApp() => AuthenticatedNavigations++;
         public void ShowLogin() => LoginNavigations++;
+        public Task ShowAdvisorAsync() { AdvisorNavigations++; return Task.CompletedTask; }
     }
 
     private sealed class FakePreferences : IAppPreferences
@@ -388,7 +607,8 @@ public sealed class ViewModelTests
 
     private sealed class FakeLinkLauncher : ILinkLauncher
     {
-        public Task OpenAsync(Uri uri) => Task.CompletedTask;
+        public Uri? LastOpened { get; private set; }
+        public Task OpenAsync(Uri uri) { LastOpened = uri; return Task.CompletedTask; }
     }
 
     private sealed class FakeRuntimeInfo : IAppRuntimeInfo
@@ -429,6 +649,7 @@ public sealed class ViewModelTests
     {
         private int nextOperation;
         public string? IdentifiedUserId { get; private set; }
+        public string? IdentifiedUserEmail { get; private set; }
         public bool UserCleared { get; private set; }
         public bool SessionStopped { get; private set; }
         public List<string> LogMessages { get; } = [];
@@ -436,13 +657,19 @@ public sealed class ViewModelTests
         public List<KeyValuePair<string, object>> Attributes { get; } = [];
         public List<(string Name, string Key)> SucceededOperations { get; } = [];
         public List<(string Name, string Key, bool Abandoned)> FailedOperations { get; } = [];
-        public void IdentifyUser(string id, string email) => IdentifiedUserId = id;
+        public void IdentifyUser(string id, string email)
+        {
+            IdentifiedUserId = id;
+            IdentifiedUserEmail = email;
+        }
         public void ClearUser() => UserCleared = true;
         public void StopSession() => SessionStopped = true;
         public string StartOperation(string name, IReadOnlyDictionary<string, object>? attributes = null) { Capture(attributes); return $"operation-{++nextOperation}"; }
         public void SucceedOperation(string name, string operationKey, IReadOnlyDictionary<string, object>? attributes = null) { Capture(attributes); SucceededOperations.Add((name, operationKey)); }
         public void FailOperation(string name, string operationKey, bool abandoned, IReadOnlyDictionary<string, object>? attributes = null) { Capture(attributes); FailedOperations.Add((name, operationKey, abandoned)); }
         public void Info(string message, IReadOnlyDictionary<string, object>? attributes = null) { LogMessages.Add(message); Capture(attributes); }
+        public void Warning(string message, IReadOnlyDictionary<string, object>? attributes = null) { LogMessages.Add(message); Capture(attributes); }
+        public void ErrorLog(string message, IReadOnlyDictionary<string, object>? attributes = null) { LogMessages.Add(message); Capture(attributes); }
         public void Error(string message, Exception exception, IReadOnlyDictionary<string, object>? attributes = null) { ErrorMessages.Add(message); Capture(attributes); }
         private void Capture(IReadOnlyDictionary<string, object>? attributes)
         {

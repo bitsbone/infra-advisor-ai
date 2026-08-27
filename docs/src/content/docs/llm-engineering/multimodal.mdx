@@ -1,161 +1,107 @@
 ---
 title: Multimodal input
-description: Image and voice attachments in chat — a cascade design for both modalities, and how each is captured as real audio_parts/image_parts (Python) and OTel GenAI message parts (.NET) so they render inline in the Datadog trace view.
+description: Image and voice attachments in chat, the text-cascade architecture, and privacy-safe Datadog telemetry for both agent backends.
 ---
 
 import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
-Datadog Agent Observability added multimodal (voice/image) tracing support, and InfraAdvisor's chat now lets a user attach an image or record a voice message on either backend. This page covers the architecture and, just as importantly, how it's captured — both stacks now produce spans that render inline audio players and images in Datadog's trace view, not just flat metadata tags.
+InfraAdvisor accepts image and voice attachments on either backend. Media is processed by Azure OpenAI and contributes to the same routed infrastructure-advisor workflow as a typed question, while Datadog records operational signals without copying user content or storage credentials into telemetry.
 
 ## Architecture at a glance
 
 ```
-UI (Chat.tsx)
-  └─► POST /api/media/upload or /api-dotnet/media/upload  (matches the selected chat backend)
+UI
+  └─► POST /api/media/upload or /api-dotnet/media/upload
         └─► Azure Blob Storage `chat-media` container
-              └─► returns { url, kind, mime_type, size_bytes } — a read-only SAS URL, 7-day expiry
+              └─► returns { url, kind, mime_type, size_bytes } with a read-only SAS URL
 
 /query or /query/stream body: { query, attachments: [Attachment] }
-  ├─ audio attachment → transcribed via a dedicated Whisper deployment, wrapped in its own
-  │                     LLM-kind span carrying the raw audio as audio_parts/a "uri" part
-  └─ image attachment → described via a dedicated vision-model call, wrapped in its own
-                        LLM-kind span carrying the raw image as image_parts/a "uri" part
+  ├─ audio attachment → Whisper transcript → effective text query
+  └─ image attachment → vision description or provider vision content
 
-Both cascade to plain TEXT before the main specialist agent ever runs — the
-transcript / image description is folded into the query. The specialist's
-tool-calling loop only ever sees text, on both backends.
+Datadog spans retain modality, allowlisted MIME type, byte count, duration, status, model, domain, and trace/span correlation. They do not retain filenames, chat or RUM session IDs, SAS URLs/query strings, prompts, transcripts, descriptions, responses, or media bytes.
 ```
 
-Four decisions shape everything below:
+Four decisions shape the implementation:
 
-1. **Both modalities cascade to text, not just audio.** Azure OpenAI's chat deployments here (`gpt-4.1-mini`/`gpt-4.1`) accept vision content directly, so the original design sent the image inline to the specialist's tool-calling call. That turned out to be a dead end for capture (see [Why both modalities need a pre-step](#why-both-modalities-need-a-pre-step) below) — so images now go through a dedicated vision-description call *before* the agent runs, exactly mirroring how audio already worked. Both the transcript and the image description are folded into the query text; the specialist's ReAct loop is 100% text-only regardless of which modality (if any) the turn started as.
-2. **Attachments live in Blob Storage, not inline.** The UI never sends base64 image/audio bytes in the request body. It uploads first, gets a SAS URL back, and that URL is what flows through the request and Redis conversation history. This keeps Redis lean (history is reloaded in full every turn) — the *trace* payload is a separate concern, covered below.
-3. **Each backend uploads independently, to the same container.** `POST /media/upload` is implemented on both `agent-api` (Python, `media.py`) and `agent-api-dotnet` (`Services/MediaService.cs`), against the same `chat-media` Blob Storage container and identical env var names/blob-naming convention/SAS semantics. The UI's `getUploadApiBase()` follows whichever backend is currently selected — this keeps the .NET pipeline fully self-contained (no dependency on the Python pod being up) so it can be demoed as a pure .NET path.
-4. **Whisper lives on its own Azure OpenAI account.** See [Why Whisper needs its own account](#why-whisper-needs-its-own-azure-openai-account) below.
+1. **Audio cascades to text.** Whisper runs before routing, and its transcript is folded into the effective query so classification, retrieval, and tools understand the voice turn.
+2. **Attachments live in Blob Storage, not request bodies.** Clients upload first and pass an expiring read-only reference to the selected backend. Raw bytes are not placed in the query JSON or Redis text history.
+3. **Storage identifiers are generated and unlinkable.** Blob keys use `<kind>/<random UUID>` and never include the original filename or raw chat session ID.
+4. **Telemetry is metadata-only.** Provider calls still receive the content they need, but custom spans and logs expose only bounded operational representations.
+5. **Attachment references are untrusted input.** Both query modes reject a reference before agent invocation unless it uses HTTPS, the configured public Blob host and media container, the generated `<kind>/<UUID>` path, an allowlisted matching kind/MIME pair, a bounded positive size, and a blob-scoped read-only SAS.
 
 <Aside type="caution">
-**Attachments only apply to the turn they're submitted in.** Replayed conversation history stays text-only — a past turn's image or audio is never re-processed on subsequent turns. This bounds both token cost and Whisper/vision-call volume (each attachment is transcribed/described exactly once, not on every history replay).
+Attachments only apply to the turn where they are submitted. Replayed conversation history does not re-transcribe or re-analyze prior media, which bounds provider cost and reduces sensitive-data lifetime.
 </Aside>
-
-## Why Whisper needs its own Azure OpenAI account
-
-`whisper-001`'s `Standard` deployment SKU isn't offered in every region — the main Azure OpenAI account here lives in `eastus`, which has **no deployable SKU for whisper at all** (confirmed via the Cognitive Services models API: `az rest .../locations/eastus/models` returns an empty `skus: []` for the whisper model entry, while `eastus2`, `westeurope`, `northcentralus`, and others return a populated `Standard` SKU). A `GlobalStandard` tier also shows up in a naive search for "whisper" in some regions, but it's actually a different model (`gpt-realtime-whisper`, tied to the Realtime API) — not a substitute for batch transcription via `audio.transcriptions.create()`.
-
-Since a deployment's region is fixed to its parent Cognitive Services account, the fix is a second, dedicated account (`oai-infra-advisor-whisper-<env>`) in `eastus2`. See [Azure Infrastructure](/infra-advisor-ai/architecture/infrastructure/#azure-openai-azure-openaibicep) for the resource details.
 
 ## Uploading an attachment
 
-`services/agent-api/src/main.py`'s `POST /media/upload` — multipart `UploadFile`, behind the same `require_auth` dependency as `/query`, rate-limited tighter (`10/minute` vs `20/minute`) since uploads are heavier. Validates content-type against an allowlist (`image/jpeg`, `image/png`, `image/webp`, `audio/webm`, `audio/wav`, `audio/mpeg`, `audio/ogg`) and a 10 MB size cap — 415 / 413 on rejection.
+Both `agent-api` and `agent-api-dotnet` implement `POST /media/upload` against the same storage contract. The endpoint is authenticated, rate-limited, restricted to an allowlist (`image/jpeg`, `image/png`, `image/webp`, `audio/webm`, `audio/wav`, `audio/mpeg`, `audio/ogg`), and capped at 10 MB.
 
 ```python
 # services/agent-api/src/media.py (excerpt)
-def upload_media(file_bytes, filename, content_type, session_id) -> MediaAttachment:
-    kind = _ALLOWED_CONTENT_TYPES.get(content_type.split(";", 1)[0].strip().lower())
-    blob_name = f"{session_id}/{uuid4()}-{safe_filename(filename)}"
-    blob_client = container_client.upload_blob(name=blob_name, data=file_bytes, ...)
-    sas_token = generate_blob_sas(..., permission=BlobSasPermissions(read=True), expiry=...)
-    return MediaAttachment(url=f"{blob_client.url}?{sas_token}", kind=kind, mime_type=..., size_bytes=...)
+kind = _ALLOWED_CONTENT_TYPES[bare_content_type]
+blob_name = f"{kind}/{uuid.uuid4().hex}"
+blob_client = container_client.upload_blob(name=blob_name, data=file_bytes, ...)
+return MediaAttachment(url=f"{blob_client.url}?{sas_token}", kind=kind, mime_type=bare_content_type, size_bytes=len(file_bytes))
 ```
 
-The returned `{url, kind, mime_type, size_bytes}` — an **Attachment** — is the shared shape used by both backends' request bodies, Redis history, and the UI's `AttachmentChip`.
+The `filename` and `session_id` arguments remain part of the endpoint workflow for compatibility, but object naming deliberately ignores them. Upload spans record `media.kind`, `blob.size_bytes`, and the normalized allowlisted content type; they do not record the object name or returned URL.
 
-## Why both modalities need a pre-step
+Clients cannot turn the returned URL field into a general-purpose server fetch. `validate_attachment_reference` in Python and `AttachmentReferenceValidator` in .NET fail closed for loopback, link-local, private IP, foreign host, wrong container, path-kind mismatch, MIME-kind mismatch, invalid size, writable SAS permission, or an incomplete SAS contract. Both audio downloaders disable automatic redirects, bound reads to 10 MB, and require the returned byte count to match the validated reference. These checks happen before memory restoration and model invocation, and the tests use loopback and cloud metadata addresses as explicit SSRF regressions.
 
-The original design sent images inline — a multi-part `HumanMessage`/`ChatMessage` with both text and the image URL, handed directly to the specialist's tool-calling call. That call is auto-instrumented (ddtrace's LangChain/OpenAI integration on Python; Microsoft.Extensions.AI's `.UseOpenTelemetry()` on .NET) — code never touches that span directly, which turns out to matter a lot:
+## Privacy-safe provider boundary
 
-- **On .NET**, this is actually *fine* — verified empirically (a throwaway console app wrapping a fake `IChatClient` with `.UseOpenTelemetry()` and inspecting the emitted `Activity`) that a `UriContent` part on a `ChatMessage` is automatically serialized into the OTel GenAI semantic-convention `gen_ai.input.messages` attribute as a `{"type":"uri","uri":...,"mime_type":...,"modality":"image"}` part — no extra code needed. Images already worked correctly on .NET from the start.
-- **On Python**, it doesn't work. ddtrace's LangChain/OpenAI auto-instrumentation does **not** populate `image_parts`/`audio_parts` on the span it creates — grepping the installed `ddtrace` package's `contrib/internal/{openai,langchain}/` confirms the only place `audio_parts` gets auto-populated is OpenAI's **Realtime API** integration (`_realtime.py`), which this app doesn't use. Since the actual vision-capable chat call is created by the auto-instrumentation (not by our code), there's no span reference to call `LLMObs.annotate(span=..., image_parts=...)` on after the fact.
-
-The fix, applied consistently to both modalities regardless of which one actually needed it: run a **dedicated pre-step** (Whisper for audio, a small vision-only LLM call for images) wrapped in a span the code creates and controls, annotate *that* span with the real media content, and fold its text output into the query before the specialist agent ever runs. This is why audio was designed as a cascade from the start, and why images now are too — same shape, same reasoning, applied for different underlying reasons per language.
-
-## The cascade: audio → transcript, image → description
+The SAS URL, raw media, typed prompt, and generated transcript or description exist in application memory only where provider functionality requires them. They are not duplicated into custom logs, span tags, LLMObs input/output annotations, metric tags, or object names.
 
 <Tabs syncKey="lang">
-  <TabItem label="Python (ddtrace LLMObs)">
+  <TabItem label="Python">
 
-Both pre-steps are wrapped in `LLMObs.llm(...)` — not `LLMObs.task(...)` — because `audio_parts`/`image_parts` on `input_data`/`output_data` are **only rendered specially on LLM-kind spans** (per the `LLMObs.annotate()` docstring). `agent.py`'s `_transcribe_and_annotate()` and `_describe_image_and_annotate()` run inside the `LLMObs.workflow("query-processing")` span, nested the same way `load-history`/`extract-sources` already are:
-
-```python
-# services/agent-api/src/agent.py — _transcribe_and_annotate() (excerpt)
-with LLMObs.llm(model_name=whisper_deployment, model_provider="azure", name="transcribe-audio") as stt_span:
-    transcript, duration_s, audio_bytes = transcribe_audio(url, mime_type)
-    LLMObs.annotate(
-        span=stt_span,
-        input_data=[{
-            "role": "user", "content": "(voice message)",
-            "audio_parts": [{"mime_type": mime_type, "content": base64.b64encode(audio_bytes).decode()}],
-        }],
-        output_data=[{"role": "assistant", "content": transcript}],
-    )
-```
+Python wraps Whisper and vision pre-steps in named LLMObs spans, but annotates them only with bounded metadata:
 
 ```python
-# services/agent-api/src/agent.py — _describe_image_and_annotate() (excerpt)
-with LLMObs.llm(model_name=llm.deployment_name, model_provider="azure", name="describe-image") as vision_span:
-    image_bytes = download_media_bytes(image_attachment["url"])
-    response = await llm.ainvoke([HumanMessage(content=[
-        {"type": "text", "text": _IMAGE_DESCRIPTION_PROMPT},
-        {"type": "image_url", "image_url": {"url": image_attachment["url"]}},
-    ])])
-    LLMObs.annotate(
-        span=vision_span,
-        input_data=[{
-            "role": "user", "content": _IMAGE_DESCRIPTION_PROMPT,
-            "image_parts": [{"mime_type": image_attachment["mime_type"], "content": base64.b64encode(image_bytes).decode()}],
-        }],
-        output_data=[{"role": "assistant", "content": response.content}],
-    )
+LLMObs.annotate(
+    span=stt_span,
+    tags={
+        "input.modality": "audio",
+        "output.modality": "text",
+        "audio.mime_type": mime_type,
+        "audio.size_bytes": str(size_bytes),
+        "audio.duration_s": f"{duration_s:.2f}",
+        "transcript.characters": str(len(transcript)),
+    },
+)
 ```
 
-Both are folded into `effective_query` (e.g. `f"{query}\n\n[Attached image]: {description}"`), which is what the router, domain classifier, and specialist agent all see from that point on — `_build_human_message()` now *always* returns a plain-text `HumanMessage`, since both modalities have already cascaded by the time it's called.
-
-<Aside type="danger">
-**Pinned to a pre-release.** `image_parts` only exists in `ddtrace==4.13.0rc3` — there is no stable 4.13.0 release yet as of this writing (`audio_parts` alone shipped stably in 4.12.0). `services/agent-api/pyproject.toml` pins the exact RC version deliberately, for this showcase, rather than floating on `>=`. Re-pin to the stable 4.13.0 (or later) release once one exists, re-verifying the schema hasn't changed — check `ddtrace/llmobs/_llmobs.py`'s `annotate()` docstring directly rather than trusting release notes alone (that's how the exact version boundary here was determined).
-</Aside>
+The workflow, router, specialist, retrieval, and evaluation helpers follow the same rule: domain, counts, tool names, model, status, and latency are observable; prompt/answer content and session identifiers are not custom attributes. Error logs emit an operation and exception type rather than exception text that could contain a URL or provider payload.
 
   </TabItem>
-  <TabItem label=".NET (OpenTelemetry GenAI semconv)">
+  <TabItem label=".NET">
 
-.NET has no LLM Obs SDK, so the equivalent isn't `LLMObs.llm()` — it's setting the **same OTel GenAI semantic-convention attributes** Microsoft.Extensions.AI's own `.UseOpenTelemetry()` decorator already emits for ordinary chat calls (`gen_ai.input.messages` / `gen_ai.output.messages`, a JSON-serialized array of `{role, parts}` where each part has a `type`). Datadog's OTel intake maps these directly to its internal LLM Obs schema — see [Datadog's OTel instrumentation docs](https://docs.datadoghq.com/llm_observability/instrumentation/otel_instrumentation/).
-
-Images need no extra code (see previous section — `UriContent` already serializes correctly). Audio is manual, since the Whisper call goes through `Azure.AI.OpenAI`'s `AudioClient` directly, not through an `IChatClient`:
+The .NET pipeline sets `TelemetryPrivacy.EnableSensitiveData = false` for the Microsoft.Extensions.AI chat and embedding decorators and the Microsoft Agents Framework decorator. This prevents their generated GenAI spans from serializing message content or attachment URIs. The manual Whisper activity uses the same metadata-only contract as Python:
 
 ```csharp
-// services/agent-api-dotnet/Services/AgentService.cs — TranscribeAudioIfPresentAsync() (excerpt)
-using var activity = ActivitySource.StartActivity("transcribe_audio", ActivityKind.Internal);
-activity?.SetTag("gen_ai.operation.name", "transcribe_audio");
-activity?.SetTag("gen_ai.request.model", _whisperDeployment);
-activity?.SetTag("dd.llmobs.span.kind", "llm");   // not "task" — this is a real model call
-
-var inputMessages = JsonSerializer.Serialize(new[] { new {
-    role = "user",
-    parts = new object[] { new {
-        type = "uri", uri = audioAttachment.Url,
-        mime_type = audioAttachment.MimeType, modality = "audio",
-    } },
-} });
-activity?.SetTag("gen_ai.input.messages", inputMessages);
-
-var result = await audioClient.TranscribeAudioAsync(stream, $"audio.{ext}", cancellationToken: ct);
-
-var outputMessages = JsonSerializer.Serialize(new[] { new {
-    role = "assistant",
-    parts = new object[] { new { type = "text", content = result.Value.Text } },
-} });
-activity?.SetTag("gen_ai.output.messages", outputMessages);
+activity?.SetTag("input.modality", "audio");
+activity?.SetTag("audio.mime_type", audioAttachment.MimeType);
+activity?.SetTag("audio.size_bytes", audioAttachment.SizeBytes);
+activity?.SetTag("output.modality", "text");
+activity?.SetTag("transcript.characters", result.Value.Text.Length);
+activity?.SetTag("audio.duration_s", elapsedSeconds);
 ```
 
-A `"uri"` part (referencing the same Blob Storage SAS URL used everywhere else) is used instead of inline base64 — the audio already has a stable URL, and avoids embedding a potentially large base64 payload directly in a span attribute.
-
-<Aside type="note">
-**Verified empirically, not from docs alone.** The exact schema above (`role`/`parts`/`type`/`uri`/`mime_type`/`modality`/`content`) was confirmed by building a throwaway console app: a fake `IChatClient` wrapped in `.UseOpenTelemetry()`, fed a `ChatMessage` with a `UriContent` part, with an `ActivityListener` printing every emitted tag. That's also how "images need zero extra code on .NET" was confirmed, rather than assumed from the OTel GenAI semantic-conventions spec alone.
-</Aside>
+OpenTelemetry HTTP instrumentation excludes `*.blob.core.windows.net` media downloads so SAS query strings cannot be captured by an automatically generated client span. The parent manual activity still provides latency, status, model, type, and size visibility.
 
   </TabItem>
 </Tabs>
 
+## What remains observable
+
+The privacy boundary intentionally trades inline media playback and raw prompt inspection in Datadog for safer educational defaults. Demonstrations can still compare backend/model latency, failure rate, modality mix, upload sizes, transcription duration, routed domain, selected specialist, tool calls, source counts, token usage emitted by provider integrations, and end-to-end trace structure.
+
+Regression tests use sentinel filenames, session IDs, SAS signatures, prompts, transcripts, and binary markers to prove those values do not appear in custom annotations or generated object names.
+
 ## What's next
 
-- [Instrumentation](../instrumentation/python/) — the base ddtrace/OTel setup this builds on.
-- [.NET ↔ Python feature parity](/infra-advisor-ai/development/dotnet-python-parity/) — where multimodal sits in the broader parity picture.
-- [Azure Infrastructure](/infra-advisor-ai/architecture/infrastructure/) — the Whisper account and `chat-media` container this feature provisions.
+- [Instrumentation](../instrumentation/python/) — the base ddtrace and OpenTelemetry setup.
+- [.NET ↔ Python feature parity](/infra-advisor-ai/development/dotnet-python-parity/) — multimodal behavior across both stacks.
+- [Azure Infrastructure](/infra-advisor-ai/architecture/infrastructure/) — the Whisper account and `chat-media` container.

@@ -16,6 +16,16 @@ data:
   DD_LOGS_INJECTION: "true"
   DD_CODE_ORIGIN_FOR_SPANS_ENABLED: "true"
   DD_TRACE_SAMPLE_RATE: "1.0"
+  # Drop kubelet probes before trace ingestion while retaining 100% sampling
+  # for tool/API traffic in this observability demo.
+  DD_TRACE_SAMPLING_RULES: '[{"resource":"GET /livez","sample_rate":0.0},{"resource":"GET /readyz","sample_rate":0.0},{"sample_rate":1.0}]'
+  # SAM.gov authenticates with a query parameter. Never attach query strings to
+  # outbound HTTP spans because that would disclose the provider API key.
+  DD_TRACE_HTTP_CLIENT_TAG_QUERY_STRING: "false"
+  # This provider-adapter service emits metadata-only APM spans and explicit
+  # bounded result summaries. Disable automatic LLMObs payload extraction so
+  # MCP arguments/results and OpenAI/LangChain inputs cannot become span data.
+  DD_LLMOBS_ENABLED: "false"
   DD_RUNTIME_METRICS_ENABLED: "true"
   AZURE_SEARCH_INDEX_NAME: "infra-advisor-knowledge"
   AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-4.1-mini"

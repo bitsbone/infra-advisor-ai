@@ -8,6 +8,18 @@ namespace InfraAdvisor.Mobile.Configuration;
 public static class AppConfiguration
 {
     public static string ApiBaseUrl => Get("InfraAdvisorApiBaseUrl", "https://infra-advisor-ai.kyletaylor.dev/");
+    public static string ApiFirstPartyHost
+    {
+        get
+        {
+            if (!Uri.TryCreate(ApiBaseUrl, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || string.IsNullOrWhiteSpace(uri.Host))
+            {
+                throw new InvalidOperationException("InfraAdvisorApiBaseUrl must be an absolute HTTP or HTTPS URL.");
+            }
+
+            return uri.Host;
+        }
+    }
     public const string DatadogSite = "US3";
     public static string DatadogEnvironment => Get("InfraAdvisorDatadogEnvironment", "demo");
     public static string DatadogService => Get("InfraAdvisorDatadogService", "infra-advisor-mobile-maui");

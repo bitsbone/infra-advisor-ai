@@ -4,6 +4,7 @@ All external HTTP calls are mocked with respx so no real credentials
 or network access are required (USASpending.gov is a public API — no auth needed).
 """
 
+import logging
 import os
 import sys
 
@@ -191,3 +192,17 @@ async def test_api_error_logs_response_body_for_debugging():
     assert kwargs["source"] == "usaspending"
     assert kwargs["status_code"] == 422
     assert "invalid naics_codes" in kwargs["body"]
+
+
+async def test_contract_award_logs_exclude_query_and_provider_body(caplog):
+    query = "PRIVATE-CONTRACT-QUERY"
+    provider_body = "PRIVATE-USASPENDING-BODY"
+    with caplog.at_level(logging.INFO, logger="tools.contract_awards"):
+        with respx.mock as mock:
+            mock.post(USASPENDING_URL).mock(return_value=Response(422, text=provider_body))
+            await get_contract_awards(ContractAwardsInput(query=query, geography="PRIVATE-GEOGRAPHY"))
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert query not in logged
+    assert "PRIVATE-GEOGRAPHY" not in logged
+    assert provider_body not in logged

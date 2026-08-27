@@ -6,10 +6,14 @@
     x:Class="InfraAdvisor.Mobile.Views.InfoPage"
     x:DataType="viewModels:InfoViewModel"
     Title="Info"
+    SafeAreaEdges="Container"
     AutomationId="InfoPage">
     <ScrollView>
         <VerticalStackLayout Padding="20" Spacing="16" MaximumWidthRequest="720">
-            <Label Text="App &amp; Observability" Style="{StaticResource PageTitle}" />
+            <VerticalStackLayout Spacing="2">
+                <Label Text="Profile" Style="{StaticResource PageTitle}" />
+                <Label Text="Account and observability configuration" Style="{StaticResource MutedBody}" />
+            </VerticalStackLayout>
             <Border Style="{StaticResource Card}">
                 <VerticalStackLayout Spacing="10">
                     <Label Text="Profile" Style="{StaticResource SectionTitle}" />
@@ -40,7 +44,7 @@
                 </VerticalStackLayout>
             </Border>
             <Label Text="Client tokens, JWTs, prompts, responses, filenames, and upload URLs are intentionally omitted from this screen and from custom telemetry." FontSize="12" TextColor="{StaticResource TextSecondary}" />
-            <Button Text="Logout" Command="{Binding LogoutCommand}" Style="{StaticResource DangerButton}" AutomationId="Logout" />
+            <Button Text="Logout" Command="{Binding LogoutCommand}" Style="{StaticResource DangerButton}" SemanticProperties.Hint="Clears the in-memory session and returns to sign in" AutomationId="Logout" />
         </VerticalStackLayout>
     </ScrollView>
 </ContentPage>

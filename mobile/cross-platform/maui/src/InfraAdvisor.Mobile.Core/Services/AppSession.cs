@@ -20,6 +20,10 @@ public sealed class AppSession
 
     public string? ConversationId { get; set; }
 
+    /// <summary>A one-shot navigation handoff from History to the Advisor tab.</summary>
+    public string? RequestedConversationId { get; private set; }
+    public bool IsNewConversationRequested { get; private set; }
+
     public bool IsAuthenticated => Token is not null && User is not null;
 
     public void SignIn(LoginResponse response)
@@ -33,6 +37,30 @@ public sealed class AppSession
     {
         SessionId = Guid.NewGuid().ToString();
         ConversationId = null;
+        RequestedConversationId = null;
+        IsNewConversationRequested = false;
+    }
+
+    public void RequestNewConversation()
+    {
+        StartNewConversation();
+        IsNewConversationRequested = true;
+    }
+
+    public bool ConsumeNewConversationRequest()
+    {
+        var value = IsNewConversationRequested;
+        IsNewConversationRequested = false;
+        return value;
+    }
+
+    public void RequestConversation(string conversationId) => RequestedConversationId = conversationId;
+
+    public string? ConsumeRequestedConversation()
+    {
+        var value = RequestedConversationId;
+        RequestedConversationId = null;
+        return value;
     }
 
     public void SignOut()

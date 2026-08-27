@@ -5,6 +5,7 @@ credentials or network access are required. We stub the responses endpoint
 to return the schema-constrained JSON the production model would emit.
 """
 
+import logging
 import os
 import sys
 from unittest.mock import patch
@@ -160,6 +161,22 @@ async def test_responses_api_error_returns_structured_error(monkeypatch):
     assert "error" in result
     assert "Azure OpenAI" in result["error"]
     assert result["source"] == "azure_openai"
+
+
+@pytest.mark.asyncio
+async def test_web_procurement_logs_exclude_filters_and_provider_body(monkeypatch, caplog):
+    _env_vars(monkeypatch)
+    provider_body = "PRIVATE-AZURE-RESPONSE-SNIPPET"
+    with caplog.at_level(logging.INFO, logger="tools.web_procurement_search"):
+        with respx.mock() as mock:
+            mock.post(url__startswith=_RESPONSES_URL).mock(return_value=Response(400, text=provider_body))
+            await search_web_procurement(WebProcurementSearchInput(query="PRIVATE-QUERY", geography="PRIVATE-GEOGRAPHY", sector="water"))
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "PRIVATE-QUERY" not in logged
+    assert "PRIVATE-GEOGRAPHY" not in logged
+    assert "water" not in logged
+    assert provider_body not in logged
 
 
 @pytest.mark.asyncio

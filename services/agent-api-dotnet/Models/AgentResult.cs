@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace InfraAdvisor.AgentApi.Models;
 
 public record AgentResult(
@@ -5,6 +7,7 @@ public record AgentResult(
     List<string> Sources,
     List<string> ToolsCalled,
     string QueryDomain,
+    List<JsonElement>? Artifacts = null,
     bool Blocked = false,
     string? BlockReason = null
 );

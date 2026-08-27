@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ with DAG(
     ## FEMA Refresh DAG
 
     Pulls FEMA DisasterDeclarationsSummaries for all declarations since 2010,
-    stores raw records as Parquet in Azure Blob Storage (`infra-advisor-raw`),
+    stores raw records as Parquet in Azure Blob Storage (`raw-data`),
     then chunks and indexes each record into Azure AI Search under
     domain='environmental'.
 
@@ -44,6 +44,11 @@ with DAG(
     def fetch_fema_data(**context):
         """Paginate the OpenFEMA API and pull all disaster declarations since 2010."""
         import requests
+        from _blob_manifest import (
+            build_run_blob_path,
+            get_container_client,
+            write_records_manifest,
+        )
 
         all_records = []
         skip = 0
@@ -70,7 +75,18 @@ with DAG(
             skip += PAGE_SIZE
 
         log.info("Total FEMA disaster declarations fetched: %d", len(all_records))
-        context["ti"].xcom_push(key="fema_records", value=all_records)
+        run_id = str(context.get("run_id") or context.get("ds") or "manual")
+        blob_path = build_run_blob_path("fema/manifests", "declarations", run_id, ".jsonl")
+        manifest = write_records_manifest(
+            get_container_client(RAW_CONTAINER),
+            container_name=RAW_CONTAINER,
+            blob_path=blob_path,
+            records=all_records,
+            source="openfema.disaster_declarations",
+            run_id=run_id,
+            dag_id="fema_refresh",
+        )
+        context["ti"].xcom_push(key="records_manifest", value=manifest)
         return len(all_records)
 
     # -----------------------------------------------------------------------
@@ -79,33 +95,46 @@ with DAG(
     def store_raw_parquet(**context):
         """Persist raw FEMA records as Parquet in Azure Blob Storage."""
         import pandas as pd
-        from azure.storage.blob import BlobServiceClient
-        from _dd_blob import dd_upload_blob
+        from _blob_manifest import (
+            build_run_blob_path,
+            get_container_client,
+            read_records_manifest,
+            write_blob_manifest,
+        )
 
-        records = context["ti"].xcom_pull(key="fema_records", task_ids="fetch_fema_data")
+        manifest = context["ti"].xcom_pull(
+            key="records_manifest", task_ids="fetch_fema_data"
+        )
+        container = get_container_client(RAW_CONTAINER)
+        records = read_records_manifest(
+            container, manifest, expected_source="openfema.disaster_declarations"
+        )
         if not records:
             raise ValueError("No FEMA records received from fetch step.")
 
         df = pd.DataFrame(records)
-        run_date = context["ds"]
-        blob_path = f"fema/fema_declarations_{run_date.replace('-', '')}.parquet"
+        blob_path = build_run_blob_path(
+            "fema", "fema_declarations", manifest["run_id"], ".parquet"
+        )
 
         parquet_buf = BytesIO()
         df.to_parquet(parquet_buf, index=False)
         parquet_buf.seek(0)
 
-        conn_str = os.environ["AZURE_STORAGE_CONNECTION_STRING"]
-        blob_client = BlobServiceClient.from_connection_string(conn_str)
-        container = blob_client.get_container_client(RAW_CONTAINER)
-
-        try:
-            container.create_container()
-        except Exception:
-            pass  # already exists
-
-        dd_upload_blob(container, blob_path, parquet_buf, dag_id="fema_refresh")
+        parquet_manifest = write_blob_manifest(
+            container,
+            container_name=RAW_CONTAINER,
+            blob_path=blob_path,
+            payload=parquet_buf.getvalue(),
+            source="openfema.disaster_declarations.parquet",
+            run_id=manifest["run_id"],
+            record_count=len(records),
+            content_type="application/vnd.apache.parquet",
+            content_encoding=None,
+            dag_id="fema_refresh",
+        )
         log.info("Stored raw FEMA Parquet at: %s/%s", RAW_CONTAINER, blob_path)
-        context["ti"].xcom_push(key="parquet_blob_path", value=blob_path)
+        context["ti"].xcom_push(key="parquet_manifest", value=parquet_manifest)
 
     # -----------------------------------------------------------------------
     # Task 3 — index_to_search
@@ -116,8 +145,16 @@ with DAG(
         from azure.core.credentials import AzureKeyCredential
         from azure.search.documents import SearchClient
         from openai import AzureOpenAI
+        from _blob_manifest import get_container_client, read_records_manifest
 
-        records = context["ti"].xcom_pull(key="fema_records", task_ids="fetch_fema_data")
+        manifest = context["ti"].xcom_pull(
+            key="records_manifest", task_ids="fetch_fema_data"
+        )
+        records = read_records_manifest(
+            get_container_client(RAW_CONTAINER),
+            manifest,
+            expected_source="openfema.disaster_declarations",
+        )
         if not records:
             raise ValueError("No FEMA records to index.")
 
@@ -126,6 +163,9 @@ with DAG(
         index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
         openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         openai_api_key = os.environ["AZURE_OPENAI_API_KEY"]
+        embedding_deployment = os.environ.get(
+            "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"
+        )
 
         oai_client = AzureOpenAI(
             azure_endpoint=openai_endpoint,
@@ -186,7 +226,7 @@ with DAG(
                 doc_id = f"fema_{disaster_number}_{chunk_idx}"
 
                 embedding_resp = oai_client.embeddings.create(
-                    model="text-embedding-ada-002",
+                    model=embedding_deployment,
                     input=chunk_text,
                 )
                 vector = embedding_resp.data[0].embedding

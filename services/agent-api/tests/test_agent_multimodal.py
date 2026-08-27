@@ -92,7 +92,7 @@ def _fake_llm(description: str = "A steel truss bridge with visible surface rust
 
 async def _run(query, attachments, llm=None):
     task_patch, llm_patch, annotate_patch = _patch_llmobs()
-    with task_patch, llm_patch, annotate_patch, patch("agent.download_media_bytes", return_value=b"fake-image-bytes"):
+    with task_patch, llm_patch, annotate_patch:
         return await _build_effective_query(query, attachments, llm or _fake_llm())
 
 
@@ -111,7 +111,7 @@ async def test_image_attachment_folds_description_into_query():
     assert "A steel truss bridge with visible surface rust." in effective_query
     assert tags["attachments.image_present"] == "true"
     assert tags["attachments.audio_present"] == "false"
-    assert tags["image.blob_url"] == _IMAGE_ATTACHMENT["url"]
+    assert tags["image.size_bytes"] == str(_IMAGE_ATTACHMENT["size_bytes"])
     llm.ainvoke.assert_awaited_once()
 
 
@@ -122,7 +122,7 @@ async def test_image_only_query_uses_description_as_effective_query():
 
 
 async def test_audio_attachment_folds_transcript_into_query():
-    with patch("agent.transcribe_audio", return_value=("what is the bridge condition", 1.23, b"fake-audio-bytes")):
+    with patch("agent.transcribe_audio", return_value=("what is the bridge condition", 1.23)):
         effective_query, tags = await _run("", [_AUDIO_ATTACHMENT])
 
     assert effective_query == "what is the bridge condition"
@@ -131,7 +131,7 @@ async def test_audio_attachment_folds_transcript_into_query():
 
 
 async def test_audio_transcript_appended_to_existing_text_query():
-    with patch("agent.transcribe_audio", return_value=("also check the water system", 0.5, b"fake-audio-bytes")):
+    with patch("agent.transcribe_audio", return_value=("also check the water system", 0.5)):
         effective_query, _ = await _run("bridges near Austin", [_AUDIO_ATTACHMENT])
 
     assert "bridges near Austin" in effective_query
@@ -154,7 +154,7 @@ async def test_image_description_failure_falls_back_gracefully():
 
 async def test_both_image_and_audio_attachments_handled_together():
     llm = _fake_llm("A flooded roadway with visible water damage.")
-    with patch("agent.transcribe_audio", return_value=("describe this", 2.0, b"fake-audio-bytes")):
+    with patch("agent.transcribe_audio", return_value=("describe this", 2.0)):
         effective_query, tags = await _run("", [_IMAGE_ATTACHMENT, _AUDIO_ATTACHMENT], llm)
 
     assert "describe this" in effective_query
@@ -166,3 +166,36 @@ async def test_both_image_and_audio_attachments_handled_together():
 def test_build_human_message_is_always_plain_text():
     msg = _build_human_message("plain query")
     assert msg.content == "plain query"
+
+
+async def test_multimodal_annotations_exclude_sas_prompt_transcript_and_binary():
+    sentinel_url = "https://blob.example.test/audio/generated?sig=PRIVATE-SAS-DO-NOT-TRACE"
+    sentinel_prompt = "PRIVATE-PROMPT-DO-NOT-TRACE"
+    sentinel_transcript = "PRIVATE-TRANSCRIPT-DO-NOT-TRACE"
+    sentinel_binary = b"PRIVATE-BINARY-DO-NOT-TRACE"
+    attachment = {
+        "url": sentinel_url,
+        "kind": "audio",
+        "mime_type": "audio/webm",
+        "size_bytes": len(sentinel_binary),
+    }
+    annotate = MagicMock()
+    task_patch, llm_patch, _ = _patch_llmobs()
+
+    with (
+        task_patch,
+        llm_patch,
+        patch("agent.LLMObs.annotate", annotate),
+        patch("agent.transcribe_audio", return_value=(sentinel_transcript, 0.25)),
+    ):
+        effective_query, _ = await _build_effective_query(sentinel_prompt, [attachment], _fake_llm())
+
+    # The values remain available to the application/provider pipeline.
+    assert sentinel_prompt in effective_query
+    assert sentinel_transcript in effective_query
+    # Custom Datadog annotations contain only bounded type/size/count metadata.
+    annotations = repr(annotate.call_args_list)
+    assert sentinel_url not in annotations
+    assert sentinel_prompt not in annotations
+    assert sentinel_transcript not in annotations
+    assert sentinel_binary.decode() not in annotations

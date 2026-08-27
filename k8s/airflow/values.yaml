@@ -3,6 +3,9 @@
 # Fresh install: make install-airflow
 # Upgrade only:  make upgrade-airflow
 
+# Keep this aligned with services/ingestion/Dockerfile and pyproject.toml.
+airflowVersion: "3.2.1"
+
 # ── Cluster-wide env (applied to every Airflow pod) ──────────────────────────
 # The apache-airflow chart's top-level `env:` propagates to api-server,
 # scheduler, dag-processor, triggerer, and workers. Setting BASE_URL here
@@ -24,7 +27,9 @@ env:
     value: "true"
   - name: AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC
     value: "30"
-  - name: AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL
+  - name: AIRFLOW__SCHEDULER__SCHEDULER_HEALTH_CHECK_THRESHOLD
+    value: "180"
+  - name: AIRFLOW__DAG_PROCESSOR__MIN_FILE_PROCESS_INTERVAL
     value: "120"
 
 # ── API server (Airflow 3.x) ──────────────────────────────────────────────────
@@ -122,7 +127,7 @@ airflowLocalSettings: |-
 
 # ── Executor ───────────────────────────────────────────────────────────────────
 # LocalExecutor — runs tasks inside scheduler process.
-# Eliminates separate worker pods; appropriate for lab scale with 5 DAGs.
+# Eliminates separate worker pods; appropriate for this lab-scale DAG set.
 # At 3× Standard_D2s_v3 (24 GB total cluster RAM), this avoids OOM pressure.
 executor: LocalExecutor
 
@@ -132,9 +137,20 @@ migrateDatabaseJob:
   ttlSecondsAfterFinished: 300
 
 # ── Images ────────────────────────────────────────────────────────────────────
-# migrationsWaitTimeout must live here (not under migrateDatabaseJob)
+# The custom image contains the exact locked dependencies, DAGs, and scripts.
+# CI overrides this tag with the immutable Git commit SHA before deployment.
 images:
+  airflow:
+    repository: ghcr.io/kyletaylored/infra-advisor-ai/airflow
+    tag: latest
+    pullPolicy: Always
   migrationsWaitTimeout: 300
+
+# The chart adds this secret to every workload, hook, and migration pod that
+# pulls the private GHCR image. Create it in the Airflow namespace with
+# `make create-airflow-ghcr-secret` before install or upgrade.
+registry:
+  secretName: ghcr-pull-secret
 
 # ── Metadata DB ───────────────────────────────────────────────────────────────
 # Built-in Postgres sidecar via Helm — uses postgres:postgres credentials.
@@ -142,29 +158,14 @@ images:
 postgresql:
   enabled: true
 
-# ── DAG persistence ───────────────────────────────────────────────────────────
+# ── DAG delivery ──────────────────────────────────────────────────────────────
+# DAGs and scripts are bundled in the custom image. A PVC copy could leave the
+# scheduler and dag-processor on different revisions, so it is intentionally off.
 dags:
   persistence:
-    enabled: true
-    storageClassName: azurefile-csi
-    accessMode: ReadWriteMany
-    size: 1Gi
+    enabled: false
   gitSync:
     enabled: false
-
-# ── Extra pip packages ────────────────────────────────────────────────────────
-# Installed on every pod start. With LocalExecutor, tasks run in the scheduler
-# so packages are needed there. Keep this list stable — pip runs on every start.
-#
-# DJM requirements:
-#   apache-airflow-providers-openlineage >= 2.7.3  (Datadog transport)
-#   openlineage-python >= 1.37.0                   (Datadog transport)
-_pip_additional_requirements: >-
-  apache-airflow-providers-openlineage>=2.7.3 openlineage-python>=1.37.0
-  apache-airflow-providers-http>=6.0.0 azure-storage-blob>=12.28.0
-  azure-search-documents>=11.6.0 azure-identity>=1.25.3 tiktoken>=0.12.0
-  openpyxl>=3.1.5 pandas>=3.0.0 openai>=2.32.0 ddtrace>=4.7.1
-  httpx>=0.28.1 pypdf>=5.0.0 beautifulsoup4>=4.12.3 lxml>=5.3.0
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 scheduler:
@@ -174,9 +175,8 @@ scheduler:
       partition: 0
       maxUnavailable: 1
   livenessProbe:
-    # Override the default command so it calls airflow directly instead of
-    # going through /entrypoint, which re-runs pip install on every check and
-    # causes the 60s probe timeout → crash loop (23 restarts observed).
+    # Call airflow directly so probes remain cheap and cannot acquire future
+    # entrypoint side effects.
     command:
       - sh
       - -c
@@ -201,15 +201,6 @@ scheduler:
       "airflow"}]
 
   env:
-    # ── Pip packages — LocalExecutor mode only sets _PIP_ADDITIONAL_REQUIREMENTS on workers,
-    # not on the scheduler, so we inject it explicitly here to trigger the entrypoint install.
-    - name: _PIP_ADDITIONAL_REQUIREMENTS
-      value: >-
-        apache-airflow-providers-openlineage>=2.7.3 openlineage-python>=1.37.0
-        apache-airflow-providers-http>=6.0.0 azure-storage-blob>=12.28.0
-        azure-search-documents>=11.6.0 azure-identity>=1.25.3 tiktoken>=0.12.0
-        openpyxl>=3.1.5 pandas>=3.0.0 openai>=2.32.0 ddtrace>=4.7.1
-        httpx>=0.28.1 pypdf>=5.0.0 beautifulsoup4>=4.12.3 lxml>=5.3.0
     # ── Datadog trace-log correlation ───────────────────────────────────────────
     # _dd_logging.py in the DAGs folder imports ddtrace.auto in every process
     # (scheduler main + LocalExecutor task subprocesses) so task logs include
@@ -251,7 +242,7 @@ scheduler:
     - name: DD_SERVICE
       value: "airflow-scheduler"
     - name: DD_VERSION
-      value: "latest"
+      value: "3.2.1"
     - name: DD_AGENT_HOST
       value: "datadog-agent.datadog.svc.cluster.local"
     - name: DD_TRACE_AGENT_PORT
@@ -298,8 +289,13 @@ scheduler:
         secretKeyRef:
           name: airflow-azure-secret
           key: EIA_API_KEY
+    - name: SAMGOV_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: airflow-azure-secret
+          key: SAMGOV_API_KEY
     - name: TWDB_WATER_PLAN_WORKBOOK_URL
-      value: "https://www.twdb.texas.gov/waterplanning/data/rwp-database/index.asp"
+      value: "https://www.twdb.texas.gov/waterplanning/data/rwp-database/doc/2027StateWaterPlanDataSummaryWorkbook_v1.zip"
     - name: EPA_SDWIS_BASE_URL
       value: "https://enviro.epa.gov/enviro/efservice"
 
@@ -390,4 +386,4 @@ labels:
   app: airflow
   tags.datadoghq.com/env: dev
   tags.datadoghq.com/service: airflow
-  tags.datadoghq.com/version: "3.1"
+  tags.datadoghq.com/version: "3.2.1"

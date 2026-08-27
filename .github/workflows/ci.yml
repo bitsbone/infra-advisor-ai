@@ -33,13 +33,51 @@ jobs:
           EIA_API_KEY: mock-key
           KAFKA_BOOTSTRAP_SERVERS: localhost:9092
 
+  # ── Airflow ingestion runtime ─────────────────────────────────────────────
+  # This job intentionally uses real Airflow instead of the lightweight stubs
+  # in individual DAG unit tests. It also exercises the exact container image
+  # contract used by the scheduler and dag-processor.
+  test-ingestion:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ingestion
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/ingestion/uv.lock
+
+      - name: Run ingestion tests and real DAG imports
+        run: uv run --frozen --all-extras pytest -x tests/
+        env:
+          DD_TRACE_ENABLED: "false"
+
+      - name: Build pinned Airflow image
+        run: docker build --tag infra-advisor-airflow:test .
+
+      - name: Verify the image runtime contract
+        run: |
+          docker run --rm \
+            --env DD_TRACE_ENABLED=false \
+            infra-advisor-airflow:test \
+            python /opt/airflow/scripts/verify_image_contract.py
+
   # ── .NET services (dotnet build + test) ────────────────────────────────────
   test-dotnet:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service: [agent-api-dotnet, mcp-server-dotnet, aca-agentic-poc-dotnet]
+        include:
+          - service: agent-api-dotnet
+            test_project: ../agent-api-dotnet.Tests/InfraAdvisor.AgentApi.Tests.csproj
+          - service: mcp-server-dotnet
+            test_project: ../mcp-server-dotnet.Tests/InfraAdvisor.McpServer.Tests.csproj
+          - service: aca-agentic-poc-dotnet
+            test_project: ''
     defaults:
       run:
         working-directory: services/${{ matrix.service }}
@@ -59,8 +97,8 @@ jobs:
 
       - name: Test
         run: |
-          if [ -d "tests" ]; then
-            dotnet test --no-build -c Release --logger "trx;LogFileName=results.trx" --results-directory TestResults/
+          if [ -n "${{ matrix.test_project }}" ]; then
+            dotnet test "${{ matrix.test_project }}" -c Release --logger "trx;LogFileName=results.trx" --results-directory TestResults/
           else
             echo "No test project found — skipping (build verified above)"
           fi
@@ -75,3 +113,35 @@ jobs:
           name: dotnet-test-results-${{ matrix.service }}
           path: services/${{ matrix.service }}/TestResults/
           if-no-files-found: ignore
+
+  # Exercise ConversationService against PostgreSQL itself. The ordinary
+  # .NET matrix keeps fast unit coverage; this job proves JSONB artifacts are
+  # inserted and restored through the production SQL path.
+  test-dotnet-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: infra_test
+          POSTGRES_PASSWORD: infra_test
+          POSTGRES_DB: infra_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U infra_test -d infra_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run PostgreSQL artifact round-trip test
+        run: dotnet test services/agent-api-dotnet.Tests/InfraAdvisor.AgentApi.Tests.csproj -c Release --filter FullyQualifiedName~ConversationServicePostgresTests
+        env:
+          TEST_DATABASE_URL: postgresql://infra_test:infra_test@localhost:5432/infra_test

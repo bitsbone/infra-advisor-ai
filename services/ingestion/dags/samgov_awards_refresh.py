@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 from io import BytesIO
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ with DAG(
     Also stores raw results as Parquet in Azure Blob Storage (raw-data/awards/).
 
     **Schedule:** Weekly — Sunday 06:00 UTC
-    **DJM:** Requires `DD_DATA_JOBS_ENABLED=true` on the Airflow scheduler pod.
+    **DJM:** Emitted by the Airflow OpenLineage provider through the Datadog transport configured on the scheduler.
     """,
 ) as dag:
 
@@ -60,6 +60,11 @@ with DAG(
     def fetch_usaspending_awards(**context):
         """Fetch recent infrastructure contract awards from USASpending.gov."""
         import requests
+        from _blob_manifest import (
+            build_run_blob_path,
+            get_container_client,
+            write_records_manifest,
+        )
 
         today = datetime.now(timezone.utc).date()
         date_from = (today - timedelta(days=365)).isoformat()
@@ -118,7 +123,18 @@ with DAG(
                 filtered.append(award)
 
         log.info("Total awards after filtering (>= $%d): %d", MIN_AWARD_USD, len(filtered))
-        context["ti"].xcom_push(key="awards", value=filtered)
+        run_id = str(context.get("run_id") or context.get("ds") or "manual")
+        blob_path = build_run_blob_path("awards/manifests", "usaspending", run_id, ".jsonl")
+        manifest = write_records_manifest(
+            get_container_client(RAW_CONTAINER),
+            container_name=RAW_CONTAINER,
+            blob_path=blob_path,
+            records=filtered,
+            source="usaspending.infrastructure_awards",
+            run_id=run_id,
+            dag_id="samgov_awards_refresh",
+        )
+        context["ti"].xcom_push(key="records_manifest", value=manifest)
         return len(filtered)
 
     # -----------------------------------------------------------------------
@@ -127,33 +143,47 @@ with DAG(
     def store_raw_parquet(**context):
         """Persist raw award records as Parquet in Azure Blob Storage."""
         import pandas as pd
-        from azure.storage.blob import BlobServiceClient
-        from _dd_blob import dd_upload_blob
+        from _blob_manifest import (
+            build_run_blob_path,
+            get_container_client,
+            read_records_manifest,
+            write_blob_manifest,
+        )
 
-        awards = context["ti"].xcom_pull(key="awards", task_ids="fetch_usaspending_awards")
+        manifest = context["ti"].xcom_pull(
+            key="records_manifest", task_ids="fetch_usaspending_awards"
+        )
+        container = get_container_client(RAW_CONTAINER)
+        awards = read_records_manifest(
+            container, manifest, expected_source="usaspending.infrastructure_awards"
+        )
         if not awards:
             log.warning("No award records to store.")
             return
 
         df = pd.DataFrame(awards)
-        run_date = context["ds"]
-        blob_path = f"awards/usaspending_awards_{run_date.replace('-', '')}.parquet"
+        blob_path = build_run_blob_path(
+            "awards", "usaspending_awards", manifest["run_id"], ".parquet"
+        )
 
         parquet_buf = BytesIO()
         df.to_parquet(parquet_buf, index=False)
         parquet_buf.seek(0)
 
-        conn_str = os.environ["AZURE_STORAGE_CONNECTION_STRING"]
-        blob_client = BlobServiceClient.from_connection_string(conn_str)
-        container = blob_client.get_container_client(RAW_CONTAINER)
-
-        try:
-            container.create_container()
-        except Exception:
-            pass  # already exists
-
-        dd_upload_blob(container, blob_path, parquet_buf, dag_id="samgov_awards_refresh")
+        parquet_manifest = write_blob_manifest(
+            container,
+            container_name=RAW_CONTAINER,
+            blob_path=blob_path,
+            payload=parquet_buf.getvalue(),
+            source="usaspending.infrastructure_awards.parquet",
+            run_id=manifest["run_id"],
+            record_count=len(awards),
+            content_type="application/vnd.apache.parquet",
+            content_encoding=None,
+            dag_id="samgov_awards_refresh",
+        )
         log.info("Stored raw Parquet at: %s/%s", RAW_CONTAINER, blob_path)
+        context["ti"].xcom_push(key="parquet_manifest", value=parquet_manifest)
 
     # -----------------------------------------------------------------------
     # Task 3 — index_to_search
@@ -164,8 +194,16 @@ with DAG(
         from azure.core.credentials import AzureKeyCredential
         from azure.search.documents import SearchClient
         from openai import AzureOpenAI
+        from _blob_manifest import get_container_client, read_records_manifest
 
-        awards = context["ti"].xcom_pull(key="awards", task_ids="fetch_usaspending_awards")
+        manifest = context["ti"].xcom_pull(
+            key="records_manifest", task_ids="fetch_usaspending_awards"
+        )
+        awards = read_records_manifest(
+            get_container_client(RAW_CONTAINER),
+            manifest,
+            expected_source="usaspending.infrastructure_awards",
+        )
         if not awards:
             log.warning("No award records to index.")
             return

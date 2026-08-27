@@ -1,6 +1,6 @@
 """Redis-backed session memory for the InfraAdvisor agent.
 
-Key pattern : infra-advisor:session:{session_id}:memory
+Key pattern : infra-advisor:session:{tenant-scoped SHA-256 key}:memory
 Window      : last 10 human/AI exchange pairs
 TTL         : 86400 seconds (24 hours), refreshed on every write
 """
@@ -31,6 +31,9 @@ get_redis = _redis_client  # public alias for use outside this module
 
 
 def _memory_key(session_id: str) -> str:
+    # Callers pass tenant_session_key(jwt_sub, client_id), never a raw client
+    # session/conversation ID. Keeping key assembly here simple lets tests mock
+    # Redis without weakening the HTTP authorization boundary in main.py.
     return f"{_SESSION_PREFIX}:{session_id}:{_MEMORY_SUFFIX}"
 
 
@@ -49,7 +52,7 @@ def load_history(session_id: str) -> list[dict[str, Any]]:
         history: list[dict[str, Any]] = json.loads(raw)
         return history[-_WINDOW_SIZE * 2 :]  # keep last N pairs (2 messages per pair)
     except Exception as exc:
-        logger.warning("load_history failed for session=%s: %s", session_id, exc)
+        logger.warning("load_history failed error_type=%s", type(exc).__name__)
         return []
 
 
@@ -65,7 +68,7 @@ def save_history(session_id: str, history: list[dict[str, Any]]) -> None:
         client = _redis_client()
         client.setex(key, _SESSION_TTL, json.dumps(trimmed))
     except Exception as exc:
-        logger.warning("save_history failed for session=%s: %s", session_id, exc)
+        logger.warning("save_history failed error_type=%s", type(exc).__name__)
 
 
 def append_exchange(session_id: str, human_message: str, ai_message: str) -> None:
@@ -107,7 +110,7 @@ def clear_session(session_id: str) -> bool:
         deleted = client.delete(key)
         return bool(deleted)
     except Exception as exc:
-        logger.warning("clear_session failed for session=%s: %s", session_id, exc)
+        logger.warning("clear_session failed error_type=%s", type(exc).__name__)
         return False
 
 
@@ -138,7 +141,7 @@ def get_session_model(session_id: str) -> str:
         val = client.get(key)
         return val if val else _DEFAULT_MODEL
     except Exception as exc:
-        logger.warning("get_session_model failed for session=%s: %s", session_id, exc)
+        logger.warning("get_session_model failed error_type=%s", type(exc).__name__)
         return _DEFAULT_MODEL
 
 
@@ -149,4 +152,4 @@ def set_session_model(session_id: str, model: str) -> None:
         client = _redis_client()
         client.setex(key, _SESSION_TTL, model)
     except Exception as exc:
-        logger.warning("set_session_model failed for session=%s: %s", session_id, exc)
+        logger.warning("set_session_model failed error_type=%s", type(exc).__name__)

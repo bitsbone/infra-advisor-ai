@@ -48,7 +48,7 @@ public static class TelemetrySetup
                     ["source"]                 = "otel",
                 }))
             .WithTracing(t => t
-                .AddAspNetCoreInstrumentation()
+                .AddAspNetCoreInstrumentation(opts => opts.Filter = context => context.Request.Path != "/livez" && context.Request.Path != "/readyz")
                 .AddHttpClientInstrumentation()
                 .AddSource("Experimental.ModelContextProtocol")
                 .AddSource(ActivitySourceName)

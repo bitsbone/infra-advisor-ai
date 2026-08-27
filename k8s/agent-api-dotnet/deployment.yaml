@@ -17,6 +17,11 @@ spec:
     metadata:
       labels:
         app: agent-api-dotnet
+        # The Datadog .NET profiler is required for App and API Protection.
+        # DD_APM_TRACING_ENABLED=false in the ConfigMap prevents it from also
+        # creating APM spans; the application-owned OTel SDK remains the sole
+        # trace producer.
+        admission.datadoghq.com/enabled: "true"
         tags.datadoghq.com/env: dev
         tags.datadoghq.com/service: infra-advisor-agent-api-dotnet
         tags.datadoghq.com/version: latest
@@ -25,14 +30,9 @@ spec:
         # RenderedCompactJsonFormatter output and correlates with traces via the
         # OTel @tr/@sp fields.
         ad.datadoghq.com/agent-api-dotnet.logs: "[{\"source\":\"csharp\",\"service\":\"infra-advisor-agent-api-dotnet\"}]"
-        # Opt out of the namespace-wide DD .NET tracer auto-injection
-        # (datadog-agent.yaml apm.instrumentation targets infra-advisor namespace).
-        # Without this, the admission webhook injects DD tracer v3 alongside our
-        # OTel SDK. The two tracers create parallel root spans — DD tracer sends
-        # via its own agent protocol, OTel sends via OTLP — so LLM spans (OTel)
-        # are orphaned from the DD-tracer root and span links point to non-OTLP
-        # spans that Datadog reports as "not ingested or retained".
-        admission.datadoghq.com/enabled: "false"
+        # Pin the profiler used for the security runtime. Do not use `latest`:
+        # API Security requires .NET tracer 3.44.0 or newer.
+        admission.datadoghq.com/dotnet-lib.version: "3.44.0"
     spec:
       imagePullSecrets:
         - name: ghcr-pull-secret
@@ -67,19 +67,27 @@ spec:
               drop: ["ALL"]
           livenessProbe:
             httpGet:
-              path: /health
+              path: /livez
               port: 8001
             initialDelaySeconds: 20
-            periodSeconds: 30
+            periodSeconds: 60
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: 8001
             initialDelaySeconds: 15
-            periodSeconds: 15
+            periodSeconds: 30
             timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: 8001
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
           resources:
             requests:
               memory: "256Mi"

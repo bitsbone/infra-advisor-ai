@@ -20,8 +20,14 @@ import threading
 import time
 
 from confluent_kafka import Consumer, KafkaError, Producer
+from tenant import tenant_session_key
 
 logger = logging.getLogger(__name__)
+
+
+def _synthetic_session_key(session_id: str) -> str:
+    """Keep load-generator state outside every authenticated user namespace."""
+    return tenant_session_key("system:kafka", session_id)
 
 KAFKA_BOOTSTRAP = os.environ.get(
     "KAFKA_BOOTSTRAP_SERVERS", "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
@@ -79,24 +85,26 @@ def _run_consumer_loop(mcp_client) -> None:
 
             query = event.get("query", "")
             session_id = event.get("session_id", "unknown")
+            agent_session_key = _synthetic_session_key(session_id)
             corpus_type = event.get("corpus_type", "unknown")
             domain = event.get("domain", "general")
             query_id = event.get("query_id", "unknown")
 
             logger.info(
-                "Processing Kafka query id=%s session=%s corpus=%s",
+                "Processing Kafka query id=%s corpus=%s",
                 query_id,
-                session_id,
                 corpus_type,
             )
 
             start_ms = time.monotonic() * 1000
             try:
-                deployment = loop.run_until_complete(get_session_model(session_id))
+                # Synthetic load has no JWT subject, so reserve a separate
+                # system tenant instead of sharing raw client session keys.
+                deployment = get_session_model(agent_session_key)
                 result = loop.run_until_complete(
                     run_agent(
                         query=query,
-                        session_id=session_id,
+                        session_id=agent_session_key,
                         mcp_client=mcp_client,
                         deployment=deployment,
                     )
@@ -129,7 +137,7 @@ def _run_consumer_loop(mcp_client) -> None:
                 )
 
             except Exception as exc:
-                logger.error("Agent error for query_id=%s: %s", query_id, exc)
+                logger.error("Agent error for query_id=%s error_type=%s", query_id, type(exc).__name__)
 
     except Exception as exc:
         logger.error("Kafka consumer loop crashed: %s", exc)

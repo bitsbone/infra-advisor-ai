@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using System.Text.Json;
 
 namespace InfraAdvisor.AgentApi.Models;
 
@@ -8,5 +9,6 @@ public record QueryResponse(
     [property: JsonPropertyName("trace_id")] string? TraceId,
     [property: JsonPropertyName("span_id")] string? SpanId,
     [property: JsonPropertyName("session_id")] string SessionId,
-    [property: JsonPropertyName("model")] string Model
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("artifacts")] List<JsonElement> Artifacts
 );

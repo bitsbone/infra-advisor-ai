@@ -1,0 +1,76 @@
+---
+title: Structured Chat Artifacts
+description: Versioned MCP result contracts that turn external infrastructure data into safe, observable mobile evidence
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+InfraAdvisor AI uses **chat artifacts** to carry structured MCP results from an external infrastructure data source to a conversational client without coupling the client to the provider's raw response. The first artifact type, `procurement_opportunities` version `1.0`, normalizes the [SAM.gov Opportunities API](https://open.gsa.gov/api/get-opportunities-public-api/) and current [Grants.gov Search2 API](https://www.grants.gov/api/common/search2) for the Field Advisor experience in the .NET MAUI application.
+
+The assistant's prose remains useful for explanation, but it is not an API contract. An artifact gives the UI stable fields for evidence cards, source links, deadlines, agencies, classifications, funding, partial-provider failures, and missing-data indicators. Older clients can ignore the additive `artifacts` field and continue rendering the answer, sources, and tool steps.
+
+## End-to-end flow
+
+```text
+SAM.gov / Grants.gov
+  -> MCP provider adapter
+  -> procurement artifact v1 normalizer
+  -> bounded structured result log
+  -> MCP tool result
+  -> Agent artifact SSE event
+  -> conversation messages.artifacts JSONB
+  -> MAUI Evidence sheet
+```
+
+The normalized artifact is the authoritative application payload. Datadog logs provide operational evidence about the transformation, but logs are not queried as the application's storage layer and are never replayed to reconstruct a conversation.
+
+## Contract location
+
+The canonical JSON Schema and sanitized fixtures live under `contracts/chat-artifacts`. Fixtures use invented identifiers, agencies, titles, and URLs so tests and UI previews never require live credentials or copy real contact data into the public repository.
+
+Every artifact provides:
+
+- `kind` and `schema_version` for explicit client dispatch.
+- `status` with `ok`, `partial`, `empty`, or `error` semantics.
+- `generated_at`, `tool_name`, and an opaque `tool_call_id` for provenance.
+- A bounded `items` collection containing presentation-safe normalized records.
+- `meta.provider_counts`, `truncated`, and bounded `partial_errors` for operational context.
+- `data_quality.missing_fields` on each record so the UI can distinguish unavailable provider data from a value of zero.
+
+The procurement contract caps one artifact at 20 results and the agent rejects artifacts larger than 64 KiB. New optional fields require a minor schema version; breaking field changes require a new major version and a new client mapper.
+
+## Provider normalization
+
+SAM.gov and Grants.gov use different field names, identifiers, status values, date formats, classifications, and funding semantics. Each provider adapter maps its response into a shared opportunity shape before results are merged and sorted.
+
+The shared model includes provider-prefixed identity, opportunity type, title, agency, summary, normalized status, posted/deadline timestamps, location, NAICS or assistance listings, set-aside information, funding fields, a canonical source, retrieval time, and missing-field metadata. Provider-only values that do not have a stable meaning remain absent rather than being forced into an unrelated field.
+
+<Aside type="caution">
+Provider descriptions can contain contact details, and SAM.gov authenticates with an API key in the query string. Raw bodies, unrestricted descriptions, contact records, request headers, query strings, and API-key-bearing links must not be logged, tagged on spans, stored in fixtures, or exposed as telemetry attributes.
+</Aside>
+
+## Streaming and persistence
+
+The Python agent emits an `artifact` SSE event as soon as it receives a recognized MCP result. The final answer stream remains independent, so a client can render evidence even while assistant prose is still arriving. Non-streaming responses carry the same optional artifacts collection.
+
+MCP client libraries do not all expose a tool result in the same in-process shape. The artifact extractors accept a bare normalized object, a protocol `structuredContent` object, or a JSON artifact encoded in a top-level MCP text content block. They inspect only those protocol-defined locations, enforce the item and byte bounds again, and reject arbitrary nested provider JSON. This boundary prevents the .NET `CallToolResult` envelope from hiding valid evidence while ensuring that a provider field cannot accidentally become client-visible UI data.
+
+Official artifact source URLs are also copied into the response's normal citation list after a defensive HTTP/HTTPS check and removal of query strings and fragments. Evidence cards and conventional citation views therefore point to the same safe source, including after conversation restoration.
+
+Assistant messages persist artifacts in the existing PostgreSQL conversation store through an additive JSONB column. User messages keep an empty collection. No JSONB index is created because the current product reads artifacts by conversation rather than searching across every conversation. Larger ingestion datasets belong in Azure Blob Storage and should reach the application through purpose-built search or API contracts, not conversation rows.
+
+Clients must ignore unknown artifact kinds and versions. A malformed artifact must not fail the answer stream or prevent a legacy conversation from loading.
+
+## Safe Datadog telemetry
+
+The MCP tool emits one bounded result-summary log with low-cardinality fields such as event name, schema version, tool, status, provider counts, result count, truncation state, latency, and a small sanitized sample of public provider identifiers and data-quality flags. Error telemetry records the provider, safe error code, retry classification, HTTP status, body length, and a body fingerprint; it does not record the response body or exception prose. Contract-award and web-procurement logs likewise omit the query, geography, sector, and provider response snippets.
+
+The mobile client records stable workflow actions such as `advisor.query_submitted`, `advisor.evidence_opened`, and `advisor.source_opened`. It never attaches prompts, answers, conversation titles, user emails, filenames, JWTs, raw provider payloads, or complete URLs. Session Replay masks sensitive input, and evidence links accept only sanitized HTTP or HTTPS sources.
+
+To prevent the SAM.gov API key from entering outbound HTTP span tags, the Python MCP deployment sets `DD_TRACE_HTTP_CLIENT_TAG_QUERY_STRING=false`. It also forces `DD_LLMOBS_ENABLED=false` as an explicit container variable so automatic MCP, LangChain, and OpenAI integrations cannot extract tool arguments, results, prompts, completions, or embedding inputs. Ordinary APM spans, HTTP timing, explicit metrics, and the allowlisted result-summary log remain available. These are security controls, not merely cost optimizations.
+
+## Testing the pattern
+
+Contract tests validate the sanitized fixtures against the JSON Schema. Provider tests cover SAM-only, Grants-only, merged, empty, truncated, partial-failure, malformed-response, and transport-failure cases. Agent tests cover bare and MCP-enveloped extraction, rejection of arbitrary nested lookalikes, size and item bounds, SSE serialization, persistence, legacy messages, and unknown versions. MAUI tests cover tolerant deserialization, evidence mapping, safe link handling, conversation restoration, and an unknown artifact that must not interrupt the transcript.
+
+For live acceptance, submit the federal procurement suggestion from Field Advisor, verify that the evidence cards agree with the official source pages, reopen the saved conversation from History, and follow the correlated mobile resource through the agent and MCP tool spans in Datadog. Confirm that result-summary logs are searchable while prompts, provider bodies, query strings, credentials, and contact information are absent.

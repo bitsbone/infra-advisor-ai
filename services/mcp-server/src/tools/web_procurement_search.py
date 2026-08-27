@@ -156,11 +156,7 @@ async def search_web_procurement(
         }
 
     instructions = _build_instructions(input_data)
-    logger.info(
-        "web_procurement search query=%r geography=%r sector=%r result_type=%r limit=%d",
-        input_data.query, input_data.geography, input_data.sector,
-        input_data.result_type, input_data.limit,
-    )
+    logger.info("web_procurement search started limit=%d", max(1, min(input_data.limit, 20)))
 
     payload = {
         "model": deployment,
@@ -187,10 +183,7 @@ async def search_web_procurement(
             if resp.status_code >= 400:
                 body = resp.text
                 emit_external_api("azure_openai", latency_ms, error_type=f"http_{resp.status_code}")
-                logger.warning(
-                    "web_procurement Azure OpenAI HTTP %d: %s",
-                    resp.status_code, body[:300],
-                )
+                logger.warning("web_procurement Azure OpenAI HTTP %d", resp.status_code)
                 log_external_api_failure(
                     logger,
                     source="azure_openai",
@@ -219,7 +212,7 @@ async def search_web_procurement(
         log_external_api_failure(
             logger, source="azure_openai", tool_name="search_web_procurement", error=str(exc)
         )
-        return {"error": f"Azure OpenAI Responses API request failed: {exc}", "retriable": True, "source": "azure_openai"}
+        return {"error": "Azure OpenAI Responses API request failed.", "retriable": True, "source": "azure_openai"}
     except Exception as exc:
         emit_external_api("azure_openai", (time.monotonic() - api_start) * 1000, error_type="unexpected")
         emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")

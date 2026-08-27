@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 
 log = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ with DAG(
 
     **States covered:** TX, LA, FL, OK, AZ, CA
 
-    **DJM:** Requires `DD_DATA_JOBS_ENABLED=true` on the Airflow scheduler pod.
+    **DJM:** Emitted by the Airflow OpenLineage provider through the Datadog transport configured on the scheduler.
     """,
 ) as dag:
 
@@ -54,9 +54,8 @@ with DAG(
         import sys
         import os
 
-        # The script lives at ../../scripts/ relative to the dags/ directory.
-        # In the Airflow container, DAGs are mounted at /opt/airflow/dags and
-        # scripts at /opt/airflow/scripts.
+        # The image places dags/ and scripts/ beside one another under
+        # /opt/airflow, so one parent traversal resolves the helper directory.
         script_dir = os.path.join(os.path.dirname(__file__), "..", "scripts")
         script_dir = os.path.abspath(script_dir)
 

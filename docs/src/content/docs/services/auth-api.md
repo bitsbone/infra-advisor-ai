@@ -111,7 +111,7 @@ SMTP configuration:
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `SMTP_HOST` | (none) | SMTP server hostname. If unset, reset link is logged at INFO level |
+| `SMTP_HOST` | (none) | SMTP server hostname. If unset, delivery is skipped and a content-free warning is logged; reset tokens are never written to logs |
 | `SMTP_PORT` | 587 | SMTP port |
 | `SMTP_USER` | | SMTP username |
 | `SMTP_PASSWORD` | | SMTP password |
@@ -139,6 +139,8 @@ The schema is created on startup via `init_db()` which uses `CREATE TABLE IF NOT
 ## Observability
 
 **APM:** All HTTP requests traced via `ddtrace.auto`. SQL queries appear as child spans of each HTTP span.
+
+**Reset-delivery privacy:** Password-reset links, tokens, recipient email addresses, SMTP responses, and exception messages are excluded from application logs. Successful delivery records only a fixed completion event; missing SMTP configuration records a fixed warning; failed delivery records only the exception type. The public `/forgot-password` response remains identical for existing and unknown accounts.
 
 **DBM (Database Monitoring):** `DD_DBM_PROPAGATION_MODE=full` is set in the auth-api configmap. This injects full trace context into SQL comments, allowing Datadog DBM to correlate slow query samples and `EXPLAIN` plans back to the originating APM trace.
 

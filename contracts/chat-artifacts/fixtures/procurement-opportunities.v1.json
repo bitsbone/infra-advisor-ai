@@ -1,0 +1,5 @@
+{
+  "kind": "procurement_opportunities", "schema_version": "1.0", "tool_name": "get_procurement_opportunities", "tool_call_id": null, "status": "ok", "generated_at": "2026-01-15T12:00:00Z",
+  "items": [{ "id": "sam.gov:SAMPLE-NOTICE-001", "provider": "sam.gov", "provider_id": "SAMPLE-NOTICE-001", "opportunity_type": "contract", "title": "Sample Infrastructure Resilience Assessment", "agency": { "name": "Example Federal Agency", "code": null }, "summary": "Sanitized example opportunity for resilient public infrastructure planning.", "status": "posted", "posted_at": "2026-01-10", "deadline_at": "2026-02-28", "location": { "state_code": "TX", "state_name": "Texas", "city": null }, "classifications": { "naics": ["541330"], "assistance_listing": [], "set_aside": null }, "funding": { "currency": "USD", "minimum": null, "maximum": null, "total": null, "expected_awards": null }, "source": { "url": "https://sam.gov/content/opportunities", "retrieved_at": "2026-01-15T12:00:00Z" }, "data_quality": { "missing_fields": ["funding.total"] } }],
+  "meta": { "returned_count": 1, "provider_counts": { "sam.gov": 1, "grants.gov": 0 }, "truncated": false, "partial_errors": [] }
+}

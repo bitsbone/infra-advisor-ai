@@ -2,10 +2,9 @@ import logging
 import os
 import shutil
 from datetime import datetime, timezone
-from io import BytesIO
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +72,7 @@ with DAG(
        warning and exits cleanly (idempotent).
 
     **Schedule:** Daily (`@daily`)
-    **DJM:** Requires `DD_DATA_JOBS_ENABLED=true` on the Airflow scheduler pod.
+    **DJM:** Emitted by the Airflow OpenLineage provider through the Datadog transport configured on the scheduler.
     **Env vars required:** `AZURE_STORAGE_CONNECTION_STRING`,
     `AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_API_KEY`
     """,

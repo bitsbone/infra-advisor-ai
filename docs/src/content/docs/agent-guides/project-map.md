@@ -89,7 +89,7 @@ Datadog Agent DaemonSet
 - `domain: "transportation"`, `document_type: "asset_record"` — FHWA NBI bridge records (Texas)
 - `domain: "environmental"`, `document_type: "disaster_declaration"` — OpenFEMA disaster declarations
 - `domain: "energy"`, `document_type: "energy_record"` — EIA state electricity data
-- `domain: "water"`, `document_type: "water_plan_project"` — TWDB 2026 State Water Plan projects
+- `domain: "water"`, `document_type: "water_plan_project"` — TWDB 2027 State Water Plan projects
 - `domain: "water"`, `document_type: "water_system_record"` — EPA SDWIS Texas water systems
 - `source: "synthetic"` — 80 synthetic firm knowledge base documents
 

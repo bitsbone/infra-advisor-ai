@@ -66,19 +66,15 @@ Managed by Helm chart `apache-airflow/airflow` (release name: `airflow`).
 
 | Component | Kind | Notes |
 |-----------|------|-------|
-| `airflow-scheduler` | StatefulSet (1 pod) | LocalExecutor; pip installs on startup |
+| `airflow-scheduler` | StatefulSet (1 pod) | LocalExecutor; locked application image with no runtime package installation |
 | `airflow-api-server` | Deployment (1 pod) | Airflow 3.x web UI + REST API |
 | `airflow-dag-processor` | Deployment (1 pod) | Parses and validates DAG files |
 | `airflow-triggerer` | StatefulSet (1 pod) | Runs deferred/async operators |
 | `airflow-postgresql` | StatefulSet (1 pod) | Airflow metadata DB |
 
-**PVCs:**
-- `logs-airflow-scheduler-0` — 2Gi, azurefile-csi (task logs)
-- `dags-airflow-scheduler-0` — 1Gi, azurefile-csi, ReadWriteMany (DAG files)
+**PVC:** `airflow-logs` — 2Gi, azurefile-csi, ReadWriteMany task logs. DAG persistence and git-sync are disabled because DAGs and helper scripts ship together in the verified immutable Airflow image.
 
-The DAGs PVC is ReadWriteMany so `make sync-dags` can write while the scheduler is reading.
-
-**Secret:** `airflow-azure-secret` — Azure OpenAI, Search, Storage keys + DD_API_KEY
+**Secrets:** `airflow-azure-secret` contains Azure OpenAI, Search, Storage, external API, and Datadog values; `ghcr-pull-secret` is a separate `kubernetes.io/dockerconfigjson` credential in the `airflow` namespace. The Helm chart's `registry.secretName` applies the registry credential to scheduler, DAG processor, API server, triggerer, migration, and hook pods.
 
 ## kafka namespace
 

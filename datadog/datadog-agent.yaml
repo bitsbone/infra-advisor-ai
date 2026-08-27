@@ -3,9 +3,6 @@ apiVersion: "datadoghq.com/v2alpha1"
 metadata:
   name: "datadog"
   namespace: "datadog"
-  annotations:
-    agent.datadoghq.com/appsec.injector.enabled: "true"
-    agent.datadoghq.com/appsec.injector.processor.service.name: "infra-advisor-target"
 spec:
   global:
     clusterName: "aks-infra-advisor-dev"
@@ -17,6 +14,11 @@ spec:
     tags:
       - "env:dev"
   features:
+    # Workload manifests opt in explicitly. This supplies Agent connectivity
+    # and the .NET security profiler without mutating unrelated workloads.
+    admissionController:
+      enabled: true
+      mutateUnlabelled: false
     clusterChecks:
       enabled: true
     orchestratorExplorer:
@@ -114,15 +116,18 @@ spec:
       instrumentation:
         enabled: true
         targets:
-          - name: "infra-advisor-target"
+          - name: "infra-advisor-dotnet-security-target"
             namespaceSelector:
               matchLabels:
                 kubernetes.io/metadata.name: infra-advisor
+            podSelector:
+              matchLabels:
+                app: agent-api-dotnet
             ddTraceVersions:
-              python: "4"
-              js: "5"
-              php: "1"
-              dotnet: "3"
+              # Minimum version with the full .NET API Security capability.
+              # The agent-api-dotnet pod repeats this exact pin as an executable
+              # example and to protect it from target-level future changes.
+              dotnet: "3.44.0"
             ddTraceConfigs:
               - name: "DD_PROFILING_ENABLED"
                 value: "auto"

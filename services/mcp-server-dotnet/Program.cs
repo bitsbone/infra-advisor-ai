@@ -65,4 +65,7 @@ app.MapGet("/health", () => Results.Ok(new
     },
 }));
 
+app.MapGet("/livez", () => Results.Ok(new { status = "ok", service = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "infra-advisor-mcp-server-dotnet" }));
+app.MapGet("/readyz", () => Results.Ok(new { status = "ready", service = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "infra-advisor-mcp-server-dotnet", keys_configured = new { samgov = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SAMGOV_API_KEY")), azure_openai = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")) } }));
+
 app.Run();

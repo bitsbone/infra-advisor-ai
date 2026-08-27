@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace InfraAdvisor.AgentApi.Models;
 
 // Stream events emitted on POST /query/stream as Server-Sent Events. Each
@@ -43,6 +45,10 @@ public sealed record ToolCallEndEvent(
 public sealed record TextChunkEvent(
     string Chunk
 ) : StreamEvent("text_chunk");
+
+public sealed record ArtifactEvent(
+    JsonElement Artifact
+) : StreamEvent("artifact");
 
 // Terminal event with trace + metadata the UI uses for the message
 // footer (feedback button, trace link, sources reconciliation).

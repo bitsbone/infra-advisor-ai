@@ -65,9 +65,7 @@ public sealed class WebProcurementSearchTool(
             return SerializeError("AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY not configured", "azure_openai", false);
 
         var instructions = BuildInstructions(query, geography, sector, result_type, limit);
-        logger.LogInformation(
-            "web_procurement search query={Query} geography={Geography} sector={Sector} result_type={ResultType} limit={Limit}",
-            query, geography, sector, result_type, limit);
+        logger.LogInformation("web_procurement search started limit={Limit}", Math.Clamp(limit, 1, 20));
 
         var payload = new
         {
@@ -105,9 +103,9 @@ public sealed class WebProcurementSearchTool(
         {
             return SerializeError("Azure OpenAI Responses API request timed out", "azure_openai", true);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return SerializeError($"Azure OpenAI Responses API request failed: {ex.Message}", "azure_openai", true);
+            return SerializeError("Azure OpenAI Responses API request failed.", "azure_openai", true);
         }
 
         var statusCode = (int)resp.StatusCode;
@@ -115,8 +113,7 @@ public sealed class WebProcurementSearchTool(
 
         if (statusCode >= 400)
         {
-            logger.LogWarning("web_procurement: Azure OpenAI HTTP {Status}: {Body}",
-                statusCode, body.Length > 300 ? body[..300] : body);
+            logger.LogWarning("web_procurement: Azure OpenAI HTTP {Status}", statusCode);
             return SerializeError($"Azure OpenAI Responses API error: HTTP {statusCode}", "azure_openai",
                 retriable: statusCode >= 500 || statusCode == 429);
         }
@@ -142,9 +139,9 @@ public sealed class WebProcurementSearchTool(
             }
             return jsonText;
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            logger.LogWarning("web_procurement: failed to parse model JSON: {Error}", ex.Message);
+            logger.LogWarning("web_procurement: failed to parse model JSON");
             return SerializeError("Model returned malformed JSON", "azure_openai", true);
         }
     }

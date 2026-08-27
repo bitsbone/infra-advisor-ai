@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ with DAG(
     domain='business_development', document_type='market_intelligence'.
 
     **Schedule:** Monthly — 1st of month 07:00 UTC
-    **DJM:** Requires `DD_DATA_JOBS_ENABLED=true` on the Airflow scheduler pod.
+    **DJM:** Emitted by the Airflow OpenLineage provider through the Datadog transport configured on the scheduler.
     """,
 ) as dag:
 
@@ -67,6 +67,11 @@ with DAG(
     def fetch_population_data(**context):
         """Fetch county-level population estimates for high-growth states."""
         import requests
+        from _blob_manifest import (
+            build_run_blob_path,
+            get_container_client,
+            write_records_manifest,
+        )
 
         all_counties = []
 
@@ -100,7 +105,19 @@ with DAG(
                      len(rows) - 1, state_fips)
 
         log.info("Total county population records fetched: %d", len(all_counties))
-        context["ti"].xcom_push(key="population_data", value=all_counties)
+        run_id = str(context.get("run_id") or context.get("ds") or "manual")
+        manifest = write_records_manifest(
+            get_container_client(RAW_CONTAINER),
+            container_name=RAW_CONTAINER,
+            blob_path=build_run_blob_path(
+                "census/population/manifests", "counties", run_id, ".jsonl"
+            ),
+            records=all_counties,
+            source="census.population_estimates.counties",
+            run_id=run_id,
+            dag_id="census_market_intelligence_refresh",
+        )
+        context["ti"].xcom_push(key="population_manifest", value=manifest)
         return len(all_counties)
 
     # -----------------------------------------------------------------------
@@ -109,6 +126,11 @@ with DAG(
     def fetch_permit_data(**context):
         """Fetch county-level building permit data for high-growth states."""
         import requests
+        from _blob_manifest import (
+            build_run_blob_path,
+            get_container_client,
+            write_records_manifest,
+        )
 
         all_permits = []
 
@@ -142,7 +164,19 @@ with DAG(
                      len(rows) - 1, state_fips)
 
         log.info("Total building permit records fetched: %d", len(all_permits))
-        context["ti"].xcom_push(key="permit_data", value=all_permits)
+        run_id = str(context.get("run_id") or context.get("ds") or "manual")
+        manifest = write_records_manifest(
+            get_container_client(RAW_CONTAINER),
+            container_name=RAW_CONTAINER,
+            blob_path=build_run_blob_path(
+                "census/permits/manifests", "counties", run_id, ".jsonl"
+            ),
+            records=all_permits,
+            source="census.building_permits.counties",
+            run_id=run_id,
+            dag_id="census_market_intelligence_refresh",
+        )
+        context["ti"].xcom_push(key="permit_manifest", value=manifest)
         return len(all_permits)
 
     # -----------------------------------------------------------------------
@@ -151,34 +185,64 @@ with DAG(
     def store_raw_parquet(**context):
         """Persist raw census records as Parquet in Azure Blob Storage."""
         import pandas as pd
-        from azure.storage.blob import BlobServiceClient
-        from _dd_blob import dd_upload_blob
+        from _blob_manifest import (
+            build_run_blob_path,
+            get_container_client,
+            read_records_manifest,
+            write_blob_manifest,
+        )
 
-        population_data = context["ti"].xcom_pull(
-            key="population_data", task_ids="fetch_population_data")
-        permit_data = context["ti"].xcom_pull(
-            key="permit_data", task_ids="fetch_permit_data")
+        population_manifest = context["ti"].xcom_pull(
+            key="population_manifest", task_ids="fetch_population_data"
+        )
+        permit_manifest = context["ti"].xcom_pull(
+            key="permit_manifest", task_ids="fetch_permit_data"
+        )
 
-        run_date = context["ds"]
-        conn_str = os.environ["AZURE_STORAGE_CONNECTION_STRING"]
-        blob_client = BlobServiceClient.from_connection_string(conn_str)
-        container = blob_client.get_container_client(RAW_CONTAINER)
+        container = get_container_client(RAW_CONTAINER)
+        population_data = read_records_manifest(
+            container,
+            population_manifest,
+            expected_source="census.population_estimates.counties",
+        )
+        permit_data = read_records_manifest(
+            container,
+            permit_manifest,
+            expected_source="census.building_permits.counties",
+        )
 
-        try:
-            container.create_container()
-        except Exception:
-            pass
-
-        for dataset_name, records in [("population", population_data), ("permits", permit_data)]:
+        datasets = [
+            ("population", population_data, population_manifest),
+            ("permits", permit_data, permit_manifest),
+        ]
+        for dataset_name, records, source_manifest in datasets:
             if not records:
                 continue
             df = pd.DataFrame(records)
-            blob_path = f"census/{dataset_name}/census_{dataset_name}_{run_date.replace('-', '')}.parquet"
+            blob_path = build_run_blob_path(
+                f"census/{dataset_name}",
+                f"census_{dataset_name}",
+                source_manifest["run_id"],
+                ".parquet",
+            )
             buf = BytesIO()
             df.to_parquet(buf, index=False)
             buf.seek(0)
-            dd_upload_blob(container, blob_path, buf,
-                           dag_id="census_market_intelligence_refresh")
+            parquet_manifest = write_blob_manifest(
+                container,
+                container_name=RAW_CONTAINER,
+                blob_path=blob_path,
+                payload=buf.getvalue(),
+                source=f"{source_manifest['source']}.parquet",
+                run_id=source_manifest["run_id"],
+                record_count=len(records),
+                content_type="application/vnd.apache.parquet",
+                content_encoding=None,
+                dag_id="census_market_intelligence_refresh",
+            )
+            context["ti"].xcom_push(
+                key=f"{dataset_name}_parquet_manifest", value=parquet_manifest
+            )
             log.info("Stored %s Parquet at: %s/%s",
                      dataset_name, RAW_CONTAINER, blob_path)
 
@@ -190,11 +254,25 @@ with DAG(
         from azure.core.credentials import AzureKeyCredential
         from azure.search.documents import SearchClient
         from openai import AzureOpenAI
+        from _blob_manifest import get_container_client, read_records_manifest
 
-        population_data = context["ti"].xcom_pull(
-            key="population_data", task_ids="fetch_population_data")
-        permit_data = context["ti"].xcom_pull(
-            key="permit_data", task_ids="fetch_permit_data")
+        population_manifest = context["ti"].xcom_pull(
+            key="population_manifest", task_ids="fetch_population_data"
+        )
+        permit_manifest = context["ti"].xcom_pull(
+            key="permit_manifest", task_ids="fetch_permit_data"
+        )
+        container = get_container_client(RAW_CONTAINER)
+        population_data = read_records_manifest(
+            container,
+            population_manifest,
+            expected_source="census.population_estimates.counties",
+        )
+        permit_data = read_records_manifest(
+            container,
+            permit_manifest,
+            expected_source="census.building_permits.counties",
+        )
 
         if not population_data:
             log.warning("No population data to index.")

@@ -1,11 +1,10 @@
-import json
 import logging
 import os
 from datetime import datetime, timezone
 from io import BytesIO
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 
 log = logging.getLogger(__name__)
 
@@ -60,11 +59,11 @@ with DAG(
 
     Pulls Texas (state code 48) bridge inventory data from the FHWA BTS ArcGIS
     feature server, stores raw records as Parquet in Azure Blob Storage
-    (`infra-advisor-raw`), then chunks and indexes each bridge record into
+    (`raw-data`), then chunks and indexes each bridge record into
     Azure AI Search under domain='transportation'.
 
     **Schedule:** Weekly — Sunday 03:00 UTC
-    **DJM:** Requires `DD_DATA_JOBS_ENABLED=true` on the Airflow scheduler pod.
+    **DJM:** Emitted by the Airflow OpenLineage provider through the Datadog transport configured on the scheduler.
     """,
 ) as dag:
 
@@ -74,6 +73,11 @@ with DAG(
     def fetch_nbi_data(**context):
         """Paginate the BTS ArcGIS feature server and pull all TX NBI records."""
         import requests
+        from _blob_manifest import (
+            build_run_blob_path,
+            get_container_client,
+            write_records_manifest,
+        )
 
         all_features = []
         offset = 0
@@ -106,7 +110,18 @@ with DAG(
 
         # Flatten attributes from GeoJSON feature wrapper
         records = [f["attributes"] for f in all_features]
-        context["ti"].xcom_push(key="nbi_records", value=records)
+        run_id = str(context.get("run_id") or context.get("ds") or "manual")
+        blob_path = build_run_blob_path("nbi/texas/manifests", "nbi_tx", run_id, ".jsonl")
+        manifest = write_records_manifest(
+            get_container_client(RAW_CONTAINER),
+            container_name=RAW_CONTAINER,
+            blob_path=blob_path,
+            records=records,
+            source="fhwa.national_bridge_inventory.texas",
+            run_id=run_id,
+            dag_id="nbi_refresh",
+        )
+        context["ti"].xcom_push(key="records_manifest", value=manifest)
         return len(records)
 
     # -----------------------------------------------------------------------
@@ -115,46 +130,65 @@ with DAG(
     def store_raw_parquet(**context):
         """Persist raw NBI records as Parquet in Azure Blob Storage."""
         import pandas as pd
-        from azure.storage.blob import BlobServiceClient
-        from _dd_blob import dd_upload_blob
+        from _blob_manifest import (
+            build_run_blob_path,
+            get_container_client,
+            read_records_manifest,
+            write_blob_manifest,
+        )
 
-        records = context["ti"].xcom_pull(key="nbi_records", task_ids="fetch_nbi_data")
+        manifest = context["ti"].xcom_pull(
+            key="records_manifest", task_ids="fetch_nbi_data"
+        )
+        container = get_container_client(RAW_CONTAINER)
+        records = read_records_manifest(
+            container, manifest, expected_source="fhwa.national_bridge_inventory.texas"
+        )
         if not records:
             raise ValueError("No NBI records received from fetch step.")
 
         df = pd.DataFrame(records)
-        run_date = context["ds"]  # e.g. 2025-04-20
-        blob_path = f"nbi/texas/nbi_tx_{run_date.replace('-', '')}.parquet"
+        blob_path = build_run_blob_path(
+            "nbi/texas", "nbi_tx", manifest["run_id"], ".parquet"
+        )
 
         parquet_buf = BytesIO()
         df.to_parquet(parquet_buf, index=False)
         parquet_buf.seek(0)
 
-        conn_str = os.environ["AZURE_STORAGE_CONNECTION_STRING"]
-        blob_client = BlobServiceClient.from_connection_string(conn_str)
-        container = blob_client.get_container_client(RAW_CONTAINER)
-
-        # Create container if it doesn't exist
-        try:
-            container.create_container()
-        except Exception:
-            pass  # already exists
-
-        dd_upload_blob(container, blob_path, parquet_buf, dag_id="nbi_refresh")
+        parquet_manifest = write_blob_manifest(
+            container,
+            container_name=RAW_CONTAINER,
+            blob_path=blob_path,
+            payload=parquet_buf.getvalue(),
+            source="fhwa.national_bridge_inventory.texas.parquet",
+            run_id=manifest["run_id"],
+            record_count=len(records),
+            content_type="application/vnd.apache.parquet",
+            content_encoding=None,
+            dag_id="nbi_refresh",
+        )
         log.info("Stored raw Parquet at: %s/%s", RAW_CONTAINER, blob_path)
-        context["ti"].xcom_push(key="parquet_blob_path", value=blob_path)
+        context["ti"].xcom_push(key="parquet_manifest", value=parquet_manifest)
 
     # -----------------------------------------------------------------------
     # Task 3 — index_to_search
     # -----------------------------------------------------------------------
     def index_to_search(**context):
         """Chunk each bridge record into 500-char text chunks and upsert into Azure AI Search."""
-        import tiktoken
         from azure.core.credentials import AzureKeyCredential
         from azure.search.documents import SearchClient
         from openai import AzureOpenAI
+        from _blob_manifest import get_container_client, read_records_manifest
 
-        records = context["ti"].xcom_pull(key="nbi_records", task_ids="fetch_nbi_data")
+        manifest = context["ti"].xcom_pull(
+            key="records_manifest", task_ids="fetch_nbi_data"
+        )
+        records = read_records_manifest(
+            get_container_client(RAW_CONTAINER),
+            manifest,
+            expected_source="fhwa.national_bridge_inventory.texas",
+        )
         if not records:
             raise ValueError("No NBI records to index.")
 
@@ -163,6 +197,9 @@ with DAG(
         index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
         openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         openai_api_key = os.environ["AZURE_OPENAI_API_KEY"]
+        embedding_deployment = os.environ.get(
+            "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"
+        )
 
         oai_client = AzureOpenAI(
             azure_endpoint=openai_endpoint,
@@ -176,7 +213,6 @@ with DAG(
             credential=AzureKeyCredential(search_api_key),
         )
 
-        enc = tiktoken.get_encoding("cl100k_base")
         now_iso = datetime.now(timezone.utc).isoformat()
         docs_to_upsert = []
 
@@ -215,7 +251,7 @@ with DAG(
 
                 # Embed via Azure OpenAI
                 embedding_resp = oai_client.embeddings.create(
-                    model="text-embedding-ada-002",
+                    model=embedding_deployment,
                     input=chunk_text,
                 )
                 vector = embedding_resp.data[0].embedding

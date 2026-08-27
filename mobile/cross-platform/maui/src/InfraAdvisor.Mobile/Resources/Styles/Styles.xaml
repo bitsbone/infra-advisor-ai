@@ -6,6 +6,7 @@
     <x:Double x:Key="SpaceMd">16</x:Double>
     <x:Double x:Key="SpaceLg">24</x:Double>
     <x:Double x:Key="SpaceXl">32</x:Double>
+    <x:Double x:Key="TouchTarget">48</x:Double>
 
     <Style TargetType="ContentPage">
         <Setter Property="BackgroundColor" Value="{DynamicResource Canvas}" />
@@ -13,14 +14,24 @@
     <Style TargetType="Label">
         <Setter Property="TextColor" Value="{DynamicResource TextPrimary}" />
         <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontAutoScalingEnabled" Value="True" />
     </Style>
     <Style x:Key="PageTitle" TargetType="Label">
         <Setter Property="FontSize" Value="28" />
         <Setter Property="FontAttributes" Value="Bold" />
+        <Setter Property="SemanticProperties.HeadingLevel" Value="Level1" />
     </Style>
     <Style x:Key="SectionTitle" TargetType="Label">
         <Setter Property="FontSize" Value="18" />
         <Setter Property="FontAttributes" Value="Bold" />
+        <Setter Property="SemanticProperties.HeadingLevel" Value="Level2" />
+    </Style>
+    <Style x:Key="Eyebrow" TargetType="Label">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontAttributes" Value="Bold" />
+        <Setter Property="TextColor" Value="{DynamicResource FieldTeal}" />
+        <Setter Property="TextTransform" Value="Uppercase" />
+        <Setter Property="CharacterSpacing" Value="1" />
     </Style>
     <Style x:Key="MutedBody" TargetType="Label">
         <Setter Property="TextColor" Value="{DynamicResource TextSecondary}" />
@@ -33,31 +44,36 @@
         <Setter Property="TextColor" Value="{DynamicResource TextPrimary}" />
         <Setter Property="PlaceholderColor" Value="{DynamicResource TextSecondary}" />
         <Setter Property="MinimumHeightRequest" Value="52" />
+        <Setter Property="FontAutoScalingEnabled" Value="True" />
     </Style>
     <Style TargetType="Editor">
         <Setter Property="BackgroundColor" Value="{DynamicResource Surface}" />
         <Setter Property="TextColor" Value="{DynamicResource TextPrimary}" />
         <Setter Property="PlaceholderColor" Value="{DynamicResource TextSecondary}" />
+        <Setter Property="FontAutoScalingEnabled" Value="True" />
     </Style>
     <Style TargetType="Picker">
         <Setter Property="BackgroundColor" Value="{DynamicResource Surface}" />
         <Setter Property="TextColor" Value="{DynamicResource TextPrimary}" />
         <Setter Property="TitleColor" Value="{DynamicResource TextSecondary}" />
         <Setter Property="MinimumHeightRequest" Value="48" />
+        <Setter Property="FontAutoScalingEnabled" Value="True" />
     </Style>
 
-    <Style TargetType="Button">
+    <Style x:Key="BaseButton" TargetType="Button">
         <Setter Property="BackgroundColor" Value="{DynamicResource Primary}" />
         <Setter Property="TextColor" Value="White" />
         <Setter Property="CornerRadius" Value="12" />
         <Setter Property="MinimumHeightRequest" Value="48" />
         <Setter Property="FontAttributes" Value="Bold" />
+        <Setter Property="FontAutoScalingEnabled" Value="True" />
     </Style>
-    <Style x:Key="SecondaryButton" TargetType="Button">
+    <Style TargetType="Button" BasedOn="{StaticResource BaseButton}" />
+    <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
         <Setter Property="BackgroundColor" Value="{DynamicResource PrimarySoft}" />
         <Setter Property="TextColor" Value="{DynamicResource PrimaryDark}" />
     </Style>
-    <Style x:Key="DangerButton" TargetType="Button">
+    <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
         <Setter Property="BackgroundColor" Value="{DynamicResource DangerSoft}" />
         <Setter Property="TextColor" Value="{DynamicResource Danger}" />
     </Style>
@@ -65,6 +81,17 @@
         <Setter Property="WidthRequest" Value="48" />
         <Setter Property="Padding" Value="0" />
         <Setter Property="FontSize" Value="20" />
+    </Style>
+    <Style x:Key="PrimaryCompactButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
+        <Setter Property="MinimumHeightRequest" Value="48" />
+        <Setter Property="Padding" Value="16,8" />
+        <Setter Property="BackgroundColor" Value="{DynamicResource FieldTeal}" />
+    </Style>
+    <Style x:Key="QuietButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
+        <Setter Property="MinimumHeightRequest" Value="48" />
+        <Setter Property="Padding" Value="14,8" />
+        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="TextColor" Value="{DynamicResource FieldNavy}" />
     </Style>
 
     <Style x:Key="Card" TargetType="Border">
@@ -91,5 +118,30 @@
         <Setter Property="Opacity" Value="0.65" />
         <Setter Property="CornerRadius" Value="8" />
         <Setter Property="HeightRequest" Value="16" />
+    </Style>
+    <Style x:Key="InteractiveCard" TargetType="Border" BasedOn="{StaticResource Card}">
+        <Setter Property="Stroke" Value="{DynamicResource FieldNavySoft}" />
+        <Setter Property="Padding" Value="16,14" />
+        <Setter Property="MinimumHeightRequest" Value="48" />
+    </Style>
+    <Style x:Key="MetadataPill" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource FieldNavySoft}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="Padding" Value="9,4" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 10" />
+    </Style>
+    <Style x:Key="EvidenceCard" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource Surface}" />
+        <Setter Property="Stroke" Value="{DynamicResource FieldTeal}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Padding" Value="14" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 14" />
+    </Style>
+    <Style x:Key="ComposerCard" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource Surface}" />
+        <Setter Property="Stroke" Value="{DynamicResource FieldNavySoft}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Padding" Value="8" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 18" />
     </Style>
 </ResourceDictionary>

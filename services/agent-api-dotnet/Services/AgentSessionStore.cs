@@ -11,9 +11,9 @@ namespace InfraAdvisor.AgentApi.Services;
 // turns it into a JsonElement we can stash; DeserializeSessionAsync
 // reconstitutes it.
 //
-// Keyed by the public conversation ID (browser-provided via the URL ?c=
-// param, or falling back to the session UUID). Sessions persist for 24h
-// past the last write — same TTL as the legacy MemoryService.
+// Keyed by TenantSessionKey.Create(jwtSub, conversationOrSessionId), never by
+// a public client identifier alone. Sessions persist for 24h past the last
+// write — same TTL as the model preference in MemoryService.
 //
 // On the agent path:
 //   1. GetOrCreateAsync at the start of /chat → AgentSession (restored if
@@ -33,7 +33,7 @@ public class AgentSessionStore
         _logger = logger;
     }
 
-    internal static string KeyFor(string conversationId) => $"{KeyPrefix}:{conversationId}";
+    internal static string KeyFor(string tenantSessionKey) => $"{KeyPrefix}:{tenantSessionKey}";
 
     public async Task<AgentSession> GetOrCreateAsync(
         AIAgent agent, string conversationId, CancellationToken ct)
@@ -51,8 +51,8 @@ public class AgentSessionStore
         catch (Exception ex)
         {
             _logger.LogWarning(
-                "Failed to restore agent session for {ConversationId}; starting fresh: {Error}",
-                conversationId, ex.Message);
+                "Failed to restore agent session; starting fresh error_type={ErrorType}",
+                ex.GetType().Name);
         }
         return await agent.CreateSessionAsync(ct);
     }
@@ -72,8 +72,8 @@ public class AgentSessionStore
         catch (Exception ex)
         {
             _logger.LogWarning(
-                "Failed to save agent session for {ConversationId}: {Error}",
-                conversationId, ex.Message);
+                "Failed to save agent session error_type={ErrorType}",
+                ex.GetType().Name);
         }
     }
 }

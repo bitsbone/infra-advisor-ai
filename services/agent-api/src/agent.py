@@ -1,6 +1,5 @@
 import ddtrace.auto  # must be first import — auto-instruments LangChain, LangGraph, OpenAI, MCP, httpx, Redis, Kafka
 
-import base64
 import json
 import logging
 import os
@@ -15,7 +14,8 @@ from langchain_openai import AzureChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel
 
-from media import download_media_bytes, transcribe_audio
+from artifacts import extract_chat_artifact, extract_chat_artifact_source_urls
+from media import transcribe_audio
 from memory import load_history
 from observability.ai_guard import check_query
 from observability.llm_obs import schedule_faithfulness_score, tag_agent_run
@@ -260,7 +260,7 @@ async def _run_router(query: str, llm: AzureChatOpenAI) -> _RouteDecision:
         decision = await router_chain.ainvoke({"query": query})
         return decision
     except Exception as exc:
-        logger.warning("router failed (non-fatal): %s", exc)
+        logger.warning("router failed (non-fatal) error_type=%s", type(exc).__name__)
         return _RouteDecision(specialist="general", handoff_context=query)
 
 
@@ -297,6 +297,7 @@ def _extract_sources_from_tool_content(content: Any) -> list[str]:
     """
     sources: list[str] = []
     try:
+        sources.extend(extract_chat_artifact_source_urls(content))
         if isinstance(content, list):
             items = content
         elif isinstance(content, str):
@@ -357,54 +358,38 @@ def _summarize_tool_result(raw: str) -> str | None:
 # _build_human_message below) and the ReAct tool-calling loop is unaffected
 # by whichever modality the turn started as.
 #
-# Why a vision pre-step instead of sending the image inline in the specialist
-# call: ddtrace's LangChain/OpenAI integration auto-instruments the specialist's
-# chat model call, but auto-instrumentation does not populate LLMObs's
-# audio_parts/image_parts fields (verified against the installed ddtrace
-# 4.13.0rc3 — grepped ddtrace/contrib/internal/{openai,langchain}/ for
-# audio_parts/image_parts; the only auto-population is OpenAI's Realtime API
-# integration, which this app doesn't use). Wrapping the image in its own
-# LLMObs.llm() span we control is the only way to attach image_parts so it
-# renders as an inline image in the trace view, mirroring the same reasoning
-# for audio → LLMObs.llm() below.
-
-
-def _b64(data: bytes) -> str:
-    return base64.b64encode(data).decode("utf-8")
+# Dedicated pre-steps preserve one text-only specialist pipeline and provide
+# latency/status visibility for each modality. Their custom telemetry remains
+# metadata-only: provider URLs, bytes, prompts, transcripts, and descriptions
+# are never copied into LLMObs annotations.
 
 
 async def _transcribe_and_annotate(audio_attachment: dict[str, Any]) -> str:
-    """Whisper transcription wrapped as an LLMObs "llm" span (not "task") so
-    input_data can carry audio_parts — that field is only rendered specially
-    on llm-kind spans, per the ddtrace LLMObs.annotate() docstring. Returns
-    the transcript ("" on failure, non-fatal — falls back to the typed query
-    text if any)."""
+    """Transcribe audio while recording only privacy-safe operational metadata.
+
+    The SAS URL and raw audio are required at the provider boundary, while the
+    transcript is required by the agent. None are copied into custom telemetry.
+    """
     whisper_deployment = os.environ.get("AZURE_OPENAI_WHISPER_DEPLOYMENT", "whisper")
     with LLMObs.llm(model_name=whisper_deployment, model_provider="azure", name="transcribe-audio") as stt_span:
         try:
-            transcript, duration_s, audio_bytes = transcribe_audio(
-                audio_attachment["url"], audio_attachment["mime_type"]
+            transcript, duration_s = transcribe_audio(
+                audio_attachment["url"], audio_attachment["mime_type"], audio_attachment["size_bytes"]
             )
-        except Exception:
-            logger.exception("transcribe_audio failed")
-            LLMObs.annotate(span=stt_span, tags={"error": "true"})
+        except Exception as exc:
+            logger.warning("transcribe_audio failed error_type=%s", type(exc).__name__)
+            LLMObs.annotate(span=stt_span, tags={"error": "true", "error.type": type(exc).__name__})
             return ""
 
         LLMObs.annotate(
             span=stt_span,
-            input_data=[{
-                "role": "user",
-                "content": "(voice message)",
-                "audio_parts": [{
-                    "mime_type": audio_attachment["mime_type"],
-                    "content": _b64(audio_bytes),
-                }],
-            }],
-            output_data=[{"role": "assistant", "content": transcript}],
             tags={
+                "input.modality": "audio",
+                "output.modality": "text",
                 "audio.mime_type": audio_attachment["mime_type"],
-                "audio.blob_url": audio_attachment["url"],
+                "audio.size_bytes": str(audio_attachment.get("size_bytes", 0)),
                 "audio.duration_s": f"{duration_s:.2f}",
+                "transcript.characters": str(len(transcript)),
             },
         )
         return transcript
@@ -419,39 +404,28 @@ _IMAGE_DESCRIPTION_PROMPT = (
 
 
 async def _describe_image_and_annotate(image_attachment: dict[str, Any], llm: AzureChatOpenAI) -> str:
-    """Vision-capable LLM call wrapped as its own LLMObs "llm" span so
-    input_data can carry image_parts, same reasoning as _transcribe_and_annotate.
-    Runs BEFORE the specialist agent — its output (a text description) is what
-    gets folded into the effective query, not the raw image. Returns "" on
-    failure (non-fatal)."""
+    """Describe an image and expose only safe type/size/status telemetry."""
     with LLMObs.llm(model_name=llm.deployment_name, model_provider="azure", name="describe-image") as vision_span:
         try:
-            image_bytes = download_media_bytes(image_attachment["url"])
             vision_message = HumanMessage(content=[
                 {"type": "text", "text": _IMAGE_DESCRIPTION_PROMPT},
                 {"type": "image_url", "image_url": {"url": image_attachment["url"]}},
             ])
             response = await llm.ainvoke([vision_message])
             description = response.content if isinstance(response.content, str) else str(response.content)
-        except Exception:
-            logger.exception("describe_image failed")
-            LLMObs.annotate(span=vision_span, tags={"error": "true"})
+        except Exception as exc:
+            logger.warning("describe_image failed error_type=%s", type(exc).__name__)
+            LLMObs.annotate(span=vision_span, tags={"error": "true", "error.type": type(exc).__name__})
             return ""
 
         LLMObs.annotate(
             span=vision_span,
-            input_data=[{
-                "role": "user",
-                "content": _IMAGE_DESCRIPTION_PROMPT,
-                "image_parts": [{
-                    "mime_type": image_attachment["mime_type"],
-                    "content": _b64(image_bytes),
-                }],
-            }],
-            output_data=[{"role": "assistant", "content": description}],
             tags={
+                "input.modality": "image",
+                "output.modality": "text",
                 "image.mime_type": image_attachment["mime_type"],
-                "image.blob_url": image_attachment["url"],
+                "image.size_bytes": str(image_attachment.get("size_bytes", 0)),
+                "description.characters": str(len(description)),
             },
         )
         return description
@@ -485,7 +459,7 @@ async def _build_effective_query(
     if audio_attachment:
         transcript = await _transcribe_and_annotate(audio_attachment)
         tags["audio.mime_type"] = audio_attachment["mime_type"]
-        tags["audio.blob_url"] = audio_attachment["url"]
+        tags["audio.size_bytes"] = str(audio_attachment.get("size_bytes", 0))
         if transcript:
             effective_query = (
                 f"{effective_query}\n\n[Transcribed voice message]: {transcript}"
@@ -494,8 +468,8 @@ async def _build_effective_query(
 
     if image_attachment:
         description = await _describe_image_and_annotate(image_attachment, llm)
-        tags["image.blob_url"] = image_attachment["url"]
         tags["image.mime_type"] = image_attachment["mime_type"]
+        tags["image.size_bytes"] = str(image_attachment.get("size_bytes", 0))
         if description:
             effective_query = (
                 f"{effective_query}\n\n[Attached image]: {description}"
@@ -540,7 +514,7 @@ async def run_agent(
     #    anything else touches the LLM/tool loop — see observability/ai_guard.py.
     block_reason = check_query(query)
     if block_reason:
-        logger.warning("AI Guard blocked query for session=%s: %s", session_id, block_reason)
+        logger.warning("AI Guard blocked query")
         return {
             "answer": block_reason,
             "sources": [],
@@ -550,10 +524,6 @@ async def run_agent(
 
     llm = build_llm(deployment)
     all_tools = await mcp_client.get_tools()
-
-    # session.id drives RUM↔LLM Obs correlation in Datadog — prefer the RUM session ID
-    # when available so "View session replay" links work from LLM Obs traces.
-    obs_session_id = rum_session_id or session_id
 
     with LLMObs.workflow("query-processing") as workflow_span:
         # Cascade both modalities to plain text — nested inside the workflow
@@ -565,12 +535,9 @@ async def run_agent(
 
         LLMObs.annotate(
             span=workflow_span,
-            input_data={"content": effective_query, "role": "user"},
             tags={
                 "query.domain": query_domain,
-                "session.id": obs_session_id,
-                "session.chat_id": session_id,
-                **({"session.rum_id": rum_session_id} if rum_session_id else {}),
+                "query.characters": str(len(effective_query)),
                 **attachment_tags,
             },
         )
@@ -582,8 +549,6 @@ async def run_agent(
                 span=history_span,
                 tags={
                     "history.turns": str(len(raw_history)),
-                    "session.id": obs_session_id,
-                    "session.chat_id": session_id,
                 },
             )
 
@@ -604,13 +569,10 @@ async def run_agent(
             decision = await _run_router(effective_query, llm)
             LLMObs.annotate(
                 span=router_span,
-                input_data={"content": effective_query, "role": "user"},
-                output_data={"content": decision.handoff_context, "role": "assistant"},
                 tags={
                     "router.specialist": decision.specialist,
-                    "router.handoff_context": decision.handoff_context[:200],
                     "query.domain": query_domain,
-                    "session.id": obs_session_id,
+                    "router.handoff_characters": str(len(decision.handoff_context)),
                 },
             )
 
@@ -674,18 +636,21 @@ async def run_agent(
                 tags={
                     "specialist": specialist_name,
                     "specialist.tools_available": str(len(specialist_tools)),
-                    "session.id": obs_session_id,
                 },
             )
 
         # ── Task: extract sources ─────────────────────────────────────────────
         sources: list[str] = []
+        artifacts: list[dict] = []
         context_chunks: list[str] = []
 
         with LLMObs.task("extract-sources") as sources_span:
             for msg in all_messages:
                 if isinstance(msg, ToolMessage):
                     context_chunks.append(str(msg.content)[:500])
+                    artifact = extract_chat_artifact(msg.content, getattr(msg, "name", None), getattr(msg, "tool_call_id", None))
+                    if artifact:
+                        artifacts.append(artifact)
                     for src in _extract_sources_from_tool_content(msg.content):
                         if src not in sources:
                             sources.append(src)
@@ -702,10 +667,10 @@ async def run_agent(
         # Annotate workflow with final output
         LLMObs.annotate(
             span=workflow_span,
-            output_data={"content": answer, "role": "assistant"},
             tags={
                 "tools_called": ",".join(tools_called),
                 "specialist": specialist_name,
+                "response.characters": str(len(answer)),
             },
         )
 
@@ -714,7 +679,6 @@ async def run_agent(
         query=effective_query,
         context_chunks=context_chunks,
         answer=answer,
-        session_id=obs_session_id,
         query_domain=query_domain,
     )
 
@@ -723,6 +687,7 @@ async def run_agent(
         "sources": sources,
         "tools_called": tools_called,
         "query_domain": query_domain,
+        "artifacts": artifacts,
     }
 
 
@@ -770,12 +735,11 @@ async def run_agent_stream(
     #    RunAgentStreamingAsync (AgentService.cs).
     block_reason = check_query(query)
     if block_reason:
-        logger.warning("AI Guard blocked streaming query for session=%s: %s", session_id, block_reason)
+        logger.warning("AI Guard blocked streaming query")
         yield {"event": "error", "message": block_reason, "category": "blocked"}
         return
 
     llm = build_llm(deployment)
-    obs_session_id = rum_session_id or session_id
     has_audio = bool(attachments) and any(a.get("kind") == "audio" for a in attachments)
     has_image = bool(attachments) and any(a.get("kind") == "image" for a in attachments)
 
@@ -797,12 +761,9 @@ async def run_agent_stream(
 
             LLMObs.annotate(
                 span=workflow_span,
-                input_data={"content": effective_query, "role": "user"},
                 tags={
                     "query.domain": query_domain,
-                    "session.id": obs_session_id,
-                    "session.chat_id": session_id,
-                    **({"session.rum_id": rum_session_id} if rum_session_id else {}),
+                    "query.characters": str(len(effective_query)),
                     **attachment_tags,
                 },
             )
@@ -815,8 +776,6 @@ async def run_agent_stream(
                     span=history_span,
                     tags={
                         "history.turns": str(len(raw_history)),
-                        "session.id": obs_session_id,
-                        "session.chat_id": session_id,
                     },
                 )
 
@@ -834,13 +793,10 @@ async def run_agent_stream(
                 decision = await _run_router(effective_query, llm)
                 LLMObs.annotate(
                     span=router_span,
-                    input_data={"content": effective_query, "role": "user"},
-                    output_data={"content": decision.handoff_context, "role": "assistant"},
                     tags={
                         "router.specialist": decision.specialist,
-                        "router.handoff_context": decision.handoff_context[:200],
                         "query.domain": query_domain,
-                        "session.id": obs_session_id,
+                        "router.handoff_characters": str(len(decision.handoff_context)),
                     },
                 )
             yield {
@@ -945,6 +901,9 @@ async def run_agent_stream(
                             "sources": call_sources,
                             "duration_ms": duration_ms,
                         }
+                        artifact = extract_chat_artifact(result_content, name, run_id)
+                        if artifact:
+                            yield {"event": "artifact", "artifact": artifact}
 
                 answer = "".join(answer_parts)
                 tag_agent_run(
@@ -959,16 +918,15 @@ async def run_agent_stream(
                     tags={
                         "specialist": specialist_name,
                         "specialist.tools_available": str(len(specialist_tools)),
-                        "session.id": obs_session_id,
                     },
                 )
 
             LLMObs.annotate(
                 span=workflow_span,
-                output_data={"content": answer, "role": "assistant"},
                 tags={
                     "tools_called": ",".join(tools_called),
                     "specialist": specialist_name,
+                    "response.characters": str(len(answer)),
                 },
             )
 
@@ -976,7 +934,6 @@ async def run_agent_stream(
             query=effective_query,
             context_chunks=context_chunks,
             answer=answer,
-            session_id=obs_session_id,
             query_domain=query_domain,
         )
 
@@ -990,7 +947,7 @@ async def run_agent_stream(
         }
 
     except Exception as exc:
-        logger.exception("run_agent_stream failed for session=%s", session_id)
+        logger.warning("run_agent_stream failed error_type=%s", type(exc).__name__)
         yield {
             "event": "error",
             "message": "The agent encountered an unexpected error. Please retry your question.",

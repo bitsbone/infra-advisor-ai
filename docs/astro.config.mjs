@@ -162,6 +162,7 @@ export default defineConfig({
                 items: [
                     { label: 'Overview', slug: 'observability' },
                     { label: 'APM & Tracing', slug: 'observability/apm' },
+                    { label: 'App & API Protection', slug: 'observability/app-api-protection' },
                     { label: 'RUM & Session Replay', slug: 'observability/rum' },
                     { label: 'Native Mobile RUM', slug: 'observability/mobile-rum' },
                     { label: 'Dashboards & Monitors', slug: 'observability/dashboards' },
@@ -208,6 +209,7 @@ export default defineConfig({
                     { label: 'Datadog MCP server', slug: 'llm-engineering/datadog-mcp' },
                     { label: 'AI Guard', slug: 'llm-engineering/ai-guard' },
                     { label: 'Multimodal input', slug: 'llm-engineering/multimodal' },
+                    { label: 'Structured chat artifacts', slug: 'llm-engineering/chat-artifacts' },
                     { label: 'Data security & RBAC', slug: 'llm-engineering/security-rbac' },
                     { label: 'Glossary', slug: 'llm-engineering/glossary' },
                 ],

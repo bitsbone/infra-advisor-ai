@@ -6,6 +6,7 @@ DisasterDeclarationsSummaries endpoint.  All HTTP traffic is mocked with
 ``respx``; Azure SDK calls are patched with ``unittest.mock``.
 """
 
+import importlib.util as ilu
 import os
 import sys
 import types
@@ -13,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import respx
+import httpx
 from httpx import Response
 
 # ---------------------------------------------------------------------------
@@ -21,6 +23,9 @@ from httpx import Response
 
 @pytest.fixture(autouse=True)
 def mock_env(monkeypatch):
+    monkeypatch.syspath_prepend(
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dags"))
+    )
     monkeypatch.setenv("AZURE_SEARCH_ENDPOINT", "https://mock.search.windows.net")
     monkeypatch.setenv("AZURE_SEARCH_API_KEY", "mock-key")
     monkeypatch.setenv("AZURE_SEARCH_INDEX_NAME", "infra-advisor-knowledge")
@@ -32,6 +37,14 @@ def mock_env(monkeypatch):
     )
     monkeypatch.setenv("EIA_API_KEY", "mock-key")
     monkeypatch.setenv("DD_AGENT_HOST", "localhost")
+    # Production uses requests, while respx intercepts httpx. Route the same
+    # GET contract through httpx so no test can accidentally reach the network.
+    monkeypatch.setattr("requests.get", httpx.get)
+    blob_service = MagicMock()
+    monkeypatch.setattr(
+        "azure.storage.blob.BlobServiceClient.from_connection_string",
+        MagicMock(return_value=blob_service),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +60,16 @@ def _stub_module(name: str, **attrs):
     sys.modules[name] = mod
 
 
+class _OperatorStub(dict):
+    """Keep operator kwargs inspectable while supporting DAG dependency syntax."""
+
+    def __rshift__(self, other):
+        return other
+
+    def __rrshift__(self, other):
+        return self
+
+
 def _ensure_stubs():
     _stub_module("ddtrace")
     _stub_module("ddtrace.auto")
@@ -57,10 +80,12 @@ def _ensure_stubs():
         dag_cls.return_value.__enter__ = lambda s, *a: dag_instance
         dag_cls.return_value.__exit__ = MagicMock(return_value=False)
         _stub_module("airflow", DAG=dag_cls)
-        _stub_module("airflow.operators", python=MagicMock())
+        _stub_module("airflow.providers", standard=MagicMock())
+        _stub_module("airflow.providers.standard", operators=MagicMock())
+        _stub_module("airflow.providers.standard.operators", python=MagicMock())
         _stub_module(
-            "airflow.operators.python",
-            PythonOperator=MagicMock(side_effect=lambda **kw: kw),
+            "airflow.providers.standard.operators.python",
+            PythonOperator=MagicMock(side_effect=lambda **kw: _OperatorStub(kw)),
         )
 
 
@@ -69,8 +94,6 @@ _ensure_stubs()
 # ---------------------------------------------------------------------------
 # Load FEMA DAG module
 # ---------------------------------------------------------------------------
-
-import importlib.util as ilu
 
 DAG_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "dags", "fema_refresh.py")
@@ -82,7 +105,9 @@ _fema_mod = ilu.module_from_spec(_fema_spec)
 
 @pytest.fixture(scope="module")
 def fema_module():
-    with patch("ddtrace.auto", MagicMock()), patch("requests.get", MagicMock()):
+    with patch.dict(sys.modules, {"ddtrace.auto": MagicMock()}), patch(
+        "requests.get", MagicMock()
+    ):
         _fema_spec.loader.exec_module(_fema_mod)
     return _fema_mod
 
@@ -141,7 +166,7 @@ class TestFemaDagLoads:
         assert fema_module.PAGE_SIZE == 1000
 
     def test_raw_container_name(self, fema_module):
-        assert fema_module.RAW_CONTAINER == "infra-advisor-raw"
+        assert fema_module.RAW_CONTAINER == "raw-data"
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +198,7 @@ class TestFetchFemaData:
         assert result == 2
 
     @respx.mock
-    def test_records_pushed_to_xcom(self, fema_module):
+    def test_manifest_pushed_to_xcom_instead_of_records(self, fema_module):
         disaster = _make_disaster(5555)
         respx.get(FEMA_URL).mock(
             return_value=Response(
@@ -183,9 +208,11 @@ class TestFetchFemaData:
 
         ti = FakeTI()
         fema_module.fetch_fema_data(ti=ti)
-        records = ti.xcom_pull("fema_records")
-        assert records is not None
-        assert len(records) == 1
+        manifest = ti.xcom_pull("records_manifest")
+        assert manifest["schema_version"] == "1.0"
+        assert manifest["record_count"] == 1
+        assert manifest["blob"]["container"] == "raw-data"
+        assert ti.xcom_pull("fema_records") is None
 
     @respx.mock
     def test_record_fields_parsed_correctly(self, fema_module):
@@ -196,9 +223,24 @@ class TestFetchFemaData:
             )
         )
 
-        ti = FakeTI()
-        fema_module.fetch_fema_data(ti=ti)
-        record = ti.xcom_pull("fema_records")[0]
+        captured = []
+
+        def capture_records(*args, records, **kwargs):
+            captured.extend(records)
+            return {
+                "schema_version": "1.0",
+                "source": kwargs["source"],
+                "run_id": kwargs["run_id"],
+                "blob": {"container": kwargs["container_name"], "path": kwargs["blob_path"]},
+                "record_count": len(records),
+                "checksum": {"algorithm": "sha256", "value": "0" * 64},
+                "content_type": "application/x-ndjson",
+                "content_encoding": "utf-8",
+            }
+
+        with patch("_blob_manifest.write_records_manifest", side_effect=capture_records):
+            fema_module.fetch_fema_data(ti=FakeTI())
+        record = captured[0]
 
         assert record["disasterNumber"] == 9999
         assert record["stateCode"] == "LA"
@@ -262,15 +304,16 @@ class TestFetchFemaEmptyResults:
         assert result == 0
 
     @respx.mock
-    def test_empty_list_pushes_empty_xcom(self, fema_module):
+    def test_empty_list_pushes_zero_count_manifest(self, fema_module):
         respx.get(FEMA_URL).mock(
             return_value=Response(200, json={"DisasterDeclarationsSummaries": []})
         )
 
         ti = FakeTI()
         fema_module.fetch_fema_data(ti=ti)
-        records = ti.xcom_pull("fema_records")
-        assert records == []
+        manifest = ti.xcom_pull("records_manifest")
+        assert manifest["record_count"] == 0
+        assert ti.xcom_pull("fema_records") is None
 
     @respx.mock
     def test_missing_key_returns_zero(self, fema_module):

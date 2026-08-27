@@ -113,9 +113,9 @@ public sealed class ContractAwardsTool(IHttpClientFactory httpFactory, ILogger<C
         {
             return SerializeError("USASpending API request timed out.", "usaspending", true);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            logger.LogError(ex, "Unexpected error in get_contract_awards");
+            logger.LogError("Unexpected error in get_contract_awards");
             return SerializeError("Unexpected error querying USASpending.gov", "usaspending", false);
         }
 
@@ -133,7 +133,7 @@ public sealed class ContractAwardsTool(IHttpClientFactory httpFactory, ILogger<C
 
         if (rawResults.Count == 0)
         {
-            logger.LogInformation("USASpending returned zero results for query={Query}", query);
+            logger.LogInformation("USASpending returned zero awards");
             return JsonSerializer.Serialize(Array.Empty<object>());
         }
 
@@ -152,7 +152,7 @@ public sealed class ContractAwardsTool(IHttpClientFactory httpFactory, ILogger<C
                 )).ToList();
         }
 
-        logger.LogInformation("USASpending returned {Count} awards for query={Query}", awards.Count, query);
+        logger.LogInformation("USASpending returned {Count} awards", awards.Count);
         return JsonSerializer.Serialize(awards);
     }
 

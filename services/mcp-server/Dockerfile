@@ -26,6 +26,12 @@ ENV DD_GIT_COMMIT_SHA=${DD_GIT_COMMIT_SHA}
 
 # Service identification (overridden per-pod in K8s via env)
 ENV DD_SERVICE=infratools-mcp
+# SAM.gov authenticates with a query parameter. Never attach query strings to
+# auto-instrumented HTTP spans because they may contain that client credential.
+ENV DD_TRACE_HTTP_CLIENT_TAG_QUERY_STRING=false
+# Provider adapter telemetry is metadata-only. Keep automatic LLMObs payload
+# extraction off even when the image runs outside the Kubernetes manifest.
+ENV DD_LLMOBS_ENABLED=false
 ENV PYTHONPATH=/app/src
 
 RUN groupadd --gid 1000 appuser && useradd --uid 1000 --gid 1000 --no-create-home --shell /bin/false appuser

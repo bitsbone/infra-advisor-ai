@@ -75,7 +75,7 @@ Fetches state electricity generation and capacity data from the [EIA API v2](htt
 
 Fetches water infrastructure data from two sources:
 1. **EPA SDWIS** — [Safe Drinking Water Information System](https://enviro.epa.gov/enviro/efservice) (community water systems, violations)
-2. **TWDB 2026 State Water Plan** — [Texas Water Development Board](https://www.twdb.texas.gov/waterplanning/data/rwp-database/index.asp) (water supply projects)
+2. **TWDB 2027 State Water Plan** — [Texas Water Development Board](https://www.twdb.texas.gov/waterplanning/data/rwp-database/index.asp) (water supply projects)
 
 **Parameters:**
 - `state` — Two-letter state abbreviation
@@ -120,17 +120,19 @@ Searches the [TxDOT Open Data portal](https://gis-txdot.opendata.arcgis.com/) (A
 
 Searches for active federal contract and grant opportunities from:
 1. **SAM.gov** — Federal contract solicitations (`api.sam.gov/opportunities/v2/search`)
-2. **grants.gov** — Federal grant opportunities (EPA CWSRF, DWSRF, FEMA BRIC, RAISE, CDBG-DR, USACE, EDA)
+2. **Grants.gov** — Federal assistance opportunities (`api.grants.gov/v1/api/search2`)
 
 **Parameters:**
 - `query` — Keywords (NAICS code derived automatically from query)
-- `state` — Two-letter state abbreviation
-- `agency` — Agency acronym filter
-- `set_aside` — Small business set-aside type (SBA, 8A, WOSB, HUBZ, SDVOSB)
+- `geography` — State name, two-letter state abbreviation, or a location containing one
+- `naics_codes` — Optional explicit NAICS codes
+- `min_value_usd` / `max_value_usd` — Inclusive funding range; opportunities without a usable funding value are excluded when either bound is present
+- `opportunity_types` — `contract`, `grant`, or both
+- `limit` — Requested result count, capped at 20 by the public artifact contract
 
-**Returns:** Merged list sorted by deadline, with source flag (`SAM.gov` or `grants.gov`), solicitation number, title, agency, NAICS, response deadline, and set-aside type.
+**Returns:** A `procurement_opportunities` chat artifact version `1.0`, capped at 20 normalized contract/grant records and sorted by deadline. Before return, the producer rebuilds each item from an allowlist, derives provider/type identity, validates dates and numeric bounds, removes unsupported classifications, strips URL credentials/query strings/fragments, and discards every additional provider field. The envelope distinguishes complete, empty, partial, and failed provider results and carries provider counts, truncation, safe source links, funding/classification fields, and explicit missing-data metadata. See [Structured Chat Artifacts](/infra-advisor-ai/llm-engineering/chat-artifacts/).
 
-**Date range:** Last 364 days (SAM.gov limit). Range is noted in `_note` field when clamped.
+**Date range:** The SAM.gov request is bounded to its one-year search limit. Grants.gov uses its current Search2 response under `data.oppHits`.
 
 ---
 
@@ -206,9 +208,11 @@ Generates structured document scaffolds using Jinja2 templates. No LLM is invoke
 
 ```
 GET /health
+GET /livez
+GET /readyz
 ```
 
-Returns service status and API key configuration:
+`/health` returns backward-compatible service diagnostics and API key configuration. `/livez` is the shallow Kubernetes process check and `/readyz` reports serving readiness without calling a provider.
 
 ```json
 {

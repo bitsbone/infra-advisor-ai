@@ -94,7 +94,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     catch (Exception ex)
     {
         var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
-        loggerFactory.CreateLogger("Redis").LogWarning("Redis connection failed: {Error}", ex.Message);
+        loggerFactory.CreateLogger("Redis").LogWarning("Redis connection failed error_type={ErrorType}", ex.GetType().Name);
         return ConnectionMultiplexer.Connect(cfg);
     }
 });
@@ -168,6 +168,7 @@ builder.Services.AddHttpClient("mcp-dotnet")
 // Azure OpenAI Whisper for transcription. Separate named client from
 // mcp-dotnet since it talks to Azure Blob Storage, not the MCP server.
 builder.Services.AddHttpClient("agent-media-download")
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
 
 builder.Services.AddSingleton(sp => new McpClientHolder(
@@ -187,7 +188,7 @@ builder.Services.AddSingleton<IChatClient>(sp =>
         .AsIChatClient()
         .AsBuilder()
         .UseFunctionInvocation()
-        .UseOpenTelemetry(configure: cfg => cfg.EnableSensitiveData = true)
+        .UseOpenTelemetry(configure: cfg => cfg.EnableSensitiveData = TelemetryPrivacy.EnableSensitiveData)
         .Build());
 
 // ── IEmbeddingGenerator pipeline (M.E.AI) ─────────────────────────────────────
@@ -200,7 +201,7 @@ builder.Services.AddSingleton<IEmbeddingGenerator<string, Embedding<float>>>(sp 
         .GetEmbeddingClient(azureEmbeddingDeployment)
         .AsIEmbeddingGenerator()
         .AsBuilder()
-        .UseOpenTelemetry(configure: cfg => cfg.EnableSensitiveData = true)
+        .UseOpenTelemetry(configure: cfg => cfg.EnableSensitiveData = TelemetryPrivacy.EnableSensitiveData)
         .Build());
 
 // ── Agent (MAF) ───────────────────────────────────────────────────────────────
@@ -283,11 +284,10 @@ builder.Services.AddSingleton(sp => new AgentHolder(
     agentName:      "infra-advisor",
     otelSourceName: TelemetrySetup.ActivitySourceName));
 
-// ── Prompt tracking + agent-span capture ──────────────────────────────────────
+// ── Prompt-version + agent-span capture ─────────────────────────────────
 // One ActivityListener does two jobs:
-//   1. Stamps `_dd.ml_obs.prompt_tracking` (JSON metadata: name, version,
-//      template) on every chat + invoke_agent span. DD's Prompt Tracking
-//      UI reads this for per-version metrics + A/B comparison.
+//   1. Stamps a content-derived prompt version on chat + invoke_agent spans
+//      without exporting the prompt template itself.
 //   2. Captures the invoke_agent span's (trace_id, span_id) into an
 //      AsyncLocal so AgentService can attach external-eval scores to the
 //      AGENT span (not the HTTP root) — DD requires both IDs on the
@@ -299,14 +299,6 @@ static string ShortContentHash(string text)
 }
 
 var promptVersion = "v1-" + ShortContentHash(AgentSystemPrompt);
-var promptTrackingJson = JsonSerializer.Serialize(new
-{
-    name = "infra-advisor-system",
-    version = promptVersion,
-    template = AgentSystemPrompt,
-    variables = new Dictionary<string, object>(),
-});
-
 ActivitySource.AddActivityListener(new ActivityListener
 {
     ShouldListenTo = source =>
@@ -316,11 +308,9 @@ ActivitySource.AddActivityListener(new ActivityListener
     {
         if (activity.OperationName is "invoke_agent" or "chat")
         {
-            activity.SetTag("_dd.ml_obs.prompt_tracking", promptTrackingJson);
-            // Propagate session.id from baggage so Datadog LLMObs can group
-            // traces by session (equivalent of Python LLMObs.annotate()).
-            var sid = activity.GetBaggageItem("session.id");
-            if (sid is not null) activity.SetTag("session.id", sid);
+            // A content hash preserves prompt-version correlation without
+            // copying the system prompt into exported span attributes.
+            activity.SetTag("prompt.version", promptVersion);
         }
         if (activity.OperationName == "invoke_agent")
             AgentSpanContext.Capture(activity);
@@ -459,7 +449,7 @@ var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
 var conversationService = app.Services.GetRequiredService<ConversationService>();
 
 try { await conversationService.InitializeAsync(); }
-catch (Exception ex) { startupLogger.LogWarning("Conversation DB init failed: {Error}", ex.Message); }
+catch (Exception ex) { startupLogger.LogWarning("Conversation DB init failed error_type={ErrorType}", ex.GetType().Name); }
 
 var availableModels = availableModelsRaw
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -488,8 +478,7 @@ _ = Task.Run(async () =>
     }
     catch (Exception ex)
     {
-        startupLogger.LogWarning(
-            "MCP pre-warm failed (will retry on first /query): {Error}", ex.Message);
+        startupLogger.LogWarning("MCP pre-warm failed error_type={ErrorType}", ex.GetType().Name);
     }
 });
 
@@ -503,13 +492,31 @@ app.MapPost("/query", async (
     ConversationService conversationSvc,
     AppState state) =>
 {
+    var headerSessionId = httpContext.Request.Headers["X-Session-ID"].FirstOrDefault();
+    var conversationId = httpContext.Request.Headers["X-Conversation-ID"].FirstOrDefault();
+    var userId = SubClaim(httpContext);
+    if (userId is null) return Results.Unauthorized();
+    var sessionId = body.SessionId ?? headerSessionId ?? Guid.NewGuid().ToString();
+    if (!string.IsNullOrWhiteSpace(conversationId))
+    {
+        var access = await conversationSvc.CheckOwnershipAsync(conversationId, userId);
+        if (access == ConversationAccess.Unavailable)
+            return Results.Problem(detail: "Conversation storage unavailable", statusCode: 503);
+        if (access != ConversationAccess.Owned) return Results.NotFound();
+    }
+    List<AttachmentDto>? attachments;
+    try
+    {
+        attachments = body.Attachments?.Select(AttachmentReferenceValidator.Validate).ToList();
+    }
+    catch (InvalidAttachmentReferenceException)
+    {
+        return Results.Problem(detail: "Invalid attachment reference", statusCode: 422);
+    }
     if (!state.McpConnected || !state.LlmConnected)
         return Results.Problem(detail: "Agent not ready", statusCode: 503);
 
-    var headerSessionId = httpContext.Request.Headers["X-Session-ID"].FirstOrDefault();
-    var conversationId = httpContext.Request.Headers["X-Conversation-ID"].FirstOrDefault();
-    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
-    var sessionId = body.SessionId ?? headerSessionId ?? Guid.NewGuid().ToString();
+    var agentSessionKey = TenantSessionKey.Create(userId, !string.IsNullOrWhiteSpace(conversationId) ? conversationId : sessionId);
 
     string deployment;
     if (!string.IsNullOrWhiteSpace(body.Model) && state.AvailableModels.Contains(body.Model))
@@ -518,34 +525,27 @@ app.MapPost("/query", async (
     }
     else
     {
-        var sessionModel = await memoryService.GetSessionModelAsync(sessionId);
+        var sessionModel = await memoryService.GetSessionModelAsync(agentSessionKey);
         deployment = state.AvailableModels.Contains(sessionModel) ? sessionModel : state.DefaultModel;
     }
 
     AgentResult result;
     try
     {
-        // Key the agent session by conversationId when present (so URL-shared
-        // links resume the same conversation); fall back to sessionId otherwise.
-        var agentSessionKey = !string.IsNullOrWhiteSpace(conversationId)
-            ? conversationId
-            : sessionId;
-        // Propagate session.id into OTel baggage so the ActivityStarted hook can
-        // stamp it on every invoke_agent/chat span — Datadog LLMObs groups traces
-        // by this tag (equivalent of Python LLMObs.annotate(session_id=...)).
-        Activity.Current?.AddBaggage("session.id", agentSessionKey);
         result = await agentService.RunAgentAsync(
             query: body.Query,
             sessionId: agentSessionKey,
             deployment: deployment,
-            attachments: body.Attachments,
+            attachments: attachments,
             ct: httpContext.RequestAborted);
     }
     catch (Exception ex)
     {
         var errTraceId = GetDdTraceId(httpContext, Activity.Current);
-        return Results.Problem(detail: ex.Message, statusCode: 500,
-            extensions: new Dictionary<string, object?> { ["trace_id"] = errTraceId });
+        var publicError = PublicError.Unexpected(ex);
+        app.Logger.LogWarning("Query failed error_type={ErrorType}", ex.GetType().Name);
+        return Results.Problem(detail: publicError.Detail, statusCode: 500,
+            extensions: new Dictionary<string, object?> { ["error_type"] = publicError.ErrorType, ["trace_id"] = errTraceId });
     }
 
     if (result.Blocked)
@@ -555,16 +555,17 @@ app.MapPost("/query", async (
             extensions: new Dictionary<string, object?> { ["trace_id"] = blockedTraceId, ["blocked"] = true });
     }
 
-    await memoryService.SetSessionModelAsync(sessionId, deployment);
+    await memoryService.SetSessionModelAsync(agentSessionKey, deployment);
 
     var traceId = GetDdTraceId(httpContext, Activity.Current);
     var spanId = GetDdSpanId(Activity.Current);
 
-    if (!string.IsNullOrWhiteSpace(conversationId) && !string.IsNullOrWhiteSpace(userId))
+    if (!string.IsNullOrWhiteSpace(conversationId))
     {
         await conversationSvc.SaveMessagesAsync(
-            conversationId, body.Query, result.Answer,
-            result.Sources, traceId, spanId, attachments: body.Attachments);
+            conversationId, userId, body.Query, result.Answer,
+            result.Sources, traceId, spanId, attachments: attachments,
+            artifacts: result.Artifacts ?? []);
     }
 
     return Results.Ok(new QueryResponse(
@@ -573,7 +574,8 @@ app.MapPost("/query", async (
         TraceId: traceId,
         SpanId: spanId,
         SessionId: sessionId,
-        Model: deployment));
+        Model: deployment,
+        Artifacts: result.Artifacts ?? []));
 }).RequireAuthorization().RequireRateLimiting("query");
 
 // ── /query/stream — Server-Sent Events streaming variant ──────────────────────
@@ -594,15 +596,31 @@ app.MapPost("/query/stream", async (
     ConversationService conversationSvc,
     AppState state) =>
 {
-    if (!state.McpConnected || !state.LlmConnected)
-    {
-        return Results.Problem(detail: "Agent not ready", statusCode: 503);
-    }
-
     var headerSessionId = httpContext.Request.Headers["X-Session-ID"].FirstOrDefault();
     var conversationId = httpContext.Request.Headers["X-Conversation-ID"].FirstOrDefault();
-    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
+    var userId = SubClaim(httpContext);
+    if (userId is null) return Results.Unauthorized();
     var sessionId = body.SessionId ?? headerSessionId ?? Guid.NewGuid().ToString();
+    if (!string.IsNullOrWhiteSpace(conversationId))
+    {
+        var access = await conversationSvc.CheckOwnershipAsync(conversationId, userId);
+        if (access == ConversationAccess.Unavailable)
+            return Results.Problem(detail: "Conversation storage unavailable", statusCode: 503);
+        if (access != ConversationAccess.Owned) return Results.NotFound();
+    }
+    List<AttachmentDto>? attachments;
+    try
+    {
+        attachments = body.Attachments?.Select(AttachmentReferenceValidator.Validate).ToList();
+    }
+    catch (InvalidAttachmentReferenceException)
+    {
+        return Results.Problem(detail: "Invalid attachment reference", statusCode: 422);
+    }
+    if (!state.McpConnected || !state.LlmConnected)
+        return Results.Problem(detail: "Agent not ready", statusCode: 503);
+
+    var agentSessionKey = TenantSessionKey.Create(userId, !string.IsNullOrWhiteSpace(conversationId) ? conversationId : sessionId);
 
     string deployment;
     if (!string.IsNullOrWhiteSpace(body.Model) && state.AvailableModels.Contains(body.Model))
@@ -611,14 +629,9 @@ app.MapPost("/query/stream", async (
     }
     else
     {
-        var sessionModel = await memoryService.GetSessionModelAsync(sessionId);
+        var sessionModel = await memoryService.GetSessionModelAsync(agentSessionKey);
         deployment = state.AvailableModels.Contains(sessionModel) ? sessionModel : state.DefaultModel;
     }
-
-    var agentSessionKey = !string.IsNullOrWhiteSpace(conversationId)
-        ? conversationId
-        : sessionId;
-    Activity.Current?.AddBaggage("session.id", agentSessionKey);
 
     httpContext.Response.Headers.ContentType = "text/event-stream";
     httpContext.Response.Headers.CacheControl = "no-cache";
@@ -638,6 +651,7 @@ app.MapPost("/query/stream", async (
     var doneSources = new List<string>();
     string? finalTraceId = null;
     string? finalSpanId = null;
+    var artifacts = new List<JsonElement>();
 
     // Tool-call / pipeline-step reasoning, accumulated as StepEvent/
     // ToolCallStartEvent/ToolCallEndEvent arrive so it can be persisted
@@ -656,7 +670,7 @@ app.MapPost("/query/stream", async (
         query: body.Query,
         sessionId: agentSessionKey,
         deployment: deployment,
-        attachments: body.Attachments,
+        attachments: attachments,
         ct: httpContext.RequestAborted))
     {
         // Accumulate side-effects we need post-stream.
@@ -684,6 +698,9 @@ app.MapPost("/query/stream", async (
                     ArgsJson: priorArgsJson, ResultSummary: tce.ResultSummary, Sources: tce.Sources,
                     DurationMs: tce.DurationMs, Detail: null));
                 break;
+            case ArtifactEvent ae:
+                artifacts.Add(ae.Artifact.Clone());
+                break;
             case DoneEvent d:
                 doneSources.AddRange(d.Sources);
                 finalTraceId = d.TraceId;
@@ -700,13 +717,13 @@ app.MapPost("/query/stream", async (
         await httpContext.Response.Body.FlushAsync(httpContext.RequestAborted);
     }
 
-    await memoryService.SetSessionModelAsync(sessionId, deployment);
+    await memoryService.SetSessionModelAsync(agentSessionKey, deployment);
 
-    if (!string.IsNullOrWhiteSpace(conversationId) && !string.IsNullOrWhiteSpace(userId))
+    if (!string.IsNullOrWhiteSpace(conversationId))
     {
         await conversationSvc.SaveMessagesAsync(
-            conversationId, body.Query, fullAnswer.ToString(),
-            doneSources, finalTraceId, finalSpanId, stepRecords, body.Attachments);
+            conversationId, userId, body.Query, fullAnswer.ToString(),
+            doneSources, finalTraceId, finalSpanId, stepRecords, attachments, artifacts);
     }
 
     return Results.Empty;
@@ -749,7 +766,7 @@ app.MapGet("/suggestions/initial", async (
     }
     catch (Exception ex)
     {
-        app.Logger.LogWarning("Initial suggestions fallback LLM call failed: {Error}", ex.Message);
+        app.Logger.LogWarning("Initial suggestions fallback LLM call failed error_type={ErrorType}", ex.GetType().Name);
     }
 
     return Results.Ok(new SuggestionsResponse(SuggestionService.FallbackSuggestions));
@@ -787,13 +804,13 @@ app.MapPost("/media/upload", async (
             ct: httpContext.RequestAborted);
         return Results.Ok(attachment);
     }
-    catch (UnsupportedMediaTypeException ex)
+    catch (UnsupportedMediaTypeException)
     {
-        return Results.Problem(detail: ex.Message, statusCode: 415);
+        return Results.Problem(detail: "Unsupported media type", statusCode: 415);
     }
-    catch (MediaTooLargeException ex)
+    catch (MediaTooLargeException)
     {
-        return Results.Problem(detail: ex.Message, statusCode: 413);
+        return Results.Problem(detail: "Attachment exceeds the 10 MB limit", statusCode: 413);
     }
 }).RequireAuthorization().RequireRateLimiting("media");
 
@@ -858,7 +875,7 @@ app.MapPost("/tools/{name}", async (
         var traceId = GetDdTraceId(httpContext, Activity.Current);
         var spanId = GetDdSpanId(Activity.Current);
         if (callResult.IsError == true)
-            return Results.Ok(new { tool_name = name, error = text, duration_ms = sw.Elapsed.TotalMilliseconds, trace_id = traceId, span_id = spanId });
+            return Results.Ok(new { tool_name = name, error = "Tool invocation failed", error_type = "McpToolError", duration_ms = sw.Elapsed.TotalMilliseconds, trace_id = traceId, span_id = spanId });
         return Results.Ok(new
         {
             tool_name = name,
@@ -880,7 +897,8 @@ app.MapPost("/tools/{name}", async (
         return Results.Ok(new
         {
             tool_name = name,
-            error = ex.Message,
+            error = "Tool invocation failed",
+            error_type = ex.GetType().Name,
             duration_ms = sw.Elapsed.TotalMilliseconds,
             trace_id = GetDdTraceId(httpContext, Activity.Current),
             span_id = GetDdSpanId(Activity.Current),
@@ -1010,10 +1028,8 @@ app.MapPost("/feedback", (FeedbackRequest body) =>
     // hand-rolled "user-feedback" activity from the old LlmTelemetry helper
     // is gone. APM picks it up via the AspNetCore instrumentation.
     var current = Activity.Current;
-    current?.SetTag("feedback.trace_id", body.TraceId);
-    current?.SetTag("feedback.span_id", body.SpanId);
-    current?.SetTag("feedback.rating", body.Rating);
-    current?.SetTag("feedback.session_id", body.SessionId ?? "");
+    foreach (var tag in TelemetryPrivacy.SafeFeedbackTags(body.TraceId, body.SpanId, body.Rating, body.SessionId))
+        current?.SetTag(tag.Key, tag.Value);
 
     feedbackCounter.Add(1, new KeyValuePair<string, object?>("rating", body.Rating));
 
@@ -1029,9 +1045,16 @@ app.MapGet("/health", (AppState state) =>
         llm_connected = state.LlmConnected,
     }));
 
-app.MapDelete("/session/{sessionId}", async (string sessionId, MemoryService memoryService) =>
+app.MapGet("/livez", () => Results.Ok(new { status = "ok", service = "infra-advisor-agent-api-dotnet" }));
+app.MapGet("/readyz", (AppState state) => state.McpConnected && state.LlmConnected
+    ? Results.Ok(new { status = "ready", service = "infra-advisor-agent-api-dotnet", mcp_connected = state.McpConnected, llm_connected = state.LlmConnected })
+    : Results.Json(new { status = "not_ready", service = "infra-advisor-agent-api-dotnet", mcp_connected = state.McpConnected, llm_connected = state.LlmConnected }, statusCode: 503));
+
+app.MapDelete("/session/{sessionId}", async (string sessionId, HttpContext httpContext, MemoryService memoryService) =>
 {
-    var cleared = await memoryService.ClearSessionAsync(sessionId);
+    var userId = SubClaim(httpContext);
+    if (userId is null) return Results.Unauthorized();
+    var cleared = await memoryService.ClearSessionAsync(TenantSessionKey.Create(userId, sessionId));
     return Results.Ok(new { session_id = sessionId, cleared = cleared });
 }).RequireAuthorization();
 
@@ -1068,7 +1091,10 @@ app.MapPost("/conversations", async (HttpContext httpContext, ConversationServic
     }
     catch (Exception ex)
     {
-        return Results.Problem(detail: ex.Message, statusCode: 500);
+        var publicError = PublicError.Unexpected(ex, "Unable to create conversation");
+        app.Logger.LogWarning("Conversation creation failed error_type={ErrorType}", ex.GetType().Name);
+        return Results.Problem(detail: publicError.Detail, statusCode: 500,
+            extensions: new Dictionary<string, object?> { ["error_type"] = publicError.ErrorType, ["trace_id"] = GetDdTraceId(httpContext, Activity.Current) });
     }
 }).RequireAuthorization();
 

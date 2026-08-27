@@ -100,13 +100,12 @@ kubectl get pods -n kafka
 kubectl get pods -n datadog
 ```
 
-All pods should show `Running` status. The Airflow scheduler may take 3–5 minutes to complete `pip install` and start.
+All pods should show `Running` status. Airflow dependencies, DAGs, and helper scripts are already installed in its verified custom image; pods never install packages at startup.
 
 ## 8. Initialize the knowledge base
 
 ```bash
-make sync-dags      # copy DAG files to Airflow PVC
-make run-dags       # trigger all 9 DAGs
+make run-dags       # trigger the approved canary DAGs bundled in the Airflow image
 ```
 
 The `knowledge_base_init` DAG must complete before `search_project_knowledge` returns results. Monitor progress in the Airflow UI:
@@ -148,17 +147,20 @@ kubectl rollout restart deployment/ui -n infra-advisor
 After changing `k8s/airflow/values.yaml`:
 
 ```bash
-make upgrade-airflow
+make create-airflow-ghcr-secret
+make upgrade-airflow AIRFLOW_IMAGE_TAG=<git-commit-sha>
 ```
 
-Note: The Makefile `upgrade-airflow` target will exit with error code 1 if the migration job has already been cleaned up by TTL — this is expected and safe. Check `helm list -n airflow` to confirm the upgrade succeeded (STATUS: deployed).
+The upgrade is intentionally fail-closed: it requires a deployed, single-image release with current metadata migrations and valid application/registry secrets, pulls the requested image, runs its real DagBag/runtime contract locally, performs an atomic Helm upgrade, and verifies the live workloads against the immutable image afterward. Resolve a failed preflight instead of uninstalling the release or deleting the namespace.
 
-## Sync DAG changes
+## Deliver DAG changes
 
 After modifying DAG files in `services/ingestion/dags/`:
 
 ```bash
-make sync-dags
+make test-airflow
+make test-airflow-container
+# Build and publish an immutable image, then run the verified upgrade above.
 ```
 
-DAG changes are picked up by the dag-processor within 30 seconds.
+DAG changes are never copied into a live pod or PVC. The DAG processor scans the image-bundled directory at the configured two-minute interval, and the scheduler health threshold is three minutes so the one-minute Kubernetes health probe remains tolerant of the intentionally quieter scan cadence.

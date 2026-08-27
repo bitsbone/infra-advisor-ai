@@ -119,8 +119,8 @@ public class AgentService
         if (guardResult.IsBlocked)
         {
             _logger.LogWarning(
-                "AI Guard blocked query for session={SessionId}: {Action} — {Reason}",
-                sessionId, guardResult.Action, guardResult.Reason);
+                "AI Guard blocked query action={Action}",
+                guardResult.Action);
             return new AgentResult(
                 Answer: "",
                 Sources: new List<string>(),
@@ -175,8 +175,8 @@ public class AgentService
             // with the fresh tool list, recreate the agent session (the
             // old one was tied to the old agent's context), and retry once.
             _logger.LogWarning(
-                "MCP session expired for session={SessionId} — reconnecting and retrying once: {Error}",
-                sessionId, RootErrorMessage(ex));
+                "MCP session expired; reconnecting and retrying once error_type={ErrorType}",
+                ex.GetType().Name);
             _mcpReconnectCounter.Add(1,
                 new KeyValuePair<string, object?>("reason", "session_expired"));
             await _mcpHolder.RefreshAsync(ct);
@@ -189,8 +189,7 @@ public class AgentService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("agent.RunAsync failed for session={SessionId}: {Error}",
-                sessionId, ex.Message);
+            _logger.LogWarning("agent.RunAsync failed error_type={ErrorType}", ex.GetType().Name);
             throw;
         }
 
@@ -199,6 +198,7 @@ public class AgentService
         var answer = response.Text ?? "";
         var sources = ExtractSourcesFromResponse(response);
         var toolsCalled = ExtractToolsCalledFromResponse(response);
+        var artifacts = ExtractArtifactsFromResponse(response);
 
         // Business metrics — increment once per completed query plus once
         // per MCP tool invocation. Tags let dashboards slice by domain and
@@ -221,7 +221,8 @@ public class AgentService
             Answer: answer,
             Sources: sources,
             ToolsCalled: toolsCalled,
-            QueryDomain: domain);
+            QueryDomain: domain,
+            Artifacts: artifacts);
     }
 
     private void ScheduleEvaluations(
@@ -260,7 +261,7 @@ public class AgentService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning("Evaluator {Label} threw: {Error}", ev.Label, ex.Message);
+                    _logger.LogWarning("Evaluator {Label} failed error_type={ErrorType}", ev.Label, ex.GetType().Name);
                 }
             }
         });
@@ -308,13 +309,6 @@ public class AgentService
         return false;
     }
 
-    private static string RootErrorMessage(Exception ex)
-    {
-        var e = ex;
-        while (e.InnerException is not null) e = e.InnerException;
-        return e.Message;
-    }
-
     // Turns a mid-stream exception into a clear, user-actionable message +
     // machine-readable category for the terminal ErrorEvent. Never surfaces
     // raw .NET/HTTP exception text to the user — the full exception is still
@@ -334,7 +328,7 @@ public class AgentService
                 return ("A backend service didn't respond in time. Please retry your question.", "upstream_timeout");
             if (e.InnerException is null) break;
         }
-        return (ex.Message, "unknown");
+        return ("The agent encountered an unexpected error. Please retry your question.", "unknown");
     }
 
     // Wraps ClassifyDomain in a manual Activity tagged so DD LLMObs renders
@@ -345,7 +339,7 @@ public class AgentService
         using var activity = ActivitySource.StartActivity("classify_domain", ActivityKind.Internal);
         activity?.SetTag("gen_ai.operation.name", "classify_domain");
         activity?.SetTag("dd.llmobs.span.kind", "task");
-        activity?.SetTag("input.value", query);
+        activity?.SetTag("query.characters", query.Length);
 
         var domain = ClassifyDomain(query);
 
@@ -386,28 +380,15 @@ public class AgentService
     // called through the M.E.AI IChatClient pipeline, so nothing else would
     // emit a span for it.
     //
-    // gen_ai.input.messages / gen_ai.output.messages follow the OTel GenAI
-    // semantic conventions (v1.37+) message-parts schema — the SAME
-    // attributes Microsoft.Extensions.AI's own .UseOpenTelemetry() decorator
-    // emits automatically for chat calls (confirmed empirically: a UriContent
-    // image part on a ChatMessage already serializes as
-    // {"type":"uri","uri":...,"mime_type":...,"modality":"image"} with no
-    // extra code — that's why images need zero changes here). Audio has no
-    // such automatic path since this call goes through Azure.AI.OpenAI's
-    // AudioClient directly, not an IChatClient, so it's built by hand here,
-    // matching the same "uri" part shape with modality "audio" instead of
-    // inline base64 — the audio blob already has a stable SAS URL, so
-    // referencing it avoids embedding a potentially large base64 payload in
-    // a span attribute. dd.llmobs.span.kind=llm (not "task") since this is a
-    // real model call (Whisper), same reasoning as the Python side's switch
-    // from LLMObs.task to LLMObs.llm for this same step.
+    // This manual span intentionally records only modality, MIME type, size,
+    // duration, and status. The SAS URL, bytes, and transcript stay at the
+    // provider boundary and are never copied into custom telemetry.
     private async Task<string?> TranscribeAudioIfPresentAsync(AttachmentDto audioAttachment, CancellationToken ct)
     {
         if (_whisperOpenAiClient is null)
         {
             _logger.LogWarning(
-                "Skipping audio transcription for url={Url} — AZURE_OPENAI_WHISPER_ENDPOINT/AZURE_OPENAI_WHISPER_API_KEY not configured",
-                audioAttachment.Url);
+                "Skipping audio transcription because the Whisper client is not configured");
             return null;
         }
 
@@ -417,23 +398,13 @@ public class AgentService
         activity?.SetTag("gen_ai.provider.name", "azure.ai.openai");
         activity?.SetTag("dd.llmobs.span.kind", "llm");
 
-        var inputMessages = JsonSerializer.Serialize(new[]
-        {
-            new
-            {
-                role = "user",
-                parts = new object[]
-                {
-                    new { type = "uri", uri = audioAttachment.Url, mime_type = audioAttachment.MimeType, modality = "audio" },
-                },
-            },
-        });
-        activity?.SetTag("gen_ai.input.messages", inputMessages);
+        foreach (var tag in SafeAttachmentTelemetry(audioAttachment))
+            activity?.SetTag(tag.Key, tag.Value);
 
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            var audioBytes = await _mediaHttpClient.GetByteArrayAsync(audioAttachment.Url, ct);
+            var audioBytes = await DownloadValidatedAudioAsync(audioAttachment, ct);
             var audioClient = _whisperOpenAiClient.GetAudioClient(_whisperDeployment);
             var ext = audioAttachment.MimeType switch
             {
@@ -446,25 +417,51 @@ public class AgentService
             var result = await audioClient.TranscribeAudioAsync(stream, $"audio.{ext}", cancellationToken: ct);
             stopwatch.Stop();
 
-            var outputMessages = JsonSerializer.Serialize(new[]
-            {
-                new
-                {
-                    role = "assistant",
-                    parts = new object[] { new { type = "text", content = result.Value.Text } },
-                },
-            });
-            activity?.SetTag("gen_ai.output.messages", outputMessages);
+            activity?.SetTag("output.modality", "text");
+            activity?.SetTag("transcript.characters", result.Value.Text.Length);
             activity?.SetTag("audio.duration_s", (stopwatch.ElapsedMilliseconds / 1000.0).ToString("F2"));
             return result.Value.Text;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("transcribe_audio failed for url={Url}: {Error}", audioAttachment.Url, ex.Message);
+            _logger.LogWarning("transcribe_audio failed error_type={ErrorType}", ex.GetType().Name);
             activity?.SetTag("error", true);
+            activity?.SetTag("error.type", ex.GetType().Name);
             return null;
         }
     }
+
+    private async Task<byte[]> DownloadValidatedAudioAsync(AttachmentDto attachment, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, attachment.Url);
+        using var response = await _mediaHttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength is long contentLength && contentLength != attachment.SizeBytes)
+            throw new InvalidAttachmentReferenceException();
+
+        await using var source = await response.Content.ReadAsStreamAsync(ct);
+        using var destination = new MemoryStream((int)attachment.SizeBytes);
+        var buffer = new byte[81920];
+        long total = 0;
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer.AsMemory(), ct);
+            if (read == 0) break;
+            total += read;
+            if (total > attachment.SizeBytes) throw new InvalidAttachmentReferenceException();
+            await destination.WriteAsync(buffer.AsMemory(0, read), ct);
+        }
+        if (total != attachment.SizeBytes) throw new InvalidAttachmentReferenceException();
+        return destination.ToArray();
+    }
+
+    internal static IReadOnlyDictionary<string, object> SafeAttachmentTelemetry(AttachmentDto attachment) =>
+        new Dictionary<string, object>
+        {
+            ["input.modality"] = attachment.Kind,
+            [$"{attachment.Kind}.mime_type"] = attachment.MimeType,
+            [$"{attachment.Kind}.size_bytes"] = attachment.SizeBytes,
+        };
 
     // Plain text ChatMessage, or a multi-part vision message when an image
     // attachment is present.
@@ -497,8 +494,8 @@ public class AgentService
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
         _logger.LogDebug(
-            "[stream] starting for session={SessionId}; ct already cancelled: {AlreadyCancelled}",
-            sessionId, ct.IsCancellationRequested);
+            "[stream] starting; ct already cancelled: {AlreadyCancelled}",
+            ct.IsCancellationRequested);
 
         // 0. AI Guard pre-flight check — see RunAgentAsync for rationale.
         //    Streaming can't rewind text already sent to the client, so this
@@ -508,8 +505,8 @@ public class AgentService
         if (guardResult.IsBlocked)
         {
             _logger.LogWarning(
-                "AI Guard blocked streaming query for session={SessionId}: {Action} — {Reason}",
-                sessionId, guardResult.Action, guardResult.Reason);
+                "AI Guard blocked streaming query action={Action}",
+                guardResult.Action);
             yield return new ErrorEvent(
                 guardResult.Reason ?? $"Blocked by AI Guard ({guardResult.Action})",
                 TraceId: Activity.Current?.TraceId.ToString());
@@ -578,8 +575,8 @@ public class AgentService
                 // /query. Not attempted once anyStreamed is true (see above).
                 retriedMcpSession = true;
                 _logger.LogWarning(
-                    "MCP session expired mid-stream for session={SessionId} before any output — reconnecting and restarting once: {Error}",
-                    sessionId, RootErrorMessage(ex));
+                    "MCP session expired before any streamed output; reconnecting once error_type={ErrorType}",
+                    ex.GetType().Name);
                 _mcpReconnectCounter.Add(1,
                     new KeyValuePair<string, object?>("reason", "session_expired_stream"));
                 await enumerator.DisposeAsync();
@@ -619,8 +616,8 @@ public class AgentService
         {
             var (errorMessage, errorCategory) = ClassifyStreamError(streamError, retriedMcpSession);
             _logger.LogWarning(
-                "agent.RunStreamingAsync failed for session={SessionId} category={Category}: {Error}",
-                sessionId, errorCategory, RootErrorMessage(streamError));
+                "agent.RunStreamingAsync failed category={Category} error_type={ErrorType}",
+                errorCategory, streamError.GetType().Name);
             yield return new ErrorEvent(
                 errorMessage, TraceId: Activity.Current?.TraceId.ToString(), Category: errorCategory);
             yield break;
@@ -696,6 +693,8 @@ public class AgentService
                         ResultSummary: SummarizeToolResult(resultStr),
                         Sources: sources,
                         DurationMs: durationMs);
+                    var artifact = ChatArtifactParser.TryExtract(resultStr, name, fr.CallId);
+                    if (artifact is not null) yield return new ArtifactEvent(artifact.Value);
                     break;
 
                 case TextContent tc when !string.IsNullOrEmpty(tc.Text):
@@ -761,7 +760,6 @@ public class AgentService
     {
         score = Math.Clamp(score, 0.0, 1.0);
         _faithfulnessHistogram.Record(score,
-            new KeyValuePair<string, object?>("session.id", sessionId),
             new KeyValuePair<string, object?>("query.domain", domain));
     }
 
@@ -787,6 +785,19 @@ public class AgentService
             }
         }
         return sources;
+    }
+
+    private static List<JsonElement> ExtractArtifactsFromResponse(AgentResponse response)
+    {
+        var artifacts = new List<JsonElement>();
+        foreach (var message in response.Messages)
+            foreach (var content in message.Contents)
+                if (content is FunctionResultContent fr && fr.Result is not null)
+                {
+                    var artifact = ChatArtifactParser.TryExtract(fr.Result.ToString() ?? "", null, fr.CallId);
+                    if (artifact is not null) artifacts.Add(artifact.Value);
+                }
+        return artifacts;
     }
 
     // Raw tool RESULTS captured from the agent response. LLM-judge evaluators
@@ -833,6 +844,10 @@ public class AgentService
         if (string.IsNullOrWhiteSpace(maybeJson)) return;
         try
         {
+            var artifact = ChatArtifactParser.TryExtract(maybeJson, null, null);
+            if (artifact is not null)
+                foreach (var source in ChatArtifactParser.ExtractSourceUrls(artifact.Value))
+                    if (!sources.Contains(source)) sources.Add(source);
             using var doc = JsonDocument.Parse(maybeJson);
             WalkForSource(doc.RootElement, sources);
         }

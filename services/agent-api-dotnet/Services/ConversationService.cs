@@ -1,6 +1,7 @@
 using InfraAdvisor.AgentApi.Models;
 using InfraAdvisor.AgentApi.Observability;
 using Npgsql;
+using System.Text.Json;
 
 namespace InfraAdvisor.AgentApi.Services;
 
@@ -37,7 +38,8 @@ public record StoredMessage(
     string? SpanId,
     string? CreatedAt,
     IReadOnlyList<StoredStep> Steps,
-    IReadOnlyList<AttachmentDto> Attachments
+    IReadOnlyList<AttachmentDto> Attachments,
+    IReadOnlyList<JsonElement> Artifacts
 );
 
 // Persisted tool-call / pipeline-step reasoning for an assistant message —
@@ -57,10 +59,19 @@ public record StoredStep(
     string? Detail
 );
 
+public enum ConversationAccess
+{
+    Owned,
+    NotFound,
+    Unavailable,
+}
+
 public sealed class ConversationService
 {
     private readonly NpgsqlDataSource? _ds;
     private readonly ILogger<ConversationService> _log;
+
+    public bool IsAvailable => _ds is not null;
 
     public ConversationService(ILogger<ConversationService> log)
     {
@@ -119,6 +130,7 @@ public sealed class ConversationService
                 );
                 ALTER TABLE messages ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]';
                 ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]';
+                ALTER TABLE messages ADD COLUMN IF NOT EXISTS artifacts JSONB NOT NULL DEFAULT '[]';
                 CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
                 """);
@@ -127,7 +139,7 @@ public sealed class ConversationService
         }
         catch (Exception ex)
         {
-            _log.LogWarning("InitializeAsync failed (conversations disabled): {Error}", ex.Message);
+            _log.LogWarning("InitializeAsync failed error_type={ErrorType}", ex.GetType().Name);
         }
     }
 
@@ -136,6 +148,8 @@ public sealed class ConversationService
         string? model = null, string backend = "dotnet")
     {
         if (_ds is null) return null;
+        title = string.IsNullOrWhiteSpace(title) ? "New Conversation" : title.Trim();
+        if (title.Length > 200) title = title[..200];
         await using var conn = await _ds.OpenDbmConnectionAsync();
         await using var cmd = conn.CreateCommand("""
             INSERT INTO conversations (user_id, title, model, backend)
@@ -225,7 +239,7 @@ public sealed class ConversationService
 
         var messages = new List<StoredMessage>();
         await using (var cmd = conn.CreateCommand("""
-            SELECT id, conversation_id, role, content, sources, trace_id, span_id, created_at, steps, attachments
+            SELECT id, conversation_id, role, content, sources, trace_id, span_id, created_at, steps, attachments, artifacts
             FROM messages
             WHERE conversation_id = $1
             ORDER BY created_at ASC
@@ -241,6 +255,8 @@ public sealed class ConversationService
                 var steps = System.Text.Json.JsonSerializer.Deserialize<List<StoredStep>>(stepsJson) ?? [];
                 var attachmentsJson = reader.IsDBNull(9) ? "[]" : reader.GetString(9);
                 var attachments = System.Text.Json.JsonSerializer.Deserialize<List<AttachmentDto>>(attachmentsJson) ?? [];
+                var artifactsJson = reader.IsDBNull(10) ? "[]" : reader.GetString(10);
+                var artifacts = System.Text.Json.JsonSerializer.Deserialize<List<JsonElement>>(artifactsJson) ?? [];
                 messages.Add(new StoredMessage(
                     Id: reader.GetGuid(0).ToString(),
                     ConversationId: reader.GetGuid(1).ToString(),
@@ -251,7 +267,8 @@ public sealed class ConversationService
                     SpanId: reader.IsDBNull(6) ? null : reader.GetString(6),
                     CreatedAt: reader.GetDateTime(7).ToString("o"),
                     Steps: steps,
-                    Attachments: attachments
+                    Attachments: attachments,
+                    Artifacts: artifacts
                 ));
             }
         }
@@ -269,6 +286,28 @@ public sealed class ConversationService
         );
     }
 
+    public async Task<ConversationAccess> CheckOwnershipAsync(string convId, string userId)
+    {
+        if (_ds is null) return ConversationAccess.Unavailable;
+        if (!Guid.TryParse(convId, out var convGuid)) return ConversationAccess.NotFound;
+        try
+        {
+            await using var conn = await _ds.OpenDbmConnectionAsync();
+            await using var cmd = conn.CreateCommand(
+                "SELECT 1 FROM conversations WHERE id = $1 AND user_id = $2");
+            cmd.Parameters.AddWithValue(convGuid);
+            cmd.Parameters.AddWithValue(userId);
+            return await cmd.ExecuteScalarAsync() is null
+                ? ConversationAccess.NotFound
+                : ConversationAccess.Owned;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning("Conversation ownership check failed error_type={ErrorType}", ex.GetType().Name);
+            return ConversationAccess.Unavailable;
+        }
+    }
+
     public async Task<bool> DeleteConversationAsync(string convId, string userId)
     {
         if (_ds is null) return false;
@@ -280,20 +319,37 @@ public sealed class ConversationService
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
-    public async Task SaveMessagesAsync(
-        string convId, string userQuery, string aiAnswer,
+    public async Task<bool> SaveMessagesAsync(
+        string convId, string userId, string userQuery, string aiAnswer,
         IReadOnlyList<string> sources, string? traceId, string? spanId,
         IReadOnlyList<StoredStep>? steps = null,
-        IReadOnlyList<AttachmentDto>? attachments = null)
+        IReadOnlyList<AttachmentDto>? attachments = null,
+        IReadOnlyList<JsonElement>? artifacts = null)
     {
-        if (_ds is null) return;
+        if (_ds is null || !Guid.TryParse(convId, out var convGuid)) return false;
         try
         {
             var sourcesJson = System.Text.Json.JsonSerializer.Serialize(sources);
             var stepsJson = System.Text.Json.JsonSerializer.Serialize(steps ?? []);
             var attachmentsJson = System.Text.Json.JsonSerializer.Serialize(attachments ?? []);
-            var convGuid = Guid.Parse(convId);
+            var artifactsJson = System.Text.Json.JsonSerializer.Serialize(artifacts ?? []);
             await using var conn = await _ds.OpenDbmConnectionAsync();
+            await using var transaction = await conn.BeginTransactionAsync();
+
+            // Lock and authorize in the same transaction as the inserts. This
+            // is defense in depth for callers that already checked ownership
+            // before agent invocation and closes deletion/ownership races.
+            await using (var ownership = conn.CreateCommand(
+                "SELECT 1 FROM conversations WHERE id = $1 AND user_id = $2 FOR UPDATE"))
+            {
+                ownership.Parameters.AddWithValue(convGuid);
+                ownership.Parameters.AddWithValue(userId);
+                if (await ownership.ExecuteScalarAsync() is null)
+                {
+                    await transaction.RollbackAsync();
+                    return false;
+                }
+            }
 
             // NpgsqlBatch for multi-statement parameterized queries in Npgsql 9.x.
             // CreateBatchCommand() creates but does NOT add to BatchCommands — use explicit Add().
@@ -307,13 +363,14 @@ public sealed class ConversationService
             batch.BatchCommands.Add(insertUser);
 
             var insertAssistant = conn.CreateBatchCommand(
-                "INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id, steps) VALUES ($1, 'assistant', $2, $3::jsonb, $4, $5, $6::jsonb)");
+                "INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id, steps, artifacts) VALUES ($1, 'assistant', $2, $3::jsonb, $4, $5, $6::jsonb, $7::jsonb)");
             insertAssistant.Parameters.AddWithValue(convGuid);
             insertAssistant.Parameters.AddWithValue(aiAnswer);
             insertAssistant.Parameters.AddWithValue(sourcesJson);
             insertAssistant.Parameters.AddWithValue(traceId is null ? DBNull.Value : (object)traceId);
             insertAssistant.Parameters.AddWithValue(spanId is null ? DBNull.Value : (object)spanId);
             insertAssistant.Parameters.AddWithValue(stepsJson);
+            insertAssistant.Parameters.AddWithValue(artifactsJson);
             batch.BatchCommands.Add(insertAssistant);
 
             var updateConv = conn.CreateBatchCommand(
@@ -322,10 +379,13 @@ public sealed class ConversationService
             batch.BatchCommands.Add(updateConv);
 
             await batch.ExecuteNonQueryAsync();
+            await transaction.CommitAsync();
+            return true;
         }
         catch (Exception ex)
         {
-            _log.LogWarning("SaveMessagesAsync failed for conv_id={ConvId}: {Error}", convId, ex.Message);
+            _log.LogWarning("SaveMessagesAsync failed error_type={ErrorType}", ex.GetType().Name);
+            return false;
         }
     }
 }

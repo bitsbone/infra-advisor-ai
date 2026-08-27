@@ -56,7 +56,9 @@ Images are pushed to GHCR by GitHub Actions using `GITHUB_TOKEN` (automatic for 
 2. Scopes: `read:packages`
 3. Store as `GHCR_PAT` in `.env`
 
-Run `make create-ghcr-secret` to create the `ghcr-pull-secret` Kubernetes secret before `make deploy-k8s`.
+Run `make create-ghcr-secret` and `make create-airflow-ghcr-secret` to create `ghcr-pull-secret` independently in the `infra-advisor` and `airflow` namespaces before a manual deployment. Kubernetes secrets are namespace-scoped, so creating only the application copy does not authorize the Airflow chart's scheduler, DAG processor, migration jobs, or hooks to pull the private image. Both targets read `GHCR_PAT` from the ignored local environment and apply a `kubernetes.io/dockerconfigjson` secret without writing the credential to the repository.
+
+Authenticate the local Docker client to `ghcr.io` as well before `make install-airflow` or `make upgrade-airflow`. Those targets pull the exact requested image and run its embedded contract before Helm can change the cluster, so a missing local registry login fails safely before deployment.
 
 ## Environment file
 

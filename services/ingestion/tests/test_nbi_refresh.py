@@ -12,8 +12,7 @@ All HTTP traffic is mocked with ``respx``; all Azure SDK calls are patched
 with ``unittest.mock``.  No real credentials are required.
 """
 
-import importlib
-import json
+import importlib.util as ilu
 import os
 import sys
 import types
@@ -21,6 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import respx
+import httpx
 from httpx import Response
 
 # ---------------------------------------------------------------------------
@@ -29,6 +29,9 @@ from httpx import Response
 
 @pytest.fixture(autouse=True)
 def mock_env(monkeypatch):
+    monkeypatch.syspath_prepend(
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dags"))
+    )
     monkeypatch.setenv("AZURE_SEARCH_ENDPOINT", "https://mock.search.windows.net")
     monkeypatch.setenv("AZURE_SEARCH_API_KEY", "mock-key")
     monkeypatch.setenv("AZURE_SEARCH_INDEX_NAME", "infra-advisor-knowledge")
@@ -40,6 +43,14 @@ def mock_env(monkeypatch):
     )
     monkeypatch.setenv("EIA_API_KEY", "mock-key")
     monkeypatch.setenv("DD_AGENT_HOST", "localhost")
+    # Production uses requests, while respx intercepts httpx. Route the same
+    # GET contract through httpx so no test can accidentally reach the network.
+    monkeypatch.setattr("requests.get", httpx.get)
+    blob_service = MagicMock()
+    monkeypatch.setattr(
+        "azure.storage.blob.BlobServiceClient.from_connection_string",
+        MagicMock(return_value=blob_service),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +69,16 @@ def _stub_module(name: str, **attrs):
     sys.modules[name] = mod
 
 
+class _OperatorStub(dict):
+    """Keep operator kwargs inspectable while supporting DAG dependency syntax."""
+
+    def __rshift__(self, other):
+        return other
+
+    def __rrshift__(self, other):
+        return self
+
+
 def _ensure_stubs():
     # ddtrace.auto — just needs to be importable
     _stub_module("ddtrace")
@@ -70,10 +91,12 @@ def _ensure_stubs():
         dag_cls.return_value.__enter__ = lambda s, *a: dag_instance
         dag_cls.return_value.__exit__ = MagicMock(return_value=False)
         _stub_module("airflow", DAG=dag_cls)
-        _stub_module("airflow.operators", python=MagicMock())
+        _stub_module("airflow.providers", standard=MagicMock())
+        _stub_module("airflow.providers.standard", operators=MagicMock())
+        _stub_module("airflow.providers.standard.operators", python=MagicMock())
         _stub_module(
-            "airflow.operators.python",
-            PythonOperator=MagicMock(side_effect=lambda **kw: kw),
+            "airflow.providers.standard.operators.python",
+            PythonOperator=MagicMock(side_effect=lambda **kw: _OperatorStub(kw)),
         )
 
 
@@ -88,9 +111,6 @@ DAG_PATH = os.path.join(
 )
 DAG_PATH = os.path.abspath(DAG_PATH)
 
-# We load via importlib.util so we can reference the module object
-import importlib.util as ilu
-
 _spec = ilu.spec_from_file_location("nbi_refresh", DAG_PATH)
 _nbi_mod = ilu.module_from_spec(_spec)
 
@@ -98,7 +118,9 @@ _nbi_mod = ilu.module_from_spec(_spec)
 @pytest.fixture(scope="module")
 def nbi_module():
     """Return the loaded nbi_refresh module (loaded once per test module)."""
-    with patch("ddtrace.auto", MagicMock()), patch("requests.get", MagicMock()):
+    with patch.dict(sys.modules, {"ddtrace.auto": MagicMock()}), patch(
+        "requests.get", MagicMock()
+    ):
         _spec.loader.exec_module(_nbi_mod)
     return _nbi_mod
 
@@ -234,7 +256,7 @@ class TestFetchNbiData:
         assert result == 1
 
     @respx.mock
-    def test_records_pushed_to_xcom(self, nbi_module):
+    def test_manifest_pushed_to_xcom_instead_of_records(self, nbi_module):
         feature = _make_feature()
         respx.get(NBI_URL).mock(
             return_value=Response(200, json={"features": [feature]})
@@ -244,9 +266,11 @@ class TestFetchNbiData:
         ti = FakeTI()
         fn(ti=ti)
 
-        records = ti.xcom_pull("nbi_records")
-        assert records is not None
-        assert len(records) == 1
+        manifest = ti.xcom_pull("records_manifest")
+        assert manifest["schema_version"] == "1.0"
+        assert manifest["record_count"] == 1
+        assert manifest["blob"]["container"] == "raw-data"
+        assert ti.xcom_pull("nbi_records") is None
 
     @respx.mock
     def test_record_has_correct_nbi_field_names(self, nbi_module):
@@ -256,10 +280,24 @@ class TestFetchNbiData:
         )
 
         fn = nbi_module.fetch_nbi_data
-        ti = FakeTI()
-        fn(ti=ti)
+        captured = []
 
-        record = ti.xcom_pull("nbi_records")[0]
+        def capture_records(*args, records, **kwargs):
+            captured.extend(records)
+            return {
+                "schema_version": "1.0",
+                "source": kwargs["source"],
+                "run_id": kwargs["run_id"],
+                "blob": {"container": kwargs["container_name"], "path": kwargs["blob_path"]},
+                "record_count": len(records),
+                "checksum": {"algorithm": "sha256", "value": "0" * 64},
+                "content_type": "application/x-ndjson",
+                "content_encoding": "utf-8",
+            }
+
+        with patch("_blob_manifest.write_records_manifest", side_effect=capture_records):
+            fn(ti=FakeTI())
+        record = captured[0]
         assert "STRUCTURE_NUMBER_008" in record
         assert "ADT_029" in record
         assert "DECK_COND_058" in record
@@ -273,10 +311,24 @@ class TestFetchNbiData:
         )
 
         fn = nbi_module.fetch_nbi_data
-        ti = FakeTI()
-        fn(ti=ti)
+        captured = []
 
-        record = ti.xcom_pull("nbi_records")[0]
+        def capture_records(*args, records, **kwargs):
+            captured.extend(records)
+            return {
+                "schema_version": "1.0",
+                "source": kwargs["source"],
+                "run_id": kwargs["run_id"],
+                "blob": {"container": kwargs["container_name"], "path": kwargs["blob_path"]},
+                "record_count": len(records),
+                "checksum": {"algorithm": "sha256", "value": "0" * 64},
+                "content_type": "application/x-ndjson",
+                "content_encoding": "utf-8",
+            }
+
+        with patch("_blob_manifest.write_records_manifest", side_effect=capture_records):
+            fn(ti=FakeTI())
+        record = captured[0]
         assert record["STRUCTURE_NUMBER_008"] == "48TEST001"
         assert record["ADT_029"] == 75000
 
@@ -362,7 +414,8 @@ class TestFetchNbiDataPagination:
         result = fn(ti=ti)
 
         assert result == 0
-        assert ti.xcom_pull("nbi_records") == []
+        assert ti.xcom_pull("records_manifest")["record_count"] == 0
+        assert ti.xcom_pull("nbi_records") is None
 
 
 class TestFetchNbiDataErrorHandling:
@@ -397,7 +450,7 @@ class TestNbiConstants:
     """Smoke-check constants and helpers accessible at module level."""
 
     def test_raw_container_name(self, nbi_module):
-        assert nbi_module.RAW_CONTAINER == "infra-advisor-raw"
+        assert nbi_module.RAW_CONTAINER == "raw-data"
 
     def test_chunk_size(self, nbi_module):
         assert nbi_module.CHUNK_SIZE == 500

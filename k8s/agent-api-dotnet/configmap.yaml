@@ -15,11 +15,14 @@ data:
   DD_VERSION: "latest"
   DD_SITE: "us3.datadoghq.com"
 
-  # OpenTelemetry SDK + library auto-instrumentations are the sole source of
-  # traces/metrics/logs on this service. DD .NET tracer is NOT injected (see
-  # deployment.yaml). All DD-tracer-specific env vars (DD_TRACE_*,
-  # DD_DBM_PROPAGATION_MODE, DD_LLMOBS_*, DD_LOGS_INJECTION,
-  # DD_CODE_ORIGIN_FOR_SPANS_ENABLED) are removed — they have no consumer.
+  # The application-owned OpenTelemetry SDK remains the sole APM trace source.
+  # Datadog's injected .NET profiler is present only for App and API Protection.
+  # DD_APM_TRACING_ENABLED is the supported standalone-AAP switch: unlike
+  # DD_TRACE_ENABLED=false, it keeps the security runtime active while limiting
+  # Datadog tracer output to the minimum security telemetry AAP requires.
+  DD_APPSEC_ENABLED: "true"
+  DD_API_SECURITY_ENABLED: "true"
+  DD_APM_TRACING_ENABLED: "false"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://datadog-agent.datadog.svc.cluster.local:4318"
   OTEL_SERVICE_NAME: "infra-advisor-agent-api-dotnet"
   OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=latest,service.name=infra-advisor-agent-api-dotnet"

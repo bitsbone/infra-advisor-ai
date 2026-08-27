@@ -33,4 +33,27 @@ public sealed class AppSessionTests
         Assert.Null(session.Token);
         Assert.Null(session.User);
     }
+
+    [Fact]
+    public void ConversationNavigationRequestIsConsumedExactlyOnce()
+    {
+        var session = new AppSession();
+
+        session.RequestConversation("conversation-1");
+
+        Assert.Equal("conversation-1", session.ConsumeRequestedConversation());
+        Assert.Null(session.ConsumeRequestedConversation());
+    }
+
+    [Fact]
+    public void NewConversationNavigationRequestIsConsumedExactlyOnce()
+    {
+        var session = new AppSession { ConversationId = "existing" };
+
+        session.RequestNewConversation();
+
+        Assert.Null(session.ConversationId);
+        Assert.True(session.ConsumeNewConversationRequest());
+        Assert.False(session.ConsumeNewConversationRequest());
+    }
 }

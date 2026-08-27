@@ -75,6 +75,9 @@ class MessageRow(Base):
     # shows what was attached (the Redis session-memory copy is a separate,
     # shorter-lived concern — see memory.py).
     attachments = Column(JSON, nullable=False, default=list)
+    # Versioned, presentation-ready tool results. Kept separate from human
+    # prose and raw provider payloads so clients can render safely.
+    artifacts = Column(JSON, nullable=False, default=list)
     trace_id = Column(Text, nullable=True)
     span_id = Column(Text, nullable=True)
     created_at = Column(
@@ -121,6 +124,9 @@ def init_db() -> None:
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'"
         ))
         conn.execute(text(
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS artifacts JSONB NOT NULL DEFAULT '[]'"
+        ))
+        conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id)"
         ))
         conn.execute(text(
@@ -158,6 +164,7 @@ def _msg_to_dict(row: MessageRow) -> dict:
         "sources": row.sources or [],
         "steps": row.steps or [],
         "attachments": row.attachments or [],
+        "artifacts": row.artifacts or [],
         "trace_id": row.trace_id,
         "span_id": row.span_id,
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -176,7 +183,8 @@ def create_conversation(
     if not db:
         return None
     try:
-        row = ConversationRow(user_id=user_id, title=title, model=model, backend=backend)
+        normalized_title = (title or "").strip()[:200] or "New Conversation"
+        row = ConversationRow(user_id=user_id, title=normalized_title, model=model, backend=backend)
         db.add(row)
         db.commit()
         db.refresh(row)
@@ -223,6 +231,36 @@ def get_conversation(conv_id: str, user_id: str) -> dict | None:
         db.close()
 
 
+def conversation_access(conv_id: str, user_id: str) -> str:
+    """Return ``owned``, ``not_found``, or ``unavailable`` without disclosure.
+
+    Both a missing conversation and another user's conversation deliberately
+    produce ``not_found``. Query handlers call this before invoking the agent,
+    preventing a spoofed conversation ID from restoring another tenant's
+    transient state or receiving new persisted messages.
+    """
+    db = _get_db()
+    if not db:
+        return "unavailable"
+    try:
+        try:
+            try:
+                conv_uuid = uuid.UUID(conv_id)
+            except (TypeError, ValueError, AttributeError):
+                return "not_found"
+            owned = (
+                db.query(ConversationRow.id)
+                .filter(ConversationRow.id == conv_uuid, ConversationRow.user_id == user_id)
+                .first()
+            )
+            return "owned" if owned else "not_found"
+        except Exception as exc:
+            logger.warning("conversation ownership check failed error_type=%s", type(exc).__name__)
+            return "unavailable"
+    finally:
+        db.close()
+
+
 def delete_conversation(conv_id: str, user_id: str) -> bool:
     db = _get_db()
     if not db:
@@ -252,35 +290,54 @@ def save_messages(
     sources: list[str],
     trace_id: str | None,
     span_id: str | None,
+    *,
+    user_id: str,
     steps: list[dict] | None = None,
     attachments: list[dict] | None = None,
-) -> None:
-    """Save a user+assistant exchange to the messages table (non-fatal)."""
+    artifacts: list[dict] | None = None,
+) -> bool:
+    """Atomically append an exchange only to a conversation owned by ``user_id``."""
     db = _get_db()
     if not db:
-        return
+        return False
     try:
+        try:
+            conv_uuid = uuid.UUID(conv_id)
+        except (TypeError, ValueError, AttributeError):
+            return False
+        conversation = (
+            db.query(ConversationRow)
+            .filter(ConversationRow.id == conv_uuid, ConversationRow.user_id == user_id)
+            .with_for_update()
+            .first()
+        )
+        if conversation is None:
+            return False
         db.add(MessageRow(
-            conversation_id=uuid.UUID(conv_id),
+            conversation_id=conv_uuid,
             role="user",
             content=user_query,
             sources=[],
             steps=[],
             attachments=attachments or [],
+            artifacts=[],
         ))
         db.add(MessageRow(
-            conversation_id=uuid.UUID(conv_id),
+            conversation_id=conv_uuid,
             role="assistant",
             content=ai_answer,
             sources=sources,
             steps=steps or [],
+            artifacts=artifacts or [],
             trace_id=trace_id,
             span_id=span_id,
         ))
-        db.execute(text(f"UPDATE conversations SET updated_at = NOW() WHERE id = '{conv_id}'"))
+        conversation.updated_at = datetime.now(timezone.utc)
         db.commit()
+        return True
     except Exception as exc:
         db.rollback()
-        logger.warning("save_messages failed for conv_id=%s: %s", conv_id, exc)
+        logger.warning("save_messages failed error_type=%s", type(exc).__name__)
+        return False
     finally:
         db.close()

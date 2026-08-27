@@ -48,8 +48,8 @@ def check_query(query: str) -> str | None:
         _client.evaluate([Message(role="user", content=query)], Options(block=True))
         return None
     except AIGuardAbortError as exc:
-        logger.warning("AI Guard blocked query: %s — %s", exc.action, exc.reason)
+        logger.warning("AI Guard blocked query action=%s", exc.action)
         return exc.reason or f"Blocked by AI Guard ({exc.action})"
     except AIGuardClientError as exc:
-        logger.warning("AI Guard evaluate call failed: %s", exc)
+        logger.warning("AI Guard evaluate call failed error_type=%s", type(exc).__name__)
         return None

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<ContentPage
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:coreModels="clr-namespace:InfraAdvisor.Mobile.Models;assembly=InfraAdvisor.Mobile.Core"
+    xmlns:viewModels="clr-namespace:InfraAdvisor.Mobile.ViewModels;assembly=InfraAdvisor.Mobile.Presentation"
+    x:Class="InfraAdvisor.Mobile.Views.HistoryPage"
+    x:DataType="viewModels:HistoryViewModel"
+    Title="History"
+    SafeAreaEdges="Container"
+    AutomationId="HistoryPage">
+    <Grid Padding="20,16" RowDefinitions="Auto,Auto,*" RowSpacing="16" MaximumWidthRequest="880">
+        <VerticalStackLayout Spacing="8">
+            <Label Text="Conversations" Style="{StaticResource PageTitle}" />
+            <Label Text="Resume field research and prior infrastructure assessments." Style="{StaticResource MutedBody}" />
+            <Button Text="New conversation" Command="{Binding NewConversationCommand}" HorizontalOptions="Start" Style="{StaticResource PrimaryCompactButton}" SemanticProperties.Hint="Starts a new conversation in Advisor" AutomationId="HistoryNewConversation" />
+        </VerticalStackLayout>
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="10">
+            <ActivityIndicator IsRunning="{Binding IsLoading}" IsVisible="{Binding IsLoading}" SemanticProperties.Description="Loading conversation history" />
+            <Label Grid.Column="1" Text="Loading conversations…" IsVisible="{Binding IsLoading}" Style="{StaticResource MutedBody}" VerticalTextAlignment="Center" />
+            <Label Grid.ColumnSpan="2" Text="No saved conversations yet. Start a new assessment from Advisor." IsVisible="{Binding HasNoConversations}" Style="{StaticResource MutedBody}" />
+            <Label Grid.ColumnSpan="2" Text="{Binding ErrorMessage}" IsVisible="{Binding HasError}" TextColor="{StaticResource Danger}" SemanticProperties.Description="Conversation history error" />
+        </Grid>
+        <CollectionView Grid.Row="2" ItemsSource="{Binding Conversations}" SelectedItem="{Binding SelectedConversation}" SelectionMode="Single" AutomationId="ConversationHistory">
+            <CollectionView.ItemsLayout>
+                <LinearItemsLayout Orientation="Vertical" ItemSpacing="10" />
+            </CollectionView.ItemsLayout>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="coreModels:ConversationSummary">
+                    <Border Style="{StaticResource InteractiveCard}" SemanticProperties.Description="{Binding Title}" SemanticProperties.Hint="Opens this conversation in Advisor">
+                        <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="8" ColumnSpacing="12">
+                            <Label Text="{Binding Title}" FontSize="16" FontAttributes="Bold" LineBreakMode="TailTruncation" />
+                            <Label Grid.Column="1" Text="›" FontSize="24" TextColor="{StaticResource FieldTeal}" VerticalTextAlignment="Center" />
+                            <HorizontalStackLayout Grid.Row="1" Spacing="8">
+                                <Border Style="{StaticResource MetadataPill}"><Label Text="{Binding Backend}" FontSize="11" TextColor="{StaticResource FieldNavy}" /></Border>
+                                <Label Text="{Binding MessageCount, StringFormat='{0} messages'}" FontSize="12" TextColor="{StaticResource TextSecondary}" VerticalTextAlignment="Center" />
+                            </HorizontalStackLayout>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentPage>

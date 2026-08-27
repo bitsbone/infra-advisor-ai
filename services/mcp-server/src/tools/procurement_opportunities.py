@@ -2,10 +2,13 @@ import ddtrace.auto  # must be first import — enables APM auto-instrumentation
 
 import asyncio
 import logging
+import math
 import os
+import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from pydantic import BaseModel
@@ -20,7 +23,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 SAMGOV_API_URL = "https://api.sam.gov/opportunities/v2/search"
-GRANTSGOV_SEARCH_URL = "https://apply07.grants.gov/grantsws/rest/opportunities/search/"
+GRANTSGOV_SEARCH_URL = "https://api.grants.gov/v1/api/search2"
+_MAX_RESULTS = 20
+_MAX_FUNDING_USD = 1_000_000_000_000_000
+_MISSING_FIELDS = {"title", "agency.name", "deadline_at", "source.url", "funding.total"}
+_NAICS_RE = re.compile(r"^\d{2,6}$")
+_ASSISTANCE_RE = re.compile(r"^\d{2}\.\d{3}$")
 
 # NAICS codes relevant to infrastructure procurement domains
 _NAICS_MAP: dict[str, list[str]] = {
@@ -96,6 +104,273 @@ class ProcurementOpportunitiesInput(BaseModel):
     limit: int = 20
 
 
+def _text(value: Any, limit: int = 500) -> str:
+    if value is None or isinstance(value, (dict, list, tuple, set)):
+        return ""
+    return str(value).strip()[:limit]
+
+
+def _safe_url(value: Any) -> str | None:
+    """Keep only scheme/host/path; provider query strings can contain API keys."""
+    if not value:
+        return None
+    parts = urlsplit(str(value))
+    if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
+        return None
+    try:
+        port = f":{parts.port}" if parts.port is not None else ""
+    except ValueError:
+        return None
+    netloc = f"{parts.hostname}{port}"
+    safe = urlunsplit((parts.scheme.lower(), netloc, parts.path, "", ""))
+    return safe if len(safe) <= 1000 else None
+
+
+def _location_value(value: Any, nested_key: str) -> str | None:
+    """Normalize SAM.gov's object-or-string location fields."""
+    if isinstance(value, dict):
+        return _text(value.get(nested_key), 200) or None
+    return _text(value, 200) or None
+
+
+def _date_value(value: Any) -> str | None:
+    """Return a schema-valid ISO date/date-time or ``None``."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate or len(candidate) > 50:
+        return None
+    try:
+        if "T" in candidate:
+            datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        else:
+            date.fromisoformat(candidate)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _number(value: Any) -> float | int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or value < 0 or value > _MAX_FUNDING_USD:
+        return None
+    return value
+
+
+def _integer(value: Any, maximum: int) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > maximum:
+        return None
+    return value
+
+
+def _code_list(value: Any, pattern: re.Pattern[str]) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for raw in value:
+        code = str(raw).strip()
+        if pattern.fullmatch(code) and code not in result:
+            result.append(code)
+        if len(result) == 20:
+            break
+    return result
+
+
+def _normalize_item(candidate: Any) -> dict[str, Any] | None:
+    """Rebuild an exact v1 item from allowlisted fields before returning it."""
+    if not isinstance(candidate, dict):
+        return None
+    provider = candidate.get("provider")
+    if provider not in {"sam.gov", "grants.gov"}:
+        return None
+    provider_id = _text(candidate.get("provider_id"), 200)
+    agency = candidate.get("agency") if isinstance(candidate.get("agency"), dict) else {}
+    location = candidate.get("location") if isinstance(candidate.get("location"), dict) else {}
+    classifications = candidate.get("classifications") if isinstance(candidate.get("classifications"), dict) else {}
+    funding = candidate.get("funding") if isinstance(candidate.get("funding"), dict) else {}
+    source = candidate.get("source") if isinstance(candidate.get("source"), dict) else {}
+    quality = candidate.get("data_quality") if isinstance(candidate.get("data_quality"), dict) else {}
+    retrieved_at = _date_value(source.get("retrieved_at"))
+    if not retrieved_at or "T" not in retrieved_at:
+        retrieved_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    missing = []
+    raw_missing = quality.get("missing_fields") if isinstance(quality.get("missing_fields"), list) else []
+    for value in raw_missing:
+        if value in _MISSING_FIELDS and value not in missing:
+            missing.append(value)
+
+    normalized = {
+        "id": _text(f"{provider}:{provider_id}", 300),
+        "provider": provider,
+        "provider_id": provider_id,
+        "opportunity_type": "contract" if provider == "sam.gov" else "grant",
+        "title": _text(candidate.get("title"), 500),
+        "agency": {"name": _text(agency.get("name"), 500), "code": _text(agency.get("code"), 100) or None},
+        "summary": _text(candidate.get("summary"), 500),
+        "status": _text(candidate.get("status"), 100),
+        "posted_at": _date_value(candidate.get("posted_at")),
+        "deadline_at": _date_value(candidate.get("deadline_at")),
+        "location": {
+            "state_code": _text(location.get("state_code"), 20) or None,
+            "state_name": _text(location.get("state_name"), 200) or None,
+            "city": _text(location.get("city"), 200) or None,
+        },
+        "classifications": {
+            "naics": _code_list(classifications.get("naics"), _NAICS_RE),
+            "assistance_listing": _code_list(classifications.get("assistance_listing"), _ASSISTANCE_RE),
+            "set_aside": _text(classifications.get("set_aside"), 200) or None,
+        },
+        "funding": {
+            "currency": "USD",
+            "minimum": _number(funding.get("minimum")),
+            "maximum": _number(funding.get("maximum")),
+            "total": _number(funding.get("total")),
+            "expected_awards": _integer(funding.get("expected_awards"), 1_000_000),
+        },
+        "source": {"url": _safe_url(source.get("url")), "retrieved_at": retrieved_at},
+        "data_quality": {"missing_fields": missing[:20]},
+    }
+    for field, present in (
+        ("title", bool(normalized["title"])),
+        ("agency.name", bool(normalized["agency"]["name"])),
+        ("deadline_at", bool(normalized["deadline_at"])),
+        ("source.url", bool(normalized["source"]["url"])),
+        ("funding.total", normalized["funding"]["total"] is not None),
+    ):
+        if not present and field not in missing:
+            missing.append(field)
+    normalized["data_quality"]["missing_fields"] = missing[:20]
+    return normalized
+
+
+def _within_value_range(item: dict[str, Any], minimum: int | None, maximum: int | None) -> bool:
+    if minimum is None and maximum is None:
+        return True
+    funding = item["funding"]
+    value = funding["total"] if funding["total"] is not None else funding["maximum"] if funding["maximum"] is not None else funding["minimum"]
+    if value is None:
+        return False
+    return (minimum is None or value >= minimum) and (maximum is None or value <= maximum)
+
+
+def _artifact(
+    items: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    requested_limit: int,
+    duration_ms: float,
+    min_value_usd: int | None = None,
+    max_value_usd: int | None = None,
+) -> dict[str, Any]:
+    """Create the stable, bounded UI contract; never include request payloads or credentials."""
+    limit = max(1, min(requested_limit, _MAX_RESULTS))
+    normalized = [item for candidate in items if (item := _normalize_item(candidate)) is not None]
+    filtered = [item for item in normalized if _within_value_range(item, min_value_usd, max_value_usd)]
+    bounded = filtered[:limit]
+    counts = {"sam.gov": 0, "grants.gov": 0}
+    for item in bounded:
+        counts[item["provider"]] += 1
+    artifact = {
+        "kind": "procurement_opportunities",
+        "schema_version": "1.0",
+        "tool_name": "get_procurement_opportunities",
+        "tool_call_id": None,
+        "status": "partial" if errors and bounded else "error" if errors and not bounded else "empty" if not bounded else "ok",
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "items": bounded,
+        "meta": {"returned_count": len(bounded), "provider_counts": counts, "truncated": len(filtered) > limit, "partial_errors": errors[:2]},
+    }
+    # A small allowlisted sample exposes the normalized shape in Datadog without
+    # indexing provider payloads, descriptions, contacts, request filters, or URLs.
+    sample = [
+        {
+            "id": i["id"],
+            "provider": i["provider"],
+            "opportunity_type": i["opportunity_type"],
+            "status": i["status"],
+            "state_code": i["location"]["state_code"],
+            "deadline_at": i["deadline_at"],
+            "funding_total": i["funding"]["total"],
+            "missing_fields": i["data_quality"]["missing_fields"],
+        }
+        for i in bounded[:3]
+    ]
+    logger.info(
+        "Normalized procurement artifact",
+        extra={
+            "event": "procurement.artifact.normalized",
+            "tool.name": "get_procurement_opportunities",
+            "artifact.kind": "procurement_opportunities",
+            "artifact.schema_version": "1.0",
+            "artifact.status": artifact["status"],
+            "artifact.returned_count": len(bounded),
+            "artifact.provider_counts": counts,
+            "artifact.truncated": artifact["meta"]["truncated"],
+            "artifact.partial_error_count": len(errors),
+            "artifact.sample": sample,
+            "duration_ms": round(duration_ms, 2),
+        },
+    )
+    return artifact
+
+
+def _safe_error_code(error: dict[str, Any]) -> str:
+    """Convert provider prose to a stable category; never propagate echoed request data."""
+    message = str(error.get("error") or "").lower()
+    if "not configured" in message:
+        return "not_configured"
+    if "403" in message:
+        return "forbidden"
+    if "400" in message or "date range" in message:
+        return "invalid_request"
+    if "format unexpected" in message:
+        return "unexpected_response"
+    http_status = re.search(r"\bhttp\s+(\d{3})\b", message)
+    if http_status:
+        return f"http_{http_status.group(1)}"
+    return "request_failed"
+
+
+def _sam_item(opp: dict[str, Any], retrieved_at: str) -> dict[str, Any]:
+    provider_id = _text(opp.get("noticeId") or opp.get("solicitationNumber"), 200)
+    pop = opp.get("placeOfPerformance") if isinstance(opp.get("placeOfPerformance"), dict) else {}
+    award = opp.get("award") if isinstance(opp.get("award"), dict) else {}
+    item = {
+        "id": f"sam.gov:{provider_id}", "provider": "sam.gov", "provider_id": provider_id, "opportunity_type": "contract",
+        "title": _text(opp.get("title")), "agency": {"name": _text(opp.get("fullParentPathName") or opp.get("organizationName")), "code": None},
+        # SAM.gov's description is commonly an API link rather than prose. Do
+        # not persist provider bodies or contact blocks in the chat artifact.
+        "summary": "", "status": _text(opp.get("type"), 100).lower() or "unknown",
+        "posted_at": opp.get("postedDate") or None, "deadline_at": opp.get("responseDeadLine") or opp.get("archiveDate") or None,
+        "location": {"state_code": _location_value(pop.get("state"), "code") or _text(pop.get("stateCode"), 20) or None, "state_name": _location_value(pop.get("state"), "name") or _text(pop.get("stateName"), 200) or None, "city": _location_value(pop.get("city"), "name")},
+        "classifications": {"naics": [str(opp["naicsCode"])] if opp.get("naicsCode") else [], "assistance_listing": [], "set_aside": opp.get("typeOfSetAsideDescription") or opp.get("typeOfSetAside")},
+        "funding": {"currency": "USD", "minimum": None, "maximum": None, "total": award.get("amount"), "expected_awards": None},
+        "source": {"url": _safe_url(opp.get("uiLink") or next(iter(opp.get("resourceLinks") or []), None)), "retrieved_at": retrieved_at},
+        "data_quality": {"missing_fields": []},
+    }
+    item["data_quality"]["missing_fields"] = [k for k, v in {"title": item["title"], "agency.name": item["agency"]["name"], "deadline_at": item["deadline_at"], "source.url": item["source"]["url"]}.items() if not v]
+    return item
+
+
+def _grant_item(opp: dict[str, Any], retrieved_at: str) -> dict[str, Any]:
+    provider_id = _text(opp.get("id") or opp.get("number"), 200)
+    alnist = opp.get("alnist") if isinstance(opp.get("alnist"), list) else []
+    listings = [str(v) for v in alnist if v]
+    item = {
+        "id": f"grants.gov:{provider_id}", "provider": "grants.gov", "provider_id": provider_id, "opportunity_type": "grant",
+        "title": _text(opp.get("title")), "agency": {"name": _text(opp.get("agencyName")), "code": _text(opp.get("agencyCode"), 100) or None},
+        "summary": _text(opp.get("description")), "status": _text(opp.get("oppStatus"), 100).lower() or "unknown",
+        "posted_at": opp.get("openDate") or None, "deadline_at": opp.get("closeDate") or None,
+        "location": {"state_code": None, "state_name": None, "city": None},
+        "classifications": {"naics": [], "assistance_listing": listings, "set_aside": None},
+        "funding": {"currency": "USD", "minimum": None, "maximum": None, "total": opp.get("estimatedTotalProgramFunding"), "expected_awards": opp.get("expectedNumberOfAwards")},
+        "source": {"url": f"https://www.grants.gov/search-results-detail/{provider_id}", "retrieved_at": retrieved_at},
+        "data_quality": {"missing_fields": []},
+    }
+    item["data_quality"]["missing_fields"] = [k for k, v in {"title": item["title"], "agency.name": item["agency"]["name"], "deadline_at": item["deadline_at"]}.items() if not v]
+    return item
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -166,7 +441,7 @@ async def _fetch_samgov(
 
     # Build params as list of tuples so httpx sends multiple ptype values
     params: list[tuple[str, str]] = [
-        ("limit", "25"),
+        ("limit", str(max(1, min(input_data.limit, _MAX_RESULTS)))),
         ("offset", "0"),
         ("ptype", "o"),
         ("ptype", "p"),
@@ -272,7 +547,6 @@ async def _fetch_samgov(
     except httpx.RequestError as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("samgov", api_latency_ms, error_type="request_error")
-        logger.warning("SAM.gov request error: %s", exc)
         log_external_api_failure(
             logger, source="samgov", tool_name="get_procurement_opportunities", error=str(exc)
         )
@@ -281,7 +555,7 @@ async def _fetch_samgov(
     except Exception as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("samgov", api_latency_ms, error_type="unexpected")
-        logger.exception("Unexpected error in _fetch_samgov")
+        logger.warning("Unexpected SAM.gov failure: %s", type(exc).__name__)
         log_external_api_failure(
             logger, source="samgov", tool_name="get_procurement_opportunities", error=str(exc)
         )
@@ -313,22 +587,8 @@ async def _fetch_samgov(
             "_note": f"No results found. NAICS codes queried: {naics_codes}",
         }
 
-    results = []
-    for opp in opportunities:
-        results.append({
-            "id": opp.get("noticeId") or opp.get("solicitationNumber", ""),
-            "title": opp.get("title", ""),
-            "type": opp.get("type", ""),
-            "agency": opp.get("fullParentPathName") or opp.get("organizationName", ""),
-            "naics_code": opp.get("naicsCode", ""),
-            "posted_date": opp.get("postedDate", ""),
-            "responseDeadLine": opp.get("responseDeadLine") or opp.get("archiveDate", ""),
-            "award_value_usd": opp.get("award", {}).get("amount") if opp.get("award") else None,
-            "description": (opp.get("description") or "")[:500],
-            "url": opp.get("uiLink") or opp.get("resourceLinks", [None])[0],
-            "place_of_performance": (opp.get("placeOfPerformance") or {}).get("stateName", ""),
-            "_source": "SAM.gov",
-        })
+    retrieved_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    results = [_sam_item(opp, retrieved_at) for opp in opportunities]
 
     if clamped:
         return {"results": results, "_note": "Date range clamped to 365 days maximum."}
@@ -343,7 +603,7 @@ async def _fetch_samgov(
 
 async def _fetch_grantsgov(
     input_data: ProcurementOpportunitiesInput,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, Any]] | dict[str, Any]:
     """Fetch grant opportunities from grants.gov.
 
     Returns a list of normalised grant dicts (possibly empty). Never raises — on
@@ -354,7 +614,7 @@ async def _fetch_grantsgov(
         payload = {
             "keyword": input_data.query,
             "oppStatuses": "forecasted|posted",
-            "rows": input_data.limit,
+            "rows": max(1, min(input_data.limit, _MAX_RESULTS)),
         }
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(
@@ -374,41 +634,25 @@ async def _fetch_grantsgov(
                     status_code=resp.status_code,
                     body=resp.text,
                 )
-                return []
+                return {"error": f"HTTP {resp.status_code}", "source": "grantsgov", "retriable": resp.status_code >= 500}
 
             body = resp.json()
 
     except Exception as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("grantsgov", api_latency_ms, error_type="error")
-        logger.warning("grants.gov fetch error: %s", exc)
+        logger.warning("grants.gov fetch failed: %s", type(exc).__name__)
         log_external_api_failure(
             logger, source="grantsgov", tool_name="get_procurement_opportunities", error=str(exc)
         )
-        return []
+        return {"error": "request_failed", "source": "grantsgov", "retriable": True}
 
-    raw_opportunities = body.get("opportunities") or body.get("data") or []
-    results = []
-    for opp in raw_opportunities:
-        cfda_list = opp.get("cfdaList") or []
-        # Filter to allowlisted CFDA programs relevant to infrastructure
-        if not any(cfda.get("programNumber") in _CFDA_ALLOWLIST for cfda in cfda_list):
-            continue
-
-        results.append({
-            "id": str(opp.get("id", "")),
-            "title": opp.get("title", ""),
-            "agency": opp.get("agencyName", ""),
-            "open_date": opp.get("openDate", ""),
-            "closeDate": opp.get("closeDate", ""),
-            "estimated_total_funding_usd": opp.get("estimatedTotalProgramFunding"),
-            "expected_awards": opp.get("expectedNumberOfAwards"),
-            "description": (opp.get("description") or "")[:500],
-            "cfda_numbers": [c.get("programNumber") for c in cfda_list],
-            "_source": "grants.gov",
-        })
-
-    return results
+    data = body.get("data") or {}
+    raw_opportunities = data.get("oppHits") if isinstance(data, dict) else []
+    if raw_opportunities is None:
+        raw_opportunities = []
+    retrieved_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return [_grant_item(opp, retrieved_at) for opp in raw_opportunities]
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +662,7 @@ async def _fetch_grantsgov(
 
 async def get_procurement_opportunities(
     input_data: ProcurementOpportunitiesInput,
-) -> list[dict[str, Any]] | dict[str, Any]:
+) -> dict[str, Any]:
     """Search SAM.gov and grants.gov for infrastructure procurement opportunities.
 
     Queries both sources concurrently and merges results, sorted by deadline
@@ -454,8 +698,8 @@ async def get_procurement_opportunities(
 
     if isinstance(sam_result, BaseException):
         # TimeoutException or other exception from SAM.gov
-        logger.warning("SAM.gov fetch raised exception: %s", sam_result)
-        sam_error = {"error": f"SAM.gov request failed: {sam_result}", "source": "samgov", "retriable": True}
+        logger.warning("SAM.gov fetch raised exception: %s", type(sam_result).__name__)
+        sam_error = {"error": "request_failed", "source": "samgov", "retriable": True}
     elif isinstance(sam_result, dict):
         if "error" in sam_result:
             sam_error = sam_result
@@ -468,47 +712,37 @@ async def get_procurement_opportunities(
 
     # Handle grants.gov result
     grants_items: list[dict[str, Any]] = []
+    grants_error: dict[str, Any] | None = None
     if isinstance(grants_result, BaseException):
-        logger.warning("grants.gov fetch raised exception: %s", grants_result)
+        logger.warning("grants.gov fetch raised exception: %s", type(grants_result).__name__)
+        grants_error = {"error": "request_failed", "retriable": True}
     elif isinstance(grants_result, list):
         grants_items = grants_result
+    elif isinstance(grants_result, dict) and "error" in grants_result:
+        grants_error = grants_result
 
     # Merge
     all_results = sam_items + grants_items
 
-    # Sort by deadline: responseDeadLine for SAM.gov, closeDate for grants.gov
+    # Sort by the normalized deadline.
     def _deadline_key(item: dict) -> str:
-        return item.get("responseDeadLine") or item.get("closeDate") or ""
+        return item.get("deadline_at") or "9999"
 
     all_results.sort(key=_deadline_key)
 
     total_latency = (time.monotonic() - tool_start) * 1000
 
-    if not all_results and sam_error:
-        # Both sources failed or returned nothing, and SAM had a hard error
-        emit_tool_call("get_procurement_opportunities", total_latency, "error")
-        response: dict[str, Any] = sam_error.copy()
-        return response
+    errors = []
+    if sam_error:
+        errors.append({"provider": "sam.gov", "code": _safe_error_code(sam_error), "retriable": bool(sam_error.get("retriable"))})
+    if grants_error:
+        errors.append({"provider": "grants.gov", "code": _safe_error_code(grants_error), "retriable": bool(grants_error.get("retriable"))})
 
+    artifact = _artifact(all_results, errors, input_data.limit, total_latency, input_data.min_value_usd, input_data.max_value_usd)
     emit_tool_call(
         "get_procurement_opportunities",
         total_latency,
         "success",
-        result_count=len(all_results),
+        result_count=artifact["meta"]["returned_count"],
     )
-    logger.info(
-        "get_procurement_opportunities: %d results (SAM=%d, grants=%d)",
-        len(all_results),
-        len(sam_items),
-        len(grants_items),
-    )
-
-    if sam_error and all_results:
-        # Partial results — grants.gov succeeded but SAM.gov had an error
-        return {
-            "results": all_results,
-            "_samgov_error": sam_error,
-            "_note": "Partial results: SAM.gov unavailable, showing grants.gov results only.",
-        }
-
-    return all_results
+    return artifact

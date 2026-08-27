@@ -1,9 +1,4 @@
-"""Tests for observability.tracing's log_external_api_failure / _redact.
-
-Covers the fix for: external API failures (USASpending 422, SAM.gov 401,
-malformed web-procurement JSON) previously had no response payload logged
-or trace-tagged anywhere, making them undebuggable from Datadog.
-"""
+"""Tests for safe, trace-correlated external API failure summaries."""
 
 import os
 import sys
@@ -65,7 +60,7 @@ def test_redact_noop_when_no_secret_present():
 # ---------------------------------------------------------------------------
 
 
-def test_logs_warning_with_body_present():
+def test_logs_only_body_fingerprint_not_payload():
     log = MagicMock(spec=logging.Logger)
     log_external_api_failure(
         log,
@@ -78,7 +73,8 @@ def test_logs_warning_with_body_present():
     call_args = log.warning.call_args[0]
     # First positional arg is the format string; the rest are %-args.
     assert 422 in call_args
-    assert "Unprocessable Entity: invalid NAICS code" in call_args
+    assert not any("Unprocessable Entity: invalid NAICS code" in str(a) for a in call_args)
+    assert len("Unprocessable Entity: invalid NAICS code") in call_args
 
 
 def test_redacts_secret_before_logging():
@@ -95,15 +91,29 @@ def test_redacts_secret_before_logging():
     assert not any("TOPSECRET" in str(a) for a in call_args)
 
 
-def test_truncates_long_body():
+def test_removes_all_url_query_and_fragment_data():
+    log = MagicMock(spec=logging.Logger)
+    with patch("observability.tracing.tag_span") as mock_tag_span:
+        log_external_api_failure(
+            log,
+            source="provider",
+            tool_name="tool",
+            url="https://api.example.test/path?signature=TOPSECRET&tenant=user#fragment",
+        )
+
+    assert not any("TOPSECRET" in str(value) or "tenant=user" in str(value) for value in log.warning.call_args[0])
+    assert any(call.args == ("error.url", "https://api.example.test/path") for call in mock_tag_span.call_args_list)
+
+
+def test_records_long_body_size_without_body():
     log = MagicMock(spec=logging.Logger)
     long_body = "x" * 5000
     log_external_api_failure(
         log, source="eia", tool_name="get_energy_infrastructure", body=long_body
     )
     call_args = log.warning.call_args[0]
-    logged_body = call_args[-1]
-    assert len(logged_body) <= 2000
+    assert 5000 in call_args
+    assert not any(long_body in str(a) for a in call_args)
 
 
 def test_accepts_error_string_for_sdk_mediated_failures():
@@ -118,7 +128,34 @@ def test_accepts_error_string_for_sdk_mediated_failures():
     )
     log.warning.assert_called_once()
     call_args = log.warning.call_args[0]
-    assert "Index 'infra-advisor-knowledge' not found" in call_args
+    assert not any("Index 'infra-advisor-knowledge' not found" in str(value) for value in call_args)
+    assert len("Index 'infra-advisor-knowledge' not found") in call_args
+
+
+def test_exception_text_is_fingerprinted_not_logged_or_tagged():
+    log = MagicMock(spec=logging.Logger)
+    sentinel = "provider rejected https://example.test/path?sig=PRIVATE-SIGNATURE"
+
+    with patch("observability.tracing.tag_span") as mock_tag_span:
+        log_external_api_failure(
+            log,
+            source="provider",
+            tool_name="tool",
+            error=sentinel,
+        )
+
+    assert not any(sentinel in str(value) or "PRIVATE-SIGNATURE" in str(value) for value in log.warning.call_args[0])
+    assert not any(sentinel in str(call.args) or "PRIVATE-SIGNATURE" in str(call.args) for call in mock_tag_span.call_args_list)
+    assert any(call.args[0] == "error.message_bytes" for call in mock_tag_span.call_args_list)
+    assert any(call.args[0] == "error.message_sha256" for call in mock_tag_span.call_args_list)
+
+
+def test_redacts_secret_from_exception_message_and_span():
+    log = MagicMock(spec=logging.Logger)
+    with patch("observability.tracing.tag_span") as mock_tag_span:
+        log_external_api_failure(log, source="samgov", tool_name="get_procurement_opportunities", error="GET https://api.sam.gov/search?api_key=SECRET_VALUE failed")
+    assert not any("SECRET_VALUE" in str(a) for a in log.warning.call_args[0])
+    assert not any("SECRET_VALUE" in str(c.args) for c in mock_tag_span.call_args_list)
 
 
 def test_tags_active_span_when_present():
@@ -135,7 +172,9 @@ def test_tags_active_span_when_present():
     assert tagged["error.source"] == "usaspending"
     assert tagged["error.tool"] == "get_contract_awards"
     assert tagged["error.status_code"] == 422
-    assert "Unprocessable Entity" in tagged["error.response_body"]
+    assert tagged["error.response_bytes"] == len("Unprocessable Entity")
+    assert "error.response_sha256" in tagged
+    assert "error.response_body" not in tagged
 
 
 def test_no_op_span_tagging_when_no_active_span():

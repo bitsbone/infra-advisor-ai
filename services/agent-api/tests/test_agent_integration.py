@@ -168,6 +168,9 @@ def client():
         # arrived, which must keep pumping the loop to drain the SSE
         # generator — patch it out the same way start_consumer_thread is.
         patch("main._pool_maintenance_loop", new=AsyncMock(return_value=None)),
+        # Individual ownership-denial tests override this boundary. Normal
+        # endpoint tests model a conversation already owned by the JWT subject.
+        patch("main.conversation_access", return_value="owned"),
         patch("main._mcp_connected", True, create=True),
         patch("main._llm_connected", True, create=True),
     ):
@@ -203,7 +206,25 @@ def test_query_returns_expected_fields(client):
     assert "answer" in body
     assert "sources" in body
     assert "session_id" in body
-    assert isinstance(body["sources"], list)
+    assert body["sources"] == ["FHWA NBI"]
+
+
+def test_query_persists_citations_instead_of_tool_names(client):
+    with patch("main.save_messages") as save_messages:
+        resp = client.post(
+            "/query",
+            json={"query": "Tell me about Texas bridges."},
+            headers={
+                "X-Conversation-ID": "conversation-123",
+                "X-User-ID": "user-123",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["sources"] == ["FHWA NBI"]
+    save_messages.assert_called_once()
+    assert save_messages.call_args.kwargs["sources"] == ["FHWA NBI"]
+    assert save_messages.call_args.kwargs["sources"] != CANNED_RESULT["tools_called"]
 
 
 def test_query_generates_session_id_when_absent(client):
@@ -236,6 +257,81 @@ def test_query_preserves_session_id_from_body(client):
     )
     assert resp.status_code == 200
     assert resp.json()["session_id"] == my_session
+
+
+def test_query_uses_conversation_id_for_agent_memory_but_preserves_client_session_id(client):
+    from tenant import tenant_session_key
+
+    with (
+        patch("main.run_agent", new=AsyncMock(return_value=CANNED_RESULT)) as run_agent,
+        patch("main.append_exchange_with_attachments") as append_exchange,
+        patch("main.set_session_model") as set_model,
+    ):
+        resp = client.post(
+            "/query",
+            json={"query": "Continue this conversation.", "session_id": "mobile-session-123"},
+            headers={"X-Conversation-ID": "conversation-123", "X-User-ID": "user-123"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["session_id"] == "mobile-session-123"
+    expected_key = tenant_session_key("test-user-id", "conversation-123")
+    assert run_agent.await_args.kwargs["session_id"] == expected_key
+    assert append_exchange.call_args.args[0] == expected_key
+    assert set_model.call_args.args[0] == expected_key
+
+
+def test_query_rejects_unowned_conversation_before_agent_invocation(client):
+    with (
+        patch("main.conversation_access", return_value="not_found"),
+        patch("main.run_agent", new=AsyncMock(return_value=CANNED_RESULT)) as run_agent,
+    ):
+        resp = client.post(
+            "/query",
+            json={"query": "Do not run this."},
+            headers={"X-Conversation-ID": "another-users-conversation", "X-User-ID": "test-user-id"},
+        )
+
+    assert resp.status_code == 404
+    run_agent.assert_not_awaited()
+
+
+def test_query_rejects_foreign_attachment_before_agent_invocation(client, monkeypatch):
+    monkeypatch.setenv(
+        "AZURE_STORAGE_CONNECTION_STRING",
+        "AccountName=fieldmedia;EndpointSuffix=core.windows.net",
+    )
+    blob_id = "550e8400e29b41d4a716446655440000"
+    with patch("main.run_agent", new=AsyncMock(return_value=CANNED_RESULT)) as run_agent:
+        resp = client.post(
+            "/query",
+            json={
+                "query": "Do not fetch this.",
+                "attachments": [{
+                    "url": f"https://127.0.0.1/chat-media/image/{blob_id}?sv=x&se=x&sp=r&sr=b&sig=x",
+                    "kind": "image",
+                    "mime_type": "image/jpeg",
+                    "size_bytes": 100,
+                }],
+            },
+        )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Invalid attachment reference"
+    run_agent.assert_not_awaited()
+
+
+def test_query_internal_error_has_stable_public_shape(client):
+    sentinel = "INTERNAL-DETAIL-MUST-NOT-LEAK"
+    with patch("main.run_agent", new=AsyncMock(side_effect=RuntimeError(sentinel))):
+        resp = client.post("/query", json={"query": "Trigger a test failure."})
+
+    assert resp.status_code == 500
+    payload = resp.json()
+    assert payload["detail"] == "The service encountered an unexpected error."
+    assert payload["error_type"] == "RuntimeError"
+    assert "trace_id" in payload
+    assert sentinel not in resp.text
 
 
 def test_query_answer_is_non_empty(client):
@@ -276,6 +372,37 @@ def test_query_stream_emits_expected_event_sequence(client):
     # the keys exist, since DD tracing is disabled in this test env.
     assert "trace_id" in by_name["done"]
     assert "span_id" in by_name["done"]
+
+
+def test_query_stream_persists_citations_and_uses_conversation_memory_key(client):
+    from tenant import tenant_session_key
+
+    observed_session_ids: list[str] = []
+
+    async def stream_with_capture(*args, **kwargs):
+        observed_session_ids.append(kwargs["session_id"])
+        async for event in _canned_stream(*args, **kwargs):
+            yield event
+
+    with (
+        patch("main.run_agent_stream", new=stream_with_capture),
+        patch("main.save_messages") as save_messages,
+        patch("main.append_exchange_with_attachments") as append_exchange,
+        patch("main.set_session_model") as set_model,
+    ):
+        resp = client.post(
+            "/query/stream",
+            json={"query": "Continue this conversation.", "session_id": "mobile-session-123"},
+            headers={"X-Conversation-ID": "conversation-123", "X-User-ID": "user-123"},
+        )
+
+    assert resp.status_code == 200
+    expected_key = tenant_session_key("test-user-id", "conversation-123")
+    assert observed_session_ids == [expected_key]
+    assert append_exchange.call_args.args[0] == expected_key
+    assert set_model.call_args.args[0] == expected_key
+    assert save_messages.call_args.kwargs["sources"] == ["FHWA NBI"]
+    assert save_messages.call_args.kwargs["sources"] != ["get_bridge_condition"]
 
 
 def test_query_stream_503_when_mcp_not_ready():
@@ -321,6 +448,16 @@ def test_health_returns_ok(client):
 def test_health_mcp_connected_is_bool(client):
     resp = client.get("/health")
     assert isinstance(resp.json()["mcp_connected"], bool)
+
+
+def test_livez_is_shallow_and_readyz_uses_cached_connectivity(client):
+    live = client.get("/livez")
+    ready = client.get("/readyz")
+    assert live.status_code == 200
+    assert live.json()["status"] == "ok"
+    assert "mcp_connected" not in live.json()
+    assert ready.status_code == 200
+    assert ready.json()["status"] == "ready"
 
 
 # ---------------------------------------------------------------------------

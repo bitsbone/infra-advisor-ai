@@ -22,6 +22,9 @@ public sealed class DbmNpgsqlConnection(NpgsqlConnection inner) : IAsyncDisposab
 
     public NpgsqlBatch CreateBatch() => inner.CreateBatch();
 
+    public async ValueTask<NpgsqlTransaction> BeginTransactionAsync(CancellationToken ct = default) =>
+        await inner.BeginTransactionAsync(ct);
+
     public async ValueTask DisposeAsync() => await inner.DisposeAsync();
 }
 

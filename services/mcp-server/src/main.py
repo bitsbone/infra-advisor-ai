@@ -31,22 +31,9 @@ from tools.contract_awards import ContractAwardsInput
 from tools.contract_awards import get_contract_awards as _get_contract_awards
 from tools.web_procurement_search import WebProcurementSearchInput
 from tools.web_procurement_search import search_web_procurement as _search_web_procurement
+from observability.json_logging import install_json_logging
 
-logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
-    # dd.trace_id/dd.span_id placeholders are what actually make
-    # DD_LOGS_INJECTION=true correlate a log line to its trace — ddtrace
-    # patches LogRecord with these attributes regardless, but they never
-    # reach the rendered output (and so are invisible to Datadog's log
-    # pipeline) unless the format string references them explicitly. Found
-    # missing while debugging why log_external_api_failure's log lines
-    # showed up in Datadog Logs with no "View trace" correlation at all.
-    format=(
-        "%(asctime)s %(levelname)s [%(name)s] [%(filename)s:%(lineno)d] "
-        "[dd.service=%(dd.service)s dd.env=%(dd.env)s dd.version=%(dd.version)s "
-        "dd.trace_id=%(dd.trace_id)s dd.span_id=%(dd.span_id)s] - %(message)s"
-    ),
-)
+install_json_logging()
 logger = logging.getLogger(__name__)
 
 # ─── MCP Server ───────────────────────────────────────────────────────────────
@@ -510,6 +497,18 @@ async def health(request: Request) -> JSONResponse:
             "azure_openai": bool(azure_openai_key),
         },
     })
+
+
+@mcp.custom_route("/livez", methods=["GET"])
+async def livez(request: Request) -> JSONResponse:
+    """Shallow process liveness; never contacts a dependency."""
+    return JSONResponse({"status": "ok", "service": os.environ.get("DD_SERVICE", "infratools-mcp")})
+
+
+@mcp.custom_route("/readyz", methods=["GET"])
+async def readyz(request: Request) -> JSONResponse:
+    """Serving readiness. Provider credentials are reported, not exercised."""
+    return JSONResponse({"status": "ready", "service": os.environ.get("DD_SERVICE", "infratools-mcp"), "keys_configured": {"samgov": bool(os.environ.get("SAMGOV_API_KEY")), "azure_openai": bool(os.environ.get("AZURE_OPENAI_API_KEY"))}})
 
 
 # The MCP server is the ASGI app; /mcp handles MCP protocol, /health handles probes

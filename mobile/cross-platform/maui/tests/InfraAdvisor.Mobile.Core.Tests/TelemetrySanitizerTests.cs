@@ -46,4 +46,18 @@ public sealed class TelemetrySanitizerTests
         Assert.Contains("https://example.test/api", sanitized);
         Assert.Contains("Example.Run", sanitized);
     }
+
+    [Theory]
+    [InlineData("at Example.Run() in /Users/private.user/build/Example.cs:line 42")]
+    [InlineData(@"at Example.Run() in C:\agent\_work\private.user\Example.cs:line 42")]
+    public void DiagnosticTextRemovesAbsoluteBuildPaths(string stackFrame)
+    {
+        var sanitized = TelemetrySanitizer.SanitizeDiagnosticText(stackFrame);
+
+        Assert.DoesNotContain("private.user", sanitized, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("/Users/", sanitized, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(@"C:\agent", sanitized, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Example.Run", sanitized);
+        Assert.Contains("<source>:line 42", sanitized);
+    }
 }

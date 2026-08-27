@@ -31,7 +31,10 @@ public static class MauiProgram
                 [
                     new FirstPartyHost
                     {
-                        Match = "infra-advisor-ai.kyletaylor.dev",
+                        // Keep propagation aligned with the same build-time API
+                        // override used by HttpClient. An alternate demo host
+                        // must not silently lose mobile-to-backend trace context.
+                        Match = AppConfiguration.ApiFirstPartyHost,
                         HeaderTypes = [TracingHeaderType.Datadog, TracingHeaderType.TraceContext],
                     },
                 ],
@@ -94,10 +97,12 @@ public static class MauiProgram
 
         builder.Services.AddTransient<LoginViewModel>();
         builder.Services.AddTransient<ChatViewModel>();
+        builder.Services.AddTransient<HistoryViewModel>();
         builder.Services.AddTransient<ErrorLabViewModel>();
         builder.Services.AddTransient<InfoViewModel>();
         builder.Services.AddTransient<LoginPage>();
         builder.Services.AddTransient<ChatPage>();
+        builder.Services.AddTransient<HistoryPage>();
         builder.Services.AddTransient<ErrorLabPage>();
         builder.Services.AddTransient<InfoPage>();
         builder.Services.AddTransient<AppShell>();

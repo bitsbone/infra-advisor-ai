@@ -5,6 +5,8 @@ public interface IAppNavigator
     void ShowAuthenticatedApp();
 
     void ShowLogin();
+
+    Task ShowAdvisorAsync();
 }
 
 public interface IAppPreferences

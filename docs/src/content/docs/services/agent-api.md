@@ -54,12 +54,15 @@ Run the multi-agent pipeline on a user query.
 }
 ```
 
-`attachments` is optional — an array of `{url, kind, mime_type, size_bytes}` references returned by `POST /media/upload` (never raw file bytes). An `image` attachment becomes a vision content part on the LLM call; an `audio` attachment is transcribed via Whisper first and the transcript is folded into the effective query. See [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for the full design.
+`attachments` is optional — an array of `{url, kind, mime_type, size_bytes}` references returned by this backend's `POST /media/upload` (never raw file bytes). The .NET backend exposes the same upload contract at `/api-dotnet/media/upload`, and clients route uploads to the backend selected for the chat. An `image` attachment becomes a vision content part on the LLM call; an `audio` attachment is transcribed via Whisper first and the transcript is folded into the effective query. See [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for the full design.
 
 **Headers:**
 - `Authorization: Bearer <jwt>` — Required
 - `X-Session-ID: <uuid>` — Session for Redis memory lookup
+- `X-Conversation-ID: <uuid>` — Optional continuation identifier; the API verifies ownership against the JWT subject before restoring state or invoking the agent
 - `X-DD-RUM-Session-ID: <rum_session>` — Optional; links LLM Obs traces to RUM session replay
+
+`X-User-ID` is not an authorization input. User identity always comes from the validated JWT `sub` claim. A conversation owned by another subject is returned as `404` without invoking the agent, while an unavailable conversation store returns `503` for continuation requests.
 
 **Response:**
 ```json
@@ -69,26 +72,29 @@ Run the multi-agent pipeline on a user query.
   "trace_id": "3421959702764693",
   "span_id": "8721043291846321",
   "session_id": "550e8400-...",
-  "model": "gpt-4.1-mini"
+  "model": "gpt-4.1-mini",
+  "artifacts": []
 }
 ```
+
+`artifacts` is additive and contains bounded, versioned MCP results that a client can render as typed evidence. The procurement tool also emits the same object as an `artifact` event during `POST /query/stream`; clients must ignore unknown kinds or schema versions. See [Structured Chat Artifacts](/infra-advisor-ai/llm-engineering/chat-artifacts/).
 
 ---
 
 ### `POST /media/upload`
 
-Upload a chat attachment (image or audio) to Blob Storage and return a read-SAS URL reference. This is the **shared** upload endpoint — the UI always uploads here even when `agent-api-dotnet` is the active chat backend (see [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for why).
+Upload a chat attachment (image or audio) to Blob Storage and return a read-SAS URL reference. This Python endpoint and the .NET service's matching endpoint use the same validation and storage contract, but clients call the endpoint belonging to the selected chat backend: `/api/media/upload` for Python or `/api-dotnet/media/upload` for .NET. See [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for the design.
 
 **Request:** `multipart/form-data` with a single `file` field. Allowlisted content-types: `image/jpeg`, `image/png`, `image/webp`, `audio/webm`, `audio/wav`, `audio/mpeg`, `audio/ogg`. Max size 10 MB.
 
 **Headers:**
 - `Authorization: Bearer <jwt>` — Required
-- `X-Session-ID: <uuid>` — Used as the Blob path prefix
+- `X-Session-ID: <uuid>` — Associates the upload with the active client workflow; it is not used in the Blob object name or telemetry
 
 **Response:**
 ```json
 {
-  "url": "https://stinfraadvdev.blob.core.windows.net/chat-media/<session_id>/<uuid>-photo.jpg?sig=...",
+  "url": "https://stinfraadvdev.blob.core.windows.net/chat-media/image/<generated-id>?sig=...",
   "kind": "image",
   "mime_type": "image/jpeg",
   "size_bytes": 84213
@@ -180,7 +186,7 @@ The feedback is submitted via `LLMObs.submit_evaluation()` and appears under the
 
 ### `GET /health`
 
-Returns service readiness status and connectivity to MCP Server and Redis.
+Returns backward-compatible service diagnostics and cached MCP/LLM connectivity. Kubernetes uses shallow `GET /livez` for liveness and cached `GET /readyz` for traffic readiness; neither endpoint calls an external provider.
 
 ---
 
@@ -194,7 +200,7 @@ Directly invoke an MCP tool (debug/sandbox endpoint). Used by the UI Sandbox tab
 
 Create a new conversation record. Returns a conversation object with a server-generated UUID that the client should send as `X-Conversation-ID` on subsequent `/query` calls.
 
-**Headers:** `X-User-ID: <user-id>` (required)
+**Headers:** `Authorization: Bearer <jwt>` (required). The persisted `user_id` comes from the validated JWT `sub` claim.
 
 **Request body (all optional):**
 ```json
@@ -223,7 +229,7 @@ Returns `503` when `DATABASE_URL` is not configured (persistence disabled).
 
 List all conversations for a user, sorted by `updated_at` descending.
 
-**Headers:** `X-User-ID: <user-id>` (required)
+**Headers:** `Authorization: Bearer <jwt>` (required)
 
 **Response:** Array of conversation summary objects (same shape as above, plus `message_count`).
 
@@ -233,7 +239,7 @@ List all conversations for a user, sorted by `updated_at` descending.
 
 Fetch a single conversation with its full message history.
 
-**Headers:** `X-User-ID: <user-id>` (required)
+**Headers:** `Authorization: Bearer <jwt>` (required)
 
 **Response:** Conversation summary plus a `messages` array:
 ```json
@@ -266,7 +272,7 @@ Fetch a single conversation with its full message history.
 
 Delete a conversation and all its messages. Returns `204 No Content` on success, `404` if not found or not owned by the requesting user.
 
-**Headers:** `X-User-ID: <user-id>` (required)
+**Headers:** `Authorization: Bearer <jwt>` (required)
 
 ---
 
@@ -275,19 +281,19 @@ Delete a conversation and all its messages. Returns `204 No Content` on success,
 Session history is stored in Redis with a 24-hour TTL:
 
 ```
-Key: infra-advisor:session:{session_id}:memory
+Key: infra-advisor:session:{sha256(jwt_sub + NUL + session_or_conversation_id)}:memory
 Value: JSON list of {"type": "human"|"ai", "content": "..."} exchange objects
 TTL: 86400 seconds (refreshed on write)
 ```
 
 The model preference is persisted separately:
 ```
-Key: infra-advisor:session:{session_id}:model
+Key: infra-advisor:session:{sha256(jwt_sub + NUL + session_or_conversation_id)}:model
 Value: "gpt-4.1-mini" | "gpt-4.1"
 TTL: 86400 seconds
 ```
 
-On `DELETE /session/{session_id}`, both keys are removed.
+The opaque hash binds state to both the authenticated user and the client routing identifier, so two users choosing the same session or conversation ID cannot share history or model state. On `DELETE /session/{session_id}`, only the caller's tenant-scoped keys are removed.
 
 ## Conversation persistence
 
@@ -312,6 +318,9 @@ messages (
     role            TEXT NOT NULL,       -- 'user' | 'assistant'
     content         TEXT NOT NULL,
     sources         JSONB NOT NULL DEFAULT '[]',
+    steps           JSONB NOT NULL DEFAULT '[]',
+    attachments     JSONB NOT NULL DEFAULT '[]',
+    artifacts       JSONB NOT NULL DEFAULT '[]',
     trace_id        TEXT,               -- ddtrace trace ID for APM linking
     span_id         TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -328,7 +337,7 @@ DATABASE_URL=postgresql://user:pass@postgres.infra-advisor.svc.cluster.local:543
 make create-agent-api-secret
 ```
 
-**How the UI wires it in:** The UI creates a conversation on the first message of a new session, then sends `X-Conversation-ID` and `X-User-ID` on every subsequent `/query` call. Each exchange is saved automatically.
+**How the UI wires it in:** The UI creates a conversation on the first message of a new session, then sends `X-Conversation-ID` with the bearer token on every subsequent `/query` call. The service checks `conversations.id + conversations.user_id` before agent invocation and repeats the ownership check under a row lock while appending each exchange.
 
 **DD_DBM_PROPAGATION_MODE:** Set to `full` in `k8s/agent-api/configmap.yaml`. Every PostgreSQL query issued by this service includes a SQL comment with the full ddtrace trace context, enabling **"View Trace"** links from Datadog Database Monitoring query samples back to the originating APM trace.
 
@@ -337,14 +346,17 @@ make create-agent-api-secret
 On unhandled 500 errors, the API returns:
 ```json
 {
-  "detail": "Error description",
+  "detail": "The service encountered an unexpected error.",
+  "error_type": "RuntimeError",
   "trace_id": "3421959702764693"
 }
 ```
 
-The `trace_id` is the ddtrace trace ID for the current request. The UI renders a "View trace →" link that opens the Datadog APM trace directly.
+The public detail is stable and never includes exception messages, provider payloads, database URLs, or stack traces. `error_type` is a bounded diagnostic category and `trace_id` is the ddtrace trace ID for the current request. The UI renders a "View trace →" link that opens the Datadog APM trace directly.
 
 ## Observability
+
+The service enables Datadog App and API Protection and API Security in its Kubernetes ConfigMap while retaining its existing `ddtrace` APM pipeline. The pod opts in to Admission Controller configuration injection, and the image itself pins and initializes `ddtrace`. See [App & API Protection](/infra-advisor-ai/observability/app-api-protection/) for the gateway alternative, privacy boundary, and rollout checks.
 
 **LLM Observability span tree** (per query):
 
@@ -360,14 +372,11 @@ workflow: query-processing
   task: extract-sources           (tags: sources.count)
 
 (async, separate trace)
-task: faithfulness-eval           (tags: session.id, eval.faithfulness_score)
+task: faithfulness-eval           (tags: query.domain, eval.faithfulness_score)
   llm (auto-instrumented OpenAI call)
 ```
 
-**Session linking:**
-- `session.id` — set to RUM session ID when `X-DD-RUM-Session-ID` header is present; falls back to internal chat UUID
-- `session.chat_id` — always the Redis session key UUID
-- Enables "View session replay" link from LLM Obs trace detail panel
+**Privacy boundary:** raw prompts, answers, transcripts, media bytes, SAS URLs, filenames, and chat/RUM session IDs are not copied into custom LLMObs annotations, span tags, or logs. Workflow correlation uses trace/span IDs, while safe tags retain domain, model, tool, count, size, duration, and status dimensions. See [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for the provider-boundary pattern.
 
 ## Kafka integration
 

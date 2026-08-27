@@ -51,7 +51,8 @@ public static partial class TelemetrySanitizer
             return string.Empty;
         }
 
-        return AbsoluteUrlPattern().Replace(value, match => SanitizeUrl(match.Value));
+        var sanitized = AbsoluteUrlPattern().Replace(value, match => SanitizeUrl(match.Value));
+        return SourcePathPattern().Replace(sanitized, match => $"{match.Groups["prefix"].Value}<source>{match.Groups["line"].Value}");
     }
 
     public static string SanitizeActionName(string? value)
@@ -74,4 +75,7 @@ public static partial class TelemetrySanitizer
 
     [GeneratedRegex(@"https?://[^\s\]\[()<>]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AbsoluteUrlPattern();
+
+    [GeneratedRegex(@"(?<prefix>\s+in\s+)(?<path>(?:[A-Za-z]:\\|/)[^\r\n]+?)(?<line>:line\s+\d+)", RegexOptions.CultureInvariant)]
+    private static partial Regex SourcePathPattern();
 }

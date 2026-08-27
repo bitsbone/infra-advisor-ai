@@ -54,7 +54,7 @@ def enable_llm_obs() -> None:
         LLMObs.enable(ml_app=ml_app, agentless_enabled=agentless)
         logger.info("LLMObs enabled ml_app=%s agentless=%s", ml_app, agentless)
     except Exception as exc:  # pragma: no cover
-        logger.warning("LLMObs.enable() failed (non-fatal): %s", exc)
+        logger.warning("LLMObs.enable() failed (non-fatal) error_type=%s", type(exc).__name__)
 
 
 def tag_agent_run(
@@ -65,31 +65,31 @@ def tag_agent_run(
     tools_called: list[str],
     cost_usd: float | None = None,
 ) -> None:
-    """Annotate an explicit LLMObs agent span with I/O and query-level tags.
+    """Annotate an agent span with bounded operational metadata only.
 
     Must be called while the LLMObs.agent() context manager is still open
-    so that span is the active span — not after ainvoke() returns.
+    so that span is the active span — not after ainvoke() returns. Raw prompts
+    and answers remain provider inputs/outputs and are never copied here.
     """
     try:
         LLMObs.annotate(
             span=span,
-            input_data={"content": query, "role": "user"},
-            output_data={"content": answer, "role": "assistant"},
             tags={
                 "query.domain": query_domain,
+                "query.characters": str(len(query)),
+                "response.characters": str(len(answer)),
                 "agent.tools_called": ",".join(tools_called),
                 **({"llm.cost_usd": str(cost_usd)} if cost_usd is not None else {}),
             },
         )
     except Exception as exc:  # pragma: no cover
-        logger.debug("tag_agent_run failed (non-fatal): %s", exc)
+        logger.debug("tag_agent_run failed (non-fatal) error_type=%s", type(exc).__name__)
 
 
 async def _compute_faithfulness(
     query: str,
     context_chunks: list[str],
     answer: str,
-    session_id: str,
     query_domain: str,
 ) -> None:
     """Faithfulness eval via gpt-4.1-mini.
@@ -140,7 +140,6 @@ async def _compute_faithfulness(
             LLMObs.annotate(
                 span=eval_span,
                 tags={
-                    "session.id": session_id,
                     "query.domain": query_domain,
                     "eval.faithfulness_score": str(score),
                     "eval.model": eval_model,
@@ -148,9 +147,8 @@ async def _compute_faithfulness(
             )
 
         logger.info(
-            "faithfulness_score=%.3f session_id=%s domain=%s",
+            "faithfulness_score=%.3f domain=%s",
             score,
-            session_id,
             query_domain,
         )
 
@@ -158,11 +156,11 @@ async def _compute_faithfulness(
             statsd.gauge(
                 "eval.faithfulness_score",
                 score,
-                tags=[f"session_id:{session_id}", f"query.domain:{query_domain}"],
+                tags=[f"query.domain:{query_domain}"],
             )
 
     except Exception as exc:
-        logger.warning("faithfulness scoring failed (non-fatal): %s", exc)
+        logger.warning("faithfulness scoring failed (non-fatal) error_type=%s", type(exc).__name__)
 
 
 def submit_user_feedback(
@@ -177,34 +175,29 @@ def submit_user_feedback(
     by the given trace/span IDs.  `rating` must be one of: positive, negative, reported.
     """
     try:
-        tags: dict[str, str] = {}
-        if session_id:
-            tags["session.id"] = session_id
-
         LLMObs.submit_evaluation(
             span_context={"trace_id": trace_id, "span_id": span_id},
             label="user_feedback",
             metric_type="categorical",
             value=rating,
-            tags=tags,
+            tags={},
         )
         logger.info("user_feedback submitted trace_id=%s rating=%s", trace_id, rating)
     except Exception as exc:
-        logger.warning("submit_user_feedback failed (non-fatal): %s", exc)
+        logger.warning("submit_user_feedback failed (non-fatal) error_type=%s", type(exc).__name__)
 
 
 def schedule_faithfulness_score(
     query: str,
     context_chunks: list[str],
     answer: str,
-    session_id: str,
     query_domain: str = "general",
 ) -> None:
     """Fire-and-forget wrapper for faithfulness scoring."""
     try:
         loop = asyncio.get_event_loop()
         loop.create_task(
-            _compute_faithfulness(query, context_chunks, answer, session_id, query_domain)
+            _compute_faithfulness(query, context_chunks, answer, query_domain)
         )
     except Exception as exc:  # pragma: no cover
-        logger.debug("schedule_faithfulness_score failed to schedule task: %s", exc)
+        logger.debug("schedule_faithfulness_score failed to schedule task error_type=%s", type(exc).__name__)

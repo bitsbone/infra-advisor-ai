@@ -16,5 +16,9 @@ public interface IObservability
 
     void Info(string message, IReadOnlyDictionary<string, object>? attributes = null);
 
+    void Warning(string message, IReadOnlyDictionary<string, object>? attributes = null);
+
+    void ErrorLog(string message, IReadOnlyDictionary<string, object>? attributes = null);
+
     void Error(string message, Exception exception, IReadOnlyDictionary<string, object>? attributes = null);
 }

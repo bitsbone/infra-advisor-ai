@@ -15,6 +15,9 @@ data:
   DD_DOGSTATSD_PORT: "8125"
   DD_LOGS_INJECTION: "true"
   DD_TRACE_SAMPLE_RATE: "1.0"
+  # Drop kubelet probes before trace ingestion while retaining 100% sampling
+  # for user/API traffic in this observability demo.
+  DD_TRACE_SAMPLING_RULES: '[{"resource":"GET /livez","sample_rate":0.0},{"resource":"GET /readyz","sample_rate":0.0},{"sample_rate":1.0}]'
   DD_RUNTIME_METRICS_ENABLED: "true"
   DD_DATA_STREAMS_ENABLED: "true"
   # The Kafka consumer (kafka_consumer.py) polls infra.query.events roughly
@@ -30,6 +33,11 @@ data:
   DD_LLMOBS_AGENTLESS_ENABLED: "false"
   DD_CODE_ORIGIN_FOR_SPANS_ENABLED: "true"
   DD_TRACE_ENABLED: "true"
+  # App and API Protection runs inside the same pinned ddtrace process as APM.
+  # Keep API Security explicit even though current ddtrace 4.x defaults it on,
+  # so this public example fails visibly if the security contract is changed.
+  DD_APPSEC_ENABLED: "true"
+  DD_API_SECURITY_ENABLED: "true"
   # AI Guard: automatic LangChain integration (ddtrace>=3.14, langchain>=0.1.20 —
   # both satisfied). Patches BaseTool.invoke/ainvoke + chat model calls with no
   # code changes. DD_APP_KEY (required by the integration) lives in agent-api-secret.

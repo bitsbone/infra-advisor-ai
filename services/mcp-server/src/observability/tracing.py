@@ -2,6 +2,8 @@ import ddtrace.auto  # must be first import
 
 import logging
 import re
+import hashlib
+from urllib.parse import urlsplit, urlunsplit
 
 from ddtrace import tracer
 
@@ -22,19 +24,12 @@ def tag_span(key: str, value: str | int | float) -> None:
 
 
 # ---------------------------------------------------------------------------
-# External API failure logging — response payload capture
+# External API failure logging — bounded metadata only
 # ---------------------------------------------------------------------------
 #
-# Every tool's httpx error branch previously called emit_external_api(...) for
-# metrics only, with no log line or span tag carrying the actual response
-# body — a failure like "USASpending returned HTTP 422" was unrecoverable
-# from Datadog beyond the bare status code. logger.warning(...) is already
-# trace-correlated for free (DD_LOGS_INJECTION=true, k8s/mcp-server/
-# configmap.yaml), so logging the body is enough to get it into Trace > Logs;
-# tag_span additionally puts it directly on the span so it's visible in APM
-# without a Logs pivot.
+# Every failure emits a trace-correlated summary with status, byte count, and a
+# body fingerprint. Raw provider content is deliberately excluded.
 
-_MAX_BODY_CHARS = 2000
 # EIA and SAM.gov both pass their key as ?api_key=... — the only secret that
 # can appear in a URL across these tools (headers are never logged, so
 # header-based secrets like ERCOT's Ocp-Apim-Subscription-Key never reach
@@ -49,6 +44,14 @@ def _redact(text: str) -> str:
     return _SECRET_PARAM_RE.sub(r"\1=***", text)
 
 
+def _sanitize_url(value: str) -> str:
+    """Remove every query and fragment before a URL reaches telemetry."""
+    parts = urlsplit(value)
+    if parts.scheme and parts.netloc:
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return _redact(value)
+
+
 def log_external_api_failure(
     log: logging.Logger,
     *,
@@ -59,22 +62,26 @@ def log_external_api_failure(
     url: str | None = None,
     error: str | None = None,
 ) -> None:
-    """Log + span-tag an external API failure with the actual (redacted,
-    truncated) response payload. Call this alongside — not instead of — the
-    existing emit_external_api(...) metric call at every failure branch.
+    """Log + span-tag safe failure metadata without retaining response payloads.
 
     `body` is the raw response text (or the text that failed to parse, for
     post-parse failures like malformed JSON). `error` is an exception string
     for SDK-mediated failures (Azure OpenAI / Azure AI Search) where there's
-    no raw HTTP response to read.
+    no raw HTTP response to read. Both values are reduced to byte counts and
+    fingerprints; provider text is never emitted as a log or span attribute.
     """
     text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else (body or "")
-    safe_body = _redact(text)[:_MAX_BODY_CHARS]
-    safe_url = _redact(url) if url else None
+    safe_url = _sanitize_url(url) if url else None
+    body_bytes = text.encode("utf-8", errors="replace")
+    body_size = len(body_bytes)
+    body_sha256 = hashlib.sha256(body_bytes).hexdigest() if body_bytes else None
+    error_bytes = (error or "").encode("utf-8", errors="replace")
+    error_size = len(error_bytes)
+    error_sha256 = hashlib.sha256(error_bytes).hexdigest() if error_bytes else None
 
     log.warning(
-        "external API failure: source=%s tool=%s status=%s url=%s error=%s body=%s",
-        source, tool_name, status_code, safe_url, error, safe_body,
+        "external API failure: source=%s tool=%s status=%s url=%s error_bytes=%s error_sha256=%s response_bytes=%s response_sha256=%s",
+        source, tool_name, status_code, safe_url, error_size, error_sha256, body_size, body_sha256,
     )
 
     tag_span("error.source", source)
@@ -83,7 +90,9 @@ def log_external_api_failure(
         tag_span("error.status_code", status_code)
     if safe_url:
         tag_span("error.url", safe_url)
-    if error:
-        tag_span("error.message", error[:500])
-    if safe_body:
-        tag_span("error.response_body", safe_body)
+    if error_bytes:
+        tag_span("error.message_bytes", error_size)
+        tag_span("error.message_sha256", error_sha256 or "")
+    if body_bytes:
+        tag_span("error.response_bytes", body_size)
+        tag_span("error.response_sha256", body_sha256 or "")

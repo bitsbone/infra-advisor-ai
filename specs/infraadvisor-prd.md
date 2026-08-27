@@ -533,7 +533,7 @@ Note: GHCR packages are private by default when the repo is private. If the repo
   - `pandas` — for tabular data transformation (NBI CSV, TWDB workbook, FEMA/EIA records)
   - `openai` — for synthetic document generation via Azure OpenAI in `knowledge_base_init` DAG
   - `ddtrace` — for APM span instrumentation within DAG tasks
-- Datadog DJM: set `DD_DATA_JOBS_ENABLED=true` on scheduler and triggerer pods (LocalExecutor runs tasks in scheduler — no separate worker pod)
+- Datadog Data Jobs Monitoring: install a current Airflow OpenLineage provider and configure the Datadog transport on scheduler and task-running pods with `OPENLINEAGE__TRANSPORT__TYPE=datadog`, `OPENLINEAGE_NAMESPACE`, `DD_SITE`, and `DD_API_KEY`
 - OpenLineage transport: configure `OPENLINEAGE_URL` to point to DD Agent OpenLineage endpoint (`http://datadog-agent.datadog.svc.cluster.local:8126/api/v2/openlineage`)
 
 **Datadog DaemonSet:**
@@ -584,7 +584,7 @@ Water-specific documents must reference real Texas context where appropriate: th
 - Store raw data as parquet in Azure Blob Storage (`infra-advisor-raw` container)
 - Index 500-character text chunks per bridge record into Azure AI Search under `domain: "transportation"`, `document_type: "asset_record"`
 - Schedule: weekly at 03:00 UTC Sunday
-- Instrumented with DJM via `DD_DATA_JOBS_ENABLED=true`
+- Instrumented for Data Jobs Monitoring through the Airflow OpenLineage provider and Datadog transport
 
 **FEMA ingestion DAG:**
 - Pull `DisasterDeclarationsSummaries` endpoint for all records since 2010
@@ -606,7 +606,7 @@ Water-specific documents must reference real Texas context where appropriate: th
 - Index into Azure AI Search under `domain: "water"`, `document_type: "water_plan_project"`, `source: "TWDB_2026_State_Water_Plan"`
 - Also index the EPA SDWIS Texas community water system summary (bulk CSV download from Envirofacts) under `domain: "water"`, `document_type: "water_system_record"`
 - Schedule: monthly at 05:00 UTC 1st of month (plan updates are infrequent; monthly check is sufficient)
-- Instrumented with DJM via `DD_DATA_JOBS_ENABLED=true`
+- Instrumented for Data Jobs Monitoring through the Airflow OpenLineage provider and Datadog transport
 
 **Knowledge base init DAG (`knowledge_base_init`):**
 - Calls `services/ingestion/scripts/generate_synthetic_docs.py` as a BashOperator task
@@ -618,7 +618,7 @@ Water-specific documents must reference real Texas context where appropriate: th
 - Chunk ID format: `synthetic_{document_slug}_{chunk_index}` — deterministic, enables idempotent upserts
 - Run manually once at initial deployment; re-run manually when document corpus needs refreshing
 - Schedule: `None` (manual trigger only — no cron schedule)
-- Instrumented with DJM via `DD_DATA_JOBS_ENABLED=true`
+- Instrumented for Data Jobs Monitoring through the Airflow OpenLineage provider and Datadog transport
 
 **Phase 1 acceptance criteria:**
 - [ ] `az aks get-credentials` works; `kubectl get nodes` shows 3 Ready nodes
@@ -1670,7 +1670,7 @@ These are pre-resolved design decisions that implementation agents must respect.
 
 **LangChain MCP adapter:** `langchain-mcp-adapters` requires an async context to initialize the MCP client. Wrap initialization in `asynccontextmanager` for FastAPI lifespan.
 
-**Airflow DJM:** Data Jobs Monitoring requires `DD_DATA_JOBS_ENABLED=true` on Airflow scheduler and triggerer pods. With `LocalExecutor`, tasks run inside the scheduler process — there are no separate worker pods to instrument. The OpenLineage provider emits dataset-level lineage events; set `OPENLINEAGE_URL` to the Datadog Agent OpenLineage endpoint on the scheduler pod.
+**Airflow Data Jobs Monitoring:** Airflow 3 emits job runs and dataset lineage through `apache-airflow-providers-openlineage`. InfraAdvisor uses the recommended Datadog transport with `OPENLINEAGE__TRANSPORT__TYPE=datadog`, `OPENLINEAGE_NAMESPACE`, `DD_SITE`, and a Kubernetes-secret-backed `DD_API_KEY` on the scheduler and other OpenLineage-emitting pods. With `LocalExecutor`, task processes inherit the scheduler environment; there is no separate worker Deployment. `DD_DATA_JOBS_ENABLED` applies to tracer-instrumented data jobs such as Spark and is not required for this Airflow OpenLineage transport.
 
 **Redis session keys:** Use `EXPIRE` with TTL on every session write. LangChain's Redis memory does not set TTL by default — wrap with a custom memory class that calls `redis_client.expire(key, 86400)` after every write.
 
