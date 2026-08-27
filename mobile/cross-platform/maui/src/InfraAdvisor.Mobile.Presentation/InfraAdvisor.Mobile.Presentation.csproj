@@ -5,6 +5,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <!-- Build-only Source Link metadata maps portable-PDB frames to the matching GitHub source revision. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.400" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../InfraAdvisor.Mobile.Core/InfraAdvisor.Mobile.Core.csproj" />

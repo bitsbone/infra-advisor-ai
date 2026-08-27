@@ -6,6 +6,9 @@
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Build-only Source Link metadata lets Datadog resolve portable-PDB stack frames to this GitHub repository and commit. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.400" PrivateAssets="all" />
+
     <!-- LLM provider SDK (Azure OpenAI on top of OpenAI's .NET SDK) -->
     <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
 

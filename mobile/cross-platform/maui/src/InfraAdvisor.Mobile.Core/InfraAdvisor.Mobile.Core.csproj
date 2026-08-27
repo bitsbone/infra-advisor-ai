@@ -3,4 +3,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>InfraAdvisor.Mobile</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Build-only Source Link metadata maps portable-PDB frames to the matching GitHub source revision. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.400" PrivateAssets="all" />
+  </ItemGroup>
 </Project>

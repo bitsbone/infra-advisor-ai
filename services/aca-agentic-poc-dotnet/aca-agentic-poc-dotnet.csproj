@@ -6,6 +6,9 @@
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Build-only Source Link metadata lets Datadog resolve portable-PDB stack frames to this GitHub repository and commit. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.400" PrivateAssets="all" />
+
     <!-- Same package set as services/agent-api-dotnet — this app is a
          deliberately minimal subset (no MCP, no Redis, no Postgres, no
          evaluators) of that service's pattern, not a rewrite of it. -->

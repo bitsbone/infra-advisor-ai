@@ -79,6 +79,23 @@ The .NET services share the same `OTEL_EXPORTER_OTLP_ENDPOINT` (port 4318 on the
 
 `DD_CODE_ORIGIN_FOR_SPANS_ENABLED=true` is set on all four service configmaps. When viewing a span in Datadog APM, the **Code Origin** section links directly to the source file and line that created the span.
 
+### .NET Source Link
+
+The repository's deployable .NET services, experiments, and MAUI assemblies reference `Microsoft.SourceLink.GitHub` as a private build dependency. Release builds write the GitHub repository and commit mapping into portable PDBs so Datadog can associate symbolicated stack frames with the matching source revision without embedding credentials or application data.
+
+Source Link is enabled for:
+
+- `services/aca-agentic-poc-dotnet`
+- `services/agent-api-dotnet`
+- `services/mcp-server-dotnet`
+- `experiments/dotnet-maf-poc`
+- `experiments/dotnet-otel-poc`
+- `mobile/cross-platform/maui/src/InfraAdvisor.Mobile`
+- `mobile/cross-platform/maui/src/InfraAdvisor.Mobile.Core`
+- `mobile/cross-platform/maui/src/InfraAdvisor.Mobile.Presentation`
+
+Test assemblies are excluded because they are not deployed. Service publish outputs retain portable PDBs, while the MAUI release workflow uploads the platform symbol files generated from the same revision. Datadog's GitHub integration must also be connected to `kyletaylored/infra-advisor-ai` for source links in the Datadog UI to resolve for authorized users.
+
 ## Log-trace correlation
 
 Structured JSON logs from all services include `dd.trace_id` and `dd.span_id` fields. When you view a trace in Datadog APM, the correlated logs panel shows logs from the same trace ID.

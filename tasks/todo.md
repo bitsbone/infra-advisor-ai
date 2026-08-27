@@ -1,5 +1,14 @@
 # ACA agentic POC: managed OTel agent vs Datadog sidecar — todo
 
+## .NET Source Link integration
+
+- [x] Add `Microsoft.SourceLink.GitHub` as a private build dependency to deployed .NET services, experiments, and MAUI assemblies.
+- [x] Verify restores, Release builds, portable PDB Source Link metadata, documentation, and repository hygiene.
+
+### Review
+
+`Microsoft.SourceLink.GitHub` 10.0.400 now covers five service/experiment applications and all three deployable MAUI assemblies while remaining private to each build. All five service/experiment Release builds and the MAUI Android Release build completed with zero warnings or errors, all 68 MAUI tests passed, and every generated PDB maps repository documents to the exact `kyletaylored/infra-advisor-ai` GitHub commit. The documentation build produced 64 pages with zero broken internal links.
+
 Plan: /Users/kyle.taylor/.claude/plans/wondrous-percolating-unicorn.md
 
 ## Phase 1 — Bicep module

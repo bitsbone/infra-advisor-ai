@@ -7,6 +7,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Build-only Source Link metadata lets Datadog resolve portable-PDB stack frames to this GitHub repository and commit. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.400" PrivateAssets="all" />
+
     <!-- Microsoft.Extensions.AI: provider-neutral .NET LLM abstraction.
          .UseOpenTelemetry() emits OTel GenAI semantic-convention spans
          (gen_ai.input.messages parts array, gen_ai.usage.*, etc.) which
