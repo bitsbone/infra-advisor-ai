@@ -56,7 +56,9 @@ Add these GitHub Actions secrets:
 - `DD_APP_KEY`: Datadog application key.
 - `MAUI_IOS_SIGNING_CERTIFICATE_BASE64`: Base64-encoded Development or Ad Hoc `.p12`.
 - `MAUI_IOS_SIGNING_CERTIFICATE_PASSWORD`: `.p12` password.
-- `MAUI_IOS_PROVISIONING_PROFILE_BASE64`: Base64-encoded Development or Ad Hoc provisioning profile.
+- `APP_STORE_CONNECT_KEY_ID`: App Store Connect API key ID.
+- `APP_STORE_CONNECT_ISSUER_ID`: App Store Connect API issuer ID.
+- `APP_STORE_CONNECT_PRIVATE_KEY`: App Store Connect `.p8` contents.
 
 Android uses a temporary test keystore generated during the workflow. The iOS signing values are required only when producing an installable IPA; `build-only` produces a simulator `.app` without them.
 
