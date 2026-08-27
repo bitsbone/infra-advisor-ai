@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-redis-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm run-dags apply-datadog-agent install-airflow recover-airflow-destructive preflight-airflow-cluster verify-airflow-image upgrade-airflow sync-dags build-airflow-image test-airflow test-airflow-container otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-redis-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm run-dags apply-datadog-agent install-airflow recover-airflow-destructive preflight-airflow-cluster verify-airflow-image upgrade-airflow sync-dags build-airflow-image test-airflow test-airflow-container otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector run-ios run-android help
 
 # Load .env for normal local operation. Set SKIP_DOTENV=1 for documentation,
 # static analysis, and dry runs so Make never expands local credentials.
@@ -18,9 +18,31 @@ AIRFLOW_IMAGE_REPOSITORY ?= ghcr.io/kyletaylored/infra-advisor-ai/airflow
 AIRFLOW_IMAGE_TAG ?= latest
 AIRFLOW_NAMESPACE ?= airflow
 AIRFLOW_DESTRUCTIVE_RECOVERY ?=
+MAUI_PROJECT ?= mobile/cross-platform/maui/src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj
+IOS_SIMULATOR_UDID ?=
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+# ─── .NET MAUI mobile app ─────────────────────────────────────────────────────────────────────────
+
+run-ios: ## Run the MAUI app on the booted iOS simulator (IOS_SIMULATOR_UDID optional)
+	@command -v dotnet >/dev/null || { echo "ERROR: dotnet is not installed"; exit 1; }
+	@command -v xcrun >/dev/null || { echo "ERROR: Xcode command-line tools are not installed"; exit 1; }
+	@SIMULATOR_UDID="$(IOS_SIMULATOR_UDID)"; \
+	if [ -z "$$SIMULATOR_UDID" ]; then \
+		SIMULATOR_UDID="$$(xcrun simctl list devices booted | awk -F '[()]' '/Booted/ { print $$2; exit }')"; \
+	fi; \
+	if [ -z "$$SIMULATOR_UDID" ]; then \
+		echo "ERROR: No booted iOS simulator found. Start one or run make run-ios IOS_SIMULATOR_UDID=<UDID>."; \
+		exit 1; \
+	fi; \
+	echo "→ Running MAUI iOS on $$SIMULATOR_UDID"; \
+	dotnet build "$(MAUI_PROJECT)" -f net10.0-ios -t:Run -p:InfraAdvisorBuildPlatform=ios -p:RuntimeIdentifier=iossimulator-arm64 "-p:_DeviceName=:v2:udid=$$SIMULATOR_UDID"
+
+run-android: ## Run the MAUI app on the connected Android emulator
+	@command -v dotnet >/dev/null || { echo "ERROR: dotnet is not installed"; exit 1; }
+	@dotnet build "$(MAUI_PROJECT)" -f net10.0-android -t:Run -p:InfraAdvisorBuildPlatform=android
 
 check-env: ## Verify all required env vars are set before deploying
 	@echo "→ Checking required environment variables..."

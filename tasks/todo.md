@@ -239,3 +239,15 @@ The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM be
 - Split `/livez`, `/readyz`, and legacy `/health` behavior across the services, reduced kubelet readiness/liveness frequency, added startup probes, applied Python resource sampling rules, and filtered .NET probe spans before export.
 - Verification passed with 113 Python MCP tests, 81 Python Agent tests, 22 Auth API tests, and 129 ingestion/DagBag/deployment-contract tests; 68 MAUI tests; 30 .NET Agent tests with the opt-in PostgreSQL ownership/artifact round-trip test skipped without a disposable database; and 4 .NET MCP tests. The web production build and MAUI Android Debug build are clean; the MAUI iOS fallback simulator build succeeds with only the known local Xcode 26.0.1 versus recommended 26.2 warning; the documentation build produces 64 pages with zero broken internal links; and YAML parsing, changed-lines secret hygiene, and `git diff --check` pass. Artifact regression coverage includes serialized MCP `CallToolResult` text and `structuredContent` envelopes, exact allowlisted reconstruction, nested secret stripping, canonical URL sanitization, invalid schema-value rejection, duplicate-key-safe deployment parsing, Python/.NET App and API Protection contracts, and sentinel telemetry values that must never be exported. A bounded live Grants.gov grant-only canary returned three normalized records and validated against the committed v1 JSON Schema without printing provider bodies. The Android Debug APK embeds assemblies so direct emulator installation works without a fast-deployment host.
 - Runtime smoke tests cold-launched the app successfully on an Android emulator, an iPhone SE (3rd generation), and an iPad mini. The unauthenticated login layout remained readable and clear of system safe areas at the smallest phone and tablet sizes; Android landscape and 2.0x font-scale checks and the largest iOS accessibility text category rendered without clipped text, while root ScrollViews retain access to content beyond the viewport. Static accessibility guards cover page identifiers, semantics, text scaling, 48-unit touch targets, wrapping, small-height scrolling, and modal exclusion/close targets. The local bootstrap credentials were rejected by the public deployment with HTTP 401, so authenticated navigation, live procurement artifacts, native screen-reader/modal-focus checks, replay inspection, and Datadog acceptance remain open and require a current test account.
+
+---
+
+# Root MAUI run targets
+
+- [x] Add `make run-android` for the connected Android emulator.
+- [x] Add `make run-ios` with automatic booted-simulator selection and an explicit UDID override.
+- [x] Document both root commands in the MAUI guide and observability site content.
+
+## Review
+
+- The iOS target passes `_DeviceName` so the .NET launcher uses the selected simulator instead of opening another device.

@@ -46,6 +46,14 @@ Android and iOS share one MAUI RUM application:
 
 See the [MAUI source and run guide](https://github.com/kyletaylored/infra-advisor-ai/tree/main/mobile/cross-platform/maui).
 
+Run the MAUI clients from the repository root:
+
+- `make run-android`: run on the connected Android emulator.
+- `make run-ios`: run on the currently booted iOS simulator.
+- `make run-ios IOS_SIMULATOR_UDID=SIMULATOR-UDID`: run on a specific iOS simulator.
+
+The iOS target passes the selected UDID to the .NET launcher so it does not start a different compatible simulator.
+
 ## MAUI release configuration
 
 `Datadog.Maui` uploads Android R8 mappings and iOS dSYMs when `DatadogUploadSymbols=true`.

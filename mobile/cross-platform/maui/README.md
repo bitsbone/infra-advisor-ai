@@ -58,14 +58,13 @@ dotnet test tests/InfraAdvisor.Mobile.Core.Tests/InfraAdvisor.Mobile.Core.Tests.
 In Android Studio, open **Tools → Device Manager**, create a Pixel device using API 35 or newer, and start it. Then run:
 
 ```bash
-adb devices
-cd mobile/cross-platform/maui
-dotnet build src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-android -t:Run
+make run-android
 ```
 
 Build an APK without launching it:
 
 ```bash
+cd mobile/cross-platform/maui
 dotnet publish src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-android -c Release
 ```
 
@@ -73,14 +72,20 @@ Release builds enable R8 and generate `mapping.txt`.
 
 ## Run iOS
 
-Open Xcode once to install the required platform and accept its license, start a simulator, then run:
+Open Xcode once to install the required platform and accept its license. Start the intended simulator, then run from the repository root:
 
 ```bash
-cd mobile/cross-platform/maui
-dotnet build src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-ios -t:Run
+make run-ios
 ```
 
-Use an Xcode version supported by the installed .NET iOS workload.
+The target selects the currently booted simulator. To choose a specific device when more than one simulator is open:
+
+```bash
+xcrun simctl list devices available
+make run-ios IOS_SIMULATOR_UDID=SIMULATOR-UDID
+```
+
+The Make target passes `_DeviceName` to prevent `mlaunch` from choosing another compatible simulator. It targets Apple Silicon; Intel hosts can run the equivalent `dotnet build` command with `iossimulator-x64`. If the intended device is missing from `xcrun simctl`, verify `xcode-select -p` points to the Xcode installation that owns its runtime. Use an Xcode version supported by the installed .NET iOS workload.
 
 ## Exercise the AI and observability flows
 
