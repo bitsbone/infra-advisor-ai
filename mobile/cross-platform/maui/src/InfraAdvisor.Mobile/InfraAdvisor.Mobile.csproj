@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFrameworks>net10.0-android;net10.0-ios</TargetFrameworks>
+    <!-- CI can select one app target without overriding TargetFrameworks on referenced net10.0 libraries. -->
+    <TargetFrameworks Condition="'$(InfraAdvisorBuildPlatform)' == 'android'">net10.0-android</TargetFrameworks>
+    <TargetFrameworks Condition="'$(InfraAdvisorBuildPlatform)' == 'ios'">net10.0-ios</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <RootNamespace>InfraAdvisor.Mobile</RootNamespace>
     <UseMaui>true</UseMaui>
