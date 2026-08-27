@@ -106,9 +106,6 @@ jobs:
           certificate-passphrase: ${{ secrets.MAUI_IOS_SIGNING_CERTIFICATE_PASSWORD }}
           bundle-identifiers: ${{ env.IOS_BUNDLE_ID }}
           profile-types: IOS_APP_DEVELOPMENT
-          app-store-connect-key-id: APP_STORE_CONNECT_KEY_ID
-          app-store-connect-issuer-id: APP_STORE_CONNECT_ISSUER_ID
-          app-store-connect-private-key: APP_STORE_CONNECT_PRIVATE_KEY
       - name: Build iOS simulator app
         if: ${{ inputs.operation == 'build-only' }}
         run: dotnet build "$PROJECT" -f net10.0-ios -c Release -p:InfraAdvisorBuildPlatform=ios -p:RuntimeIdentifier=iossimulator-arm64
