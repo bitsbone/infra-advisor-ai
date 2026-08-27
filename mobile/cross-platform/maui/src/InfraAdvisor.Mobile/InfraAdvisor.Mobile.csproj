@@ -15,17 +15,16 @@
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">23.0</SupportedOSPlatformVersion>
     <AndroidTargetSdkVersion>36</AndroidTargetSdkVersion>
-    <!-- Symbol upload is deliberately opt-in; CI supplies the API key and enables this only for build-and-sync runs. -->
-    <DatadogSymbolUploadEnabled Condition="'$(DatadogSymbolUploadEnabled)' == ''">false</DatadogSymbolUploadEnabled>
-    <DatadogApiKey Condition="'$(DatadogApiKey)' == ''">$(DATADOG_API_KEY)</DatadogApiKey>
+    <!-- Datadog.Maui uploads Release symbols after publish when CI opts in and supplies DATADOG_API_KEY. -->
+    <DatadogUploadSymbols Condition="'$(DatadogUploadSymbols)' == ''">false</DatadogUploadSymbols>
     <DatadogSite>us3.datadoghq.com</DatadogSite>
     <DatadogServiceName>infra-advisor-mobile-maui</DatadogServiceName>
-    <DatadogVersion>$(ApplicationDisplayVersion)</DatadogVersion>
-    <DatadogVariant>$(Configuration)</DatadogVariant>
     <InfraAdvisorApiBaseUrl Condition="'$(InfraAdvisorApiBaseUrl)' == ''">https://infra-advisor-ai.kyletaylor.dev/</InfraAdvisorApiBaseUrl>
     <InfraAdvisorDatadogEnvironment Condition="'$(InfraAdvisorDatadogEnvironment)' == ''">demo</InfraAdvisorDatadogEnvironment>
     <InfraAdvisorDatadogService Condition="'$(InfraAdvisorDatadogService)' == ''">infra-advisor-mobile-maui</InfraAdvisorDatadogService>
+    <InfraAdvisorDatadogClientToken Condition="'$(InfraAdvisorDatadogClientToken)' == '' And '$(MAUI_DD_CLIENT_TOKEN)' != ''">$(MAUI_DD_CLIENT_TOKEN)</InfraAdvisorDatadogClientToken>
     <InfraAdvisorDatadogClientToken Condition="'$(InfraAdvisorDatadogClientToken)' == ''">pub884d0800477e2d252b992acb168fc7a5</InfraAdvisorDatadogClientToken>
+    <InfraAdvisorDatadogRumApplicationId Condition="'$(InfraAdvisorDatadogRumApplicationId)' == '' And '$(MAUI_DD_RUM_APPLICATION_ID)' != ''">$(MAUI_DD_RUM_APPLICATION_ID)</InfraAdvisorDatadogRumApplicationId>
     <InfraAdvisorDatadogRumApplicationId Condition="'$(InfraAdvisorDatadogRumApplicationId)' == ''">fe90f908-da00-4d7c-9b24-6af11cee68a4</InfraAdvisorDatadogRumApplicationId>
   </PropertyGroup>
   <ItemGroup>
@@ -41,6 +40,10 @@
     <AndroidLinkTool>r8</AndroidLinkTool>
     <AndroidCreateProguardMappingFile>true</AndroidCreateProguardMappingFile>
     <MtouchDebug>false</MtouchDebug>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' And $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <!-- Keep the ordinary Debug APK self-contained so Android Studio/emulator users can install it directly without a live fast-deployment host. -->
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
   </PropertyGroup>
   <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
     <!-- The .NET iOS asset compiler needs the generated MAUI app-icon set name so it emits Assets.car and CFBundleIcons. -->
@@ -62,7 +65,6 @@
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Datadog.Maui" Version="0.2.0" />
-    <PackageReference Include="kyletaylored.Datadog.MAUI.Symbols" Version="0.1.0" PrivateAssets="all" GeneratePathProperty="true" />
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.1" />
     <PackageReference Include="Plugin.Maui.Audio" Version="4.0.0" />
@@ -78,7 +80,4 @@
     <Compile Remove="Services/Media/IMediaInputService.cs" />
     <Compile Remove="ViewModels/*.cs" />
   </ItemGroup>
-  <!-- Package 0.1.0 names its build files Datadog.MAUI.Symbols.* instead of the full NuGet package ID, so NuGet does not auto-import them. Keep this explicit compatibility import until the package fixes those filenames. -->
-  <Import Project="$(Pkgkyletaylored_Datadog_MAUI_Symbols)/build/Datadog.MAUI.Symbols.props" Condition="Exists('$(Pkgkyletaylored_Datadog_MAUI_Symbols)/build/Datadog.MAUI.Symbols.props')" />
-  <Import Project="$(Pkgkyletaylored_Datadog_MAUI_Symbols)/build/Datadog.MAUI.Symbols.targets" Condition="Exists('$(Pkgkyletaylored_Datadog_MAUI_Symbols)/build/Datadog.MAUI.Symbols.targets')" />
 </Project>

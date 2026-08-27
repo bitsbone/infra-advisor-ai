@@ -1,6 +1,6 @@
 # Infra Advisor .NET MAUI client
 
-This .NET 10 MAUI application is the cross-platform reference implementation of Infra Advisor for Android API 23+ and iOS 15+. It shares authentication, typed API contracts, streaming chat, conversation history, model/backend selection, image/audio uploads, feedback, and an observability Error Lab while retaining native platform packaging and permissions.
+This .NET 10 MAUI application runs on Android API 23+ and iOS 15+. It includes chat, history, model/backend selection, file/audio uploads, and Datadog observability.
 
 The runtime client token and RUM application ID are public mobile identifiers. Credentials and JWTs remain in memory. Do not add a Datadog API key, application key, signing certificate, provisioning profile, keystore, real account credentials, prompt text, response body, filename, local path, or attachment URL to tracked configuration or telemetry.
 
@@ -19,10 +19,14 @@ The runtime client token and RUM application ID are public mobile identifiers. C
 | Testable presentation abstractions | [`src/InfraAdvisor.Mobile.Presentation/Services/ApplicationAbstractions.cs`](src/InfraAdvisor.Mobile.Presentation/Services/ApplicationAbstractions.cs) |
 | MAUI platform adapters | [`src/InfraAdvisor.Mobile/Services/MauiApplicationAdapters.cs`](src/InfraAdvisor.Mobile/Services/MauiApplicationAdapters.cs) |
 | Attachment privacy, MIME, size, recording | [`src/InfraAdvisor.Mobile/Services/Media/MediaInputService.cs`](src/InfraAdvisor.Mobile/Services/Media/MediaInputService.cs) and [`src/InfraAdvisor.Mobile.Core/Services/MediaValidator.cs`](src/InfraAdvisor.Mobile.Core/Services/MediaValidator.cs) |
-| Adaptive chat, history sheet/rail, transcript, and Syncfusion selector | [`src/InfraAdvisor.Mobile/Views/ChatPage.xaml`](src/InfraAdvisor.Mobile/Views/ChatPage.xaml) |
+| Field Advisor workspace, transcript, evidence sheet, and Syncfusion selector | [`src/InfraAdvisor.Mobile/Views/ChatPage.xaml`](src/InfraAdvisor.Mobile/Views/ChatPage.xaml) and [`src/InfraAdvisor.Mobile/ViewModels/ChatViewModel.cs`](src/InfraAdvisor.Mobile/ViewModels/ChatViewModel.cs) |
+| Dedicated conversation History destination | [`src/InfraAdvisor.Mobile/Views/HistoryPage.xaml`](src/InfraAdvisor.Mobile/Views/HistoryPage.xaml) and [`src/InfraAdvisor.Mobile/ViewModels/HistoryViewModel.cs`](src/InfraAdvisor.Mobile/ViewModels/HistoryViewModel.cs) |
+| Versioned chat-artifact API models | [`src/InfraAdvisor.Mobile.Core/Models/ApiModels.cs`](src/InfraAdvisor.Mobile.Core/Models/ApiModels.cs) |
+| Evidence presentation and privacy-safe source links | [`src/InfraAdvisor.Mobile/Models/ChatPresentationModels.cs`](src/InfraAdvisor.Mobile/Models/ChatPresentationModels.cs) |
 | Linker-safe Syncfusion selector wrapper | [`src/InfraAdvisor.Mobile/Controls/BackendSegmentedControl.cs`](src/InfraAdvisor.Mobile/Controls/BackendSegmentedControl.cs) |
 | Safe Markdown and link renderer | [`src/InfraAdvisor.Mobile/Controls/MarkdownLabel.cs`](src/InfraAdvisor.Mobile/Controls/MarkdownLabel.cs) |
 | Shared design tokens and reusable styles | [`src/InfraAdvisor.Mobile/Resources/Styles/Colors.xaml`](src/InfraAdvisor.Mobile/Resources/Styles/Colors.xaml) and [`src/InfraAdvisor.Mobile/Resources/Styles/Styles.xaml`](src/InfraAdvisor.Mobile/Resources/Styles/Styles.xaml) |
+| Adaptive layout and accessibility contract | [`src/InfraAdvisor.Mobile/Views/ChatPage.xaml`](src/InfraAdvisor.Mobile/Views/ChatPage.xaml), [`src/InfraAdvisor.Mobile/Views/LoginPage.xaml.cs`](src/InfraAdvisor.Mobile/Views/LoginPage.xaml.cs), and [`tests/InfraAdvisor.Mobile.Core.Tests/XamlAccessibilityGuardTests.cs`](tests/InfraAdvisor.Mobile.Core.Tests/XamlAccessibilityGuardTests.cs) |
 | Login and `SetUserInfo` | [`src/InfraAdvisor.Mobile/ViewModels/LoginViewModel.cs`](src/InfraAdvisor.Mobile/ViewModels/LoginViewModel.cs) |
 | Streaming AI/chat operations | [`src/InfraAdvisor.Mobile/ViewModels/ChatViewModel.cs`](src/InfraAdvisor.Mobile/ViewModels/ChatViewModel.cs) |
 | Logs, handled errors, API failures, crash | [`src/InfraAdvisor.Mobile/ViewModels/ErrorLabViewModel.cs`](src/InfraAdvisor.Mobile/ViewModels/ErrorLabViewModel.cs) |
@@ -30,10 +34,9 @@ The runtime client token and RUM application ID are public mobile identifiers. C
 | Android permissions | [`src/InfraAdvisor.Mobile/Platforms/Android/AndroidManifest.xml`](src/InfraAdvisor.Mobile/Platforms/Android/AndroidManifest.xml) |
 | iOS privacy descriptions | [`src/InfraAdvisor.Mobile/Platforms/iOS/Info.plist`](src/InfraAdvisor.Mobile/Platforms/iOS/Info.plist) |
 | Symbol/mapping build settings | [`src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj`](src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj) |
-| MAUI symbol upload package | [`kyletaylored.Datadog.MAUI.Symbols`](https://www.nuget.org/packages/kyletaylored.Datadog.MAUI.Symbols) |
 | Contract tests | [`tests/InfraAdvisor.Mobile.Core.Tests`](tests/InfraAdvisor.Mobile.Core.Tests) |
 
-One DI-managed `HttpClient` performs every application request. Datadog's MAUI SDK automatically observes this standard client, starts the RUM resource and mobile span, and injects Datadog plus W3C headers only for `infra-advisor-ai.kyletaylor.dev`. Application code adds `X-Session-ID`, `X-DD-RUM-Session-ID`, `X-User-ID`, and `X-Conversation-ID` for backend memory, RUM/AI correlation, and conversation persistence. It does not manually create duplicate network resources.
+One DI-managed `HttpClient` performs every request. Datadog automatically records its resources and propagates Datadog and W3C trace headers to the configured API host.
 
 ## Prerequisites
 
@@ -52,20 +55,12 @@ dotnet test tests/InfraAdvisor.Mobile.Core.Tests/InfraAdvisor.Mobile.Core.Tests.
 
 ## Run Android
 
-Android Studio supplies the SDK and emulator even though the MAUI solution itself is built by the .NET CLI. Open Android Studio, choose **More Actions → Virtual Device Manager** from the welcome screen or **Tools → Device Manager** from any project, create a Pixel device using API 35 or newer, and start it. Confirm that the emulator is visible, then install and launch the Debug target from a terminal:
+In Android Studio, open **Tools → Device Manager**, create a Pixel device using API 35 or newer, and start it. Then run:
 
 ```bash
 adb devices
 cd mobile/cross-platform/maui
 dotnet build src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-android -t:Run
-```
-
-If you install an APK manually instead of using `-t:Run`, embed the managed assemblies so the package does not depend on Visual Studio/CLI fast deployment:
-
-```bash
-dotnet build src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-android -c Debug -p:EmbedAssembliesIntoApk=true
-adb install -r src/InfraAdvisor.Mobile/bin/Debug/net10.0-android/dev.kyletaylor.infraadvisor.maui-Signed.apk
-adb shell monkey -p dev.kyletaylor.infraadvisor.maui 1
 ```
 
 Build an APK without launching it:
@@ -74,7 +69,7 @@ Build an APK without launching it:
 dotnet publish src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-android -c Release
 ```
 
-The Release project enables R8 and generates `mapping.txt` under the intermediate/output tree. Android uses edge-to-edge-safe MAUI layout rather than manually drawing content behind the status bar.
+Release builds enable R8 and generate `mapping.txt`.
 
 ## Run iOS
 
@@ -85,47 +80,56 @@ cd mobile/cross-platform/maui
 dotnet build src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-ios -t:Run
 ```
 
-If the build reports that the installed .NET iOS workload requires a newer Xcode, update Xcode to the exact requested version or install a compatible .NET iOS workload; this is a workload/Xcode pairing requirement rather than an application error. For a signed physical-device archive, provide the Apple team, signing key, and provisioning profile only through local MSBuild properties or CI secrets.
-
-For simulator-only diagnosis on an older Xcode installation, the SDK-only linker fallback can avoid APIs from the newer platform SDK while you arrange the supported Xcode/workload pairing:
-
-```bash
-dotnet build src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-ios -c Debug -p:RuntimeIdentifier=iossimulator-arm64 -p:ValidateXcodeVersion=false -p:MtouchLink=SdkOnly -p:MtouchDebug=false
-```
-
-`MtouchDebug=false` is only needed when installing and launching that fallback build directly with `simctl`; `-t:Run` supplies its own debugger connection. The project explicitly names the generated `appicon` asset set for iOS so Release and linked simulator builds package `Assets.car` and the required `CFBundleIcons` metadata.
+Use an Xcode version supported by the installed .NET iOS workload.
 
 ## Exercise the AI and observability flows
 
-1. Sign in and confirm Datadog shows a named `Login` view followed by `Chat`, with the backend user ID/email associated with the RUM session.
-2. Select Python or .NET and a discovered model, choose a suggestion, or use the federal procurement prompt to exercise an MCP tool call.
-3. Watch streaming text and pipeline/tool chips, then inspect citations, trace metadata, response feedback, and contextual follow-up suggestions.
-4. Start another conversation, reopen history, and confirm backend/model metadata and transcript restoration.
-5. Attach one supported image and one supported audio file, or record WAV audio after granting microphone access. Verify upload and query resources without filenames, payloads, SAS URLs, prompts, or responses in custom telemetry.
-6. Open Error Lab to send safe logs, record a handled C# error, create an expected API error resource, or intentionally terminate a debugger-free Debug app.
-7. Relaunch after a crash so the SDK can submit the stored crash report. Open Info to inspect safe configuration, then log out and confirm the user identity and RUM session are cleared.
-8. Open Session Replay and verify that email/password and other sensitive inputs are masked while navigation remains understandable.
+1. Sign in and verify the RUM user ID and email.
+2. Send a prompt and follow the mobile resource into the backend and AI trace.
+3. Test history, image/audio upload, logs, errors, and a debugger-free crash.
+4. Verify Session Replay masks sensitive inputs and logout clears the user.
 
 ## Release symbols and Mobile App Testing uploads
 
-The pinned community package `kyletaylored.Datadog.MAUI.Symbols` 0.1.0 owns symbol discovery and upload. `DatadogSymbolUploadEnabled` defaults to `false` in this public demo. Set it only during an authorized Release publish and provide `DATADOG_API_KEY` through the environment. Its MSBuild target uploads the matching Android R8 mapping or iOS dSYM after `Publish`; portable PDBs preserve managed C# file/line information. The package does not generate symbols, so the project separately enables R8 mapping and dSYM generation. Package 0.1.0's build filenames do not include the full NuGet package ID, so the project explicitly imports its `.props` and `.targets`; remove that compatibility import after a package version with convention-matching filenames is adopted.
+[`Datadog.Maui`](https://docs.datadoghq.com/real_user_monitoring/application_monitoring/maui/error_tracking/) uploads the Android `mapping.txt` and iOS dSYM when the release workflow sets `DatadogUploadSymbols=true`.
 
-```bash
-export DATADOG_API_KEY="$(security find-generic-password -w -s datadog-api-key)"
-dotnet publish src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-android -c Release -p:DatadogSymbolUploadEnabled=true
-dotnet publish src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-ios -c Release -p:RuntimeIdentifier=ios-arm64 -p:ArchiveOnBuild=true -p:DatadogSymbolUploadEnabled=true
-unset DATADOG_API_KEY
-```
+### GitHub Actions secrets
 
-Do not paste a real key into shell history; the example uses macOS Keychain to make the boundary explicit. The manual GitHub Actions workflow uses repository secrets instead.
+- `DD_API_KEY`: Datadog API key.
+- `DD_APP_KEY`: Datadog application key.
+- `MAUI_IOS_SIGNING_CERTIFICATE_BASE64`: Base64-encoded Development or Ad Hoc `.p12`.
+- `MAUI_IOS_SIGNING_CERTIFICATE_PASSWORD`: `.p12` password.
+- `MAUI_IOS_PROVISIONING_PROFILE_BASE64`: Base64-encoded Development or Ad Hoc provisioning profile.
 
-Mobile App Testing applications must first be created manually in Datadog. Their platform-specific Mobile Application IDs differ from the RUM application ID. Once created, a signed development/ad-hoc IPA or signed APK can be synchronized with `datadog-ci synthetics upload-application`; unsigned packages and `.xcarchive` bundles are not accepted.
+Android uses a temporary test keystore generated by the workflow. No Android signing secrets are required.
 
-## Data and media boundaries
+The iOS signing secrets are required only for `upload-symbols` and `build-and-sync`. A `build-only` run produces an unsigned simulator `.app`; Datadog Mobile App Testing requires a signed Development or Ad Hoc IPA.
 
-The backend accepts JPEG, PNG, WebP, WAV, MP3, OGG, and WebM up to 10 MB. The current AI pipelines consume the first image and first audio attachment, so the client enforces one of each per turn. Arbitrary documents are not offered because the backend does not accept document MIME types. Recorded files use the OS cache and are not telemetry attributes.
+### GitHub Actions variables
 
-The 100% RUM, trace, and replay sampling rates make demonstrations deterministic. Revisit those rates before adopting the pattern in production.
+- `DATADOG_SYNTHETICS_MAUI_ANDROID_APPLICATION_ID`: Android Mobile App Testing application ID.
+- `DATADOG_SYNTHETICS_MAUI_IOS_APPLICATION_ID`: iOS Mobile App Testing application ID.
+
+The Synthetics IDs identify the separately uploaded APK and IPA. They are not RUM IDs.
+
+Both platforms share this MAUI RUM configuration:
+
+- Application ID: `fe90f908-da00-4d7c-9b24-6af11cee68a4`
+- Client token: `pub884d0800477e2d252b992acb168fc7a5`
+
+Run [Build and sync .NET MAUI mobile applications](../../../.github/workflows/maui-release.yml) from GitHub Actions:
+
+- `build-only`: build an Android APK and iOS simulator app without signing secrets.
+- `upload-symbols`: build and upload symbols.
+- `build-and-sync`: build, upload symbols, and upload the APK/IPA to Mobile App Testing.
+
+## Demo safeguards
+
+- Image/audio uploads are limited to supported types and 10 MB.
+- Filenames, prompts, responses, tokens, and media are excluded from custom telemetry.
+- RUM, tracing, and Session Replay use 100% sampling for this demo.
+- Sensitive inputs are masked in Session Replay.
+- Layout and accessibility contracts are covered by static XAML tests.
 
 Public defaults can be overridden at build time without editing tracked files:
 
@@ -133,4 +137,10 @@ Public defaults can be overridden at build time without editing tracked files:
 dotnet build src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-android -p:InfraAdvisorApiBaseUrl=https://example.test/ -p:InfraAdvisorDatadogEnvironment=local -p:InfraAdvisorDatadogService=infra-advisor-mobile-maui-local
 ```
 
-The supported properties are `InfraAdvisorApiBaseUrl`, `InfraAdvisorDatadogEnvironment`, `InfraAdvisorDatadogService`, `InfraAdvisorDatadogClientToken`, and `InfraAdvisorDatadogRumApplicationId`. Only public client configuration belongs in these properties; never pass privileged keys or account credentials into the application build.
+Supported public build properties:
+
+- `InfraAdvisorApiBaseUrl`
+- `InfraAdvisorDatadogEnvironment`
+- `InfraAdvisorDatadogService`
+- `InfraAdvisorDatadogClientToken`
+- `InfraAdvisorDatadogRumApplicationId`

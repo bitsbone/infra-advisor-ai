@@ -4,24 +4,24 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: MAUI target to build
+        description: Platform to build
         required: true
         default: both
         type: choice
         options: [both, android, ios]
       operation:
-        description: Build only or upload matching symbols and application to Datadog
+        description: Build only, upload symbols, or upload symbols and applications
         required: true
         default: build-only
         type: choice
-        options: [build-only, build-and-sync]
+        options: [build-only, upload-symbols, build-and-sync]
       version_name:
-        description: Semantic application version
+        description: Application version
         required: true
         default: 0.1.0
         type: string
       mark_latest:
-        description: Make the uploaded Mobile App Testing version latest
+        description: Mark Mobile App Testing uploads as latest
         required: true
         default: false
         type: boolean
@@ -29,19 +29,13 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: maui-release-${{ inputs.platform }}
-  cancel-in-progress: false
-
 env:
   DOTNET_VERSION: 10.0.x
   DATADOG_CI_VERSION: 5.21.2
-  DATADOG_SITE: us3.datadoghq.com
   PROJECT: mobile/cross-platform/maui/src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj
 
 jobs:
   android:
-    name: MAUI Android release
     if: ${{ inputs.platform == 'android' || inputs.platform == 'both' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -50,53 +44,35 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Install MAUI Android workload
-        run: dotnet workload install maui-android
-      - name: Validate signing and Datadog configuration
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.MAUI_ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.MAUI_ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.MAUI_ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.MAUI_ANDROID_KEY_PASSWORD }}
-          DD_API_KEY: ${{ secrets.DD_API_KEY }}
-          DD_APP_KEY: ${{ secrets.DD_APP_KEY }}
-          MOBILE_APPLICATION_ID: ${{ vars.DATADOG_SYNTHETICS_MAUI_ANDROID_APPLICATION_ID }}
-          SYNC: ${{ inputs.operation == 'build-and-sync' }}
-        run: |
-          set -euo pipefail
-          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do [[ -n "${!name:-}" ]] || { echo "Missing $name" >&2; exit 1; }; done
-          if [[ "$SYNC" == "true" ]]; then for name in DD_API_KEY DD_APP_KEY MOBILE_APPLICATION_ID; do [[ -n "${!name:-}" ]] || { echo "Missing $name" >&2; exit 1; }; done; fi
-      - name: Decode Android signing key
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.MAUI_ANDROID_KEYSTORE_BASE64 }}
-        run: printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/maui-android.keystore"
-      - name: Test shared contracts
+      - run: dotnet workload install maui-android
+      - uses: actions/setup-node@v6
+        if: ${{ inputs.operation != 'build-only' }}
+        with:
+          node-version: 22
+      - name: Install Datadog CLI
+        if: ${{ inputs.operation != 'build-only' }}
+        run: npm install --global "@datadog/datadog-ci@$DATADOG_CI_VERSION"
+      - name: Test
         run: dotnet test mobile/cross-platform/maui/tests/InfraAdvisor.Mobile.Core.Tests/InfraAdvisor.Mobile.Core.Tests.csproj
-      - name: Publish signed Android application and matching mapping
+      - name: Build signed test APK
         shell: bash
         env:
           DATADOG_API_KEY: ${{ secrets.DD_API_KEY }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.MAUI_ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.MAUI_ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.MAUI_ANDROID_KEY_PASSWORD }}
-          SYNC: ${{ inputs.operation == 'build-and-sync' }}
+          UPLOAD_SYMBOLS: ${{ inputs.operation != 'build-only' }}
         run: |
           set -euo pipefail
-          dotnet publish "$PROJECT" -f net10.0-android -c Release -p:ApplicationDisplayVersion="${{ inputs.version_name }}" -p:ApplicationVersion="$GITHUB_RUN_NUMBER" -p:AndroidPackageFormat=apk -p:AndroidKeyStore=true -p:AndroidSigningKeyStore="$RUNNER_TEMP/maui-android.keystore" -p:AndroidSigningStorePass=env:ANDROID_KEYSTORE_PASSWORD -p:AndroidSigningKeyAlias="$ANDROID_KEY_ALIAS" -p:AndroidSigningKeyPass=env:ANDROID_KEY_PASSWORD -p:DatadogSymbolUploadEnabled="$SYNC"
-          apk_path="$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-android -name '*-Signed.apk' -type f | head -1)"
-          mapping_path="$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile -name mapping.txt -type f | head -1)"
-          [[ -n "$apk_path" && -n "$mapping_path" ]] || { echo "Expected APK or R8 mapping was not generated." >&2; exit 1; }
+          [[ "$UPLOAD_SYMBOLS" != "true" || -n "${DATADOG_API_KEY:-}" ]] || { echo "Missing DD_API_KEY" >&2; exit 1; }
+          keystore="$RUNNER_TEMP/maui-test.keystore"; trap 'rm -f "$keystore"' EXIT
+          ANDROID_KEYSTORE_PASSWORD="$(openssl rand -hex 16)"; export ANDROID_KEYSTORE_PASSWORD
+          keytool -genkeypair -keystore "$keystore" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEYSTORE_PASSWORD" -alias maui-test -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Infra Advisor Test"
+          publish_log="$RUNNER_TEMP/maui-android-publish.log"; verbosity=(); [[ "$UPLOAD_SYMBOLS" == "true" ]] && verbosity=(-v n -tl:off)
+          dotnet publish "$PROJECT" -f net10.0-android -c Release -p:ApplicationDisplayVersion="${{ inputs.version_name }}" -p:ApplicationVersion="$GITHUB_RUN_NUMBER" -p:AndroidPackageFormat=apk -p:AndroidKeyStore=true -p:AndroidSigningKeyStore="$keystore" -p:AndroidSigningStorePass=env:ANDROID_KEYSTORE_PASSWORD -p:AndroidSigningKeyAlias=maui-test -p:AndroidSigningKeyPass=env:ANDROID_KEYSTORE_PASSWORD -p:DatadogUploadSymbols="$UPLOAD_SYMBOLS" "${verbosity[@]}" 2>&1 | tee "$publish_log"
+          [[ "$UPLOAD_SYMBOLS" != "true" ]] || grep -Fq "Datadog: Uploading Android mapping" "$publish_log" || { echo "Android symbol upload did not start." >&2; exit 1; }
+          apk_path="$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-android -name '*-Signed.apk' -type f -print -quit)"
+          [[ -n "$apk_path" ]] || { echo "APK was not generated." >&2; exit 1; }
           echo "APK_PATH=$apk_path" >> "$GITHUB_ENV"
-          echo "MAPPING_PATH=$mapping_path" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@v6
+      - name: Upload APK to Mobile App Testing
         if: ${{ inputs.operation == 'build-and-sync' }}
-        with:
-          node-version: 22
-      - name: Upload Android application to Mobile App Testing
-        if: ${{ inputs.operation == 'build-and-sync' }}
-        shell: bash
         env:
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
           DD_APP_KEY: ${{ secrets.DD_APP_KEY }}
@@ -104,22 +80,20 @@ jobs:
           MARK_LATEST: ${{ inputs.mark_latest }}
         run: |
           set -euo pipefail
+          : "${DD_APP_KEY:?Missing DD_APP_KEY}" "${MOBILE_APPLICATION_ID:?Missing DATADOG_SYNTHETICS_MAUI_ANDROID_APPLICATION_ID}"
           latest=(); [[ "$MARK_LATEST" == "true" ]] && latest+=(--latest)
-          npx --yes "@datadog/datadog-ci@$DATADOG_CI_VERSION" synthetics upload-application --mobileApplicationId "$MOBILE_APPLICATION_ID" --mobileApplicationVersionFilePath "$APK_PATH" --versionName "${{ inputs.version_name }} ($GITHUB_RUN_NUMBER)" "${latest[@]}"
+          datadog-ci synthetics upload-application --mobileApplicationId "$MOBILE_APPLICATION_ID" --mobileApplicationVersionFilePath "$APK_PATH" --versionName "${{ inputs.version_name }} ($GITHUB_RUN_NUMBER)" "${latest[@]}"
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: infra-advisor-maui-android-${{ inputs.version_name }}-${{ github.run_number }}
           retention-days: 14
-          if-no-files-found: error
+          if-no-files-found: warn
           path: |
-            ${{ env.APK_PATH }}
-            ${{ env.MAPPING_PATH }}
-      - name: Remove Android signing key
-        if: always()
-        run: rm -f "$RUNNER_TEMP/maui-android.keystore"
+            mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-android/**/*-Signed.apk
+            mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-android/**/mapping.txt
 
   ios:
-    name: MAUI iOS release
     if: ${{ inputs.platform == 'ios' || inputs.platform == 'both' }}
     runs-on: macos-26
     timeout-minutes: 75
@@ -128,56 +102,51 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Install MAUI iOS workload
-        run: dotnet workload install maui-ios
-      - name: Validate signing and Datadog configuration
+      - run: dotnet workload install maui-ios
+      - uses: actions/setup-node@v6
+        if: ${{ inputs.operation != 'build-only' }}
+        with:
+          node-version: 22
+      - name: Install Datadog CLI
+        if: ${{ inputs.operation != 'build-only' }}
+        run: npm install --global "@datadog/datadog-ci@$DATADOG_CI_VERSION"
+      - name: Test
+        run: dotnet test mobile/cross-platform/maui/tests/InfraAdvisor.Mobile.Core.Tests/InfraAdvisor.Mobile.Core.Tests.csproj
+      - name: Build iOS simulator app
+        if: ${{ inputs.operation == 'build-only' }}
+        run: dotnet build "$PROJECT" -f net10.0-ios -c Release -p:RuntimeIdentifier=iossimulator-arm64
+      - name: Install iOS test signing assets
+        if: ${{ inputs.operation != 'build-only' }}
         shell: bash
         env:
           IOS_CERTIFICATE_BASE64: ${{ secrets.MAUI_IOS_SIGNING_CERTIFICATE_BASE64 }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.MAUI_IOS_SIGNING_CERTIFICATE_PASSWORD }}
           IOS_PROFILE_BASE64: ${{ secrets.MAUI_IOS_PROVISIONING_PROFILE_BASE64 }}
-          DD_API_KEY: ${{ secrets.DD_API_KEY }}
-          DD_APP_KEY: ${{ secrets.DD_APP_KEY }}
-          MOBILE_APPLICATION_ID: ${{ vars.DATADOG_SYNTHETICS_MAUI_IOS_APPLICATION_ID }}
-          SYNC: ${{ inputs.operation == 'build-and-sync' }}
         run: |
           set -euo pipefail
-          for name in IOS_CERTIFICATE_BASE64 IOS_CERTIFICATE_PASSWORD IOS_PROFILE_BASE64; do [[ -n "${!name:-}" ]] || { echo "Missing $name" >&2; exit 1; }; done
-          if [[ "$SYNC" == "true" ]]; then for name in DD_API_KEY DD_APP_KEY MOBILE_APPLICATION_ID; do [[ -n "${!name:-}" ]] || { echo "Missing $name" >&2; exit 1; }; done; fi
-      - name: Install iOS development signing assets
-        shell: bash
-        env:
-          IOS_CERTIFICATE_BASE64: ${{ secrets.MAUI_IOS_SIGNING_CERTIFICATE_BASE64 }}
-          IOS_CERTIFICATE_PASSWORD: ${{ secrets.MAUI_IOS_SIGNING_CERTIFICATE_PASSWORD }}
-          IOS_PROFILE_BASE64: ${{ secrets.MAUI_IOS_PROVISIONING_PROFILE_BASE64 }}
-        run: |
-          set -euo pipefail
+          : "${IOS_CERTIFICATE_BASE64:?Missing MAUI_IOS_SIGNING_CERTIFICATE_BASE64}" "${IOS_CERTIFICATE_PASSWORD:?Missing MAUI_IOS_SIGNING_CERTIFICATE_PASSWORD}" "${IOS_PROFILE_BASE64:?Missing MAUI_IOS_PROVISIONING_PROFILE_BASE64}"
           cert="$RUNNER_TEMP/maui-ios.p12"; profile="$RUNNER_TEMP/maui-ios.mobileprovision"; keychain="$RUNNER_TEMP/maui-ios.keychain-db"; keychain_password="$(openssl rand -hex 24)"
           printf '%s' "$IOS_CERTIFICATE_BASE64" | base64 -D > "$cert"; printf '%s' "$IOS_PROFILE_BASE64" | base64 -D > "$profile"
           security create-keychain -p "$keychain_password" "$keychain"; security unlock-keychain -p "$keychain_password" "$keychain"; security import "$cert" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"; security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"; security list-keychains -d user -s "$keychain"
-          security cms -D -i "$profile" > "$RUNNER_TEMP/maui-ios-profile.plist"; profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/maui-ios-profile.plist")"; profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/maui-ios-profile.plist")"; mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"; cp "$profile" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
-          codesign_key="$(security find-identity -v -p codesigning "$keychain" | sed -n '1s/.*"\(.*\)".*/\1/p')"; [[ -n "$codesign_key" ]] || { echo "No signing identity imported." >&2; exit 1; }
+          security cms -D -i "$profile" > "$RUNNER_TEMP/maui-ios-profile.plist"; profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/maui-ios-profile.plist")"; profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/maui-ios-profile.plist")"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"; cp "$profile" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+          codesign_key="$(security find-identity -v -p codesigning "$keychain" | sed -n '1s/.*"\(.*\)".*/\1/p')"; [[ -n "$codesign_key" ]] || { echo "No signing identity found." >&2; exit 1; }
           echo "MAUI_IOS_PROFILE_NAME=$profile_name" >> "$GITHUB_ENV"; echo "MAUI_IOS_PROFILE_UUID=$profile_uuid" >> "$GITHUB_ENV"; echo "MAUI_IOS_CODESIGN_KEY=$codesign_key" >> "$GITHUB_ENV"; echo "MAUI_IOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
-      - name: Test shared contracts
-        run: dotnet test mobile/cross-platform/maui/tests/InfraAdvisor.Mobile.Core.Tests/InfraAdvisor.Mobile.Core.Tests.csproj
-      - name: Publish signed iOS IPA and matching dSYMs
+      - name: Build signed test IPA and upload symbols
+        if: ${{ inputs.operation != 'build-only' }}
         shell: bash
         env:
           DATADOG_API_KEY: ${{ secrets.DD_API_KEY }}
-          SYNC: ${{ inputs.operation == 'build-and-sync' }}
         run: |
           set -euo pipefail
-          dotnet publish "$PROJECT" -f net10.0-ios -c Release -p:RuntimeIdentifier=ios-arm64 -p:ArchiveOnBuild=true -p:BuildIpa=true -p:ApplicationDisplayVersion="${{ inputs.version_name }}" -p:ApplicationVersion="$GITHUB_RUN_NUMBER" -p:CodesignKey="$MAUI_IOS_CODESIGN_KEY" -p:CodesignProvision="$MAUI_IOS_PROFILE_NAME" -p:DatadogSymbolUploadEnabled="$SYNC"
-          ipa_path="$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-ios -name '*.ipa' -type f | head -1)"; dsym_path="$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-ios -name '*.dSYM' -type d | head -1)"
-          [[ -n "$ipa_path" && -n "$dsym_path" ]] || { echo "Expected IPA or dSYM was not generated." >&2; exit 1; }
-          echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"; echo "DSYM_PATH=$dsym_path" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@v6
+          : "${DATADOG_API_KEY:?Missing DD_API_KEY}"
+          publish_log="$RUNNER_TEMP/maui-ios-publish.log"
+          dotnet publish "$PROJECT" -f net10.0-ios -c Release -p:RuntimeIdentifier=ios-arm64 -p:ArchiveOnBuild=true -p:BuildIpa=true -p:ApplicationDisplayVersion="${{ inputs.version_name }}" -p:ApplicationVersion="$GITHUB_RUN_NUMBER" -p:CodesignKey="$MAUI_IOS_CODESIGN_KEY" -p:CodesignProvision="$MAUI_IOS_PROFILE_NAME" -p:DatadogUploadSymbols=true -v n -tl:off 2>&1 | tee "$publish_log"
+          grep -Fq "Datadog: Uploading iOS dSYM" "$publish_log" || { echo "iOS symbol upload did not start." >&2; exit 1; }
+          ipa_path="$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-ios -name '*.ipa' -type f -print -quit)"; [[ -n "$ipa_path" ]] || { echo "IPA was not generated." >&2; exit 1; }
+          echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
+      - name: Upload IPA to Mobile App Testing
         if: ${{ inputs.operation == 'build-and-sync' }}
-        with:
-          node-version: 22
-      - name: Upload iOS application to Mobile App Testing
-        if: ${{ inputs.operation == 'build-and-sync' }}
-        shell: bash
         env:
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
           DD_APP_KEY: ${{ secrets.DD_APP_KEY }}
@@ -185,19 +154,21 @@ jobs:
           MARK_LATEST: ${{ inputs.mark_latest }}
         run: |
           set -euo pipefail
+          : "${DD_APP_KEY:?Missing DD_APP_KEY}" "${MOBILE_APPLICATION_ID:?Missing DATADOG_SYNTHETICS_MAUI_IOS_APPLICATION_ID}"
           latest=(); [[ "$MARK_LATEST" == "true" ]] && latest+=(--latest)
-          npx --yes "@datadog/datadog-ci@$DATADOG_CI_VERSION" synthetics upload-application --mobileApplicationId "$MOBILE_APPLICATION_ID" --mobileApplicationVersionFilePath "$IPA_PATH" --versionName "${{ inputs.version_name }} ($GITHUB_RUN_NUMBER)" "${latest[@]}"
+          datadog-ci synthetics upload-application --mobileApplicationId "$MOBILE_APPLICATION_ID" --mobileApplicationVersionFilePath "$IPA_PATH" --versionName "${{ inputs.version_name }} ($GITHUB_RUN_NUMBER)" "${latest[@]}"
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: infra-advisor-maui-ios-${{ inputs.version_name }}-${{ github.run_number }}
           retention-days: 14
-          if-no-files-found: error
+          if-no-files-found: warn
           path: |
-            ${{ env.IPA_PATH }}
-            ${{ env.DSYM_PATH }}
+            mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-ios/**/*.app
+            mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-ios/**/*.ipa
+            mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-ios/**/*.dSYM
       - name: Remove iOS signing assets
         if: always()
-        shell: bash
         run: |
           rm -f "$RUNNER_TEMP/maui-ios.p12" "$RUNNER_TEMP/maui-ios.mobileprovision" "$RUNNER_TEMP/maui-ios-profile.plist"
           [[ -z "${MAUI_IOS_PROFILE_UUID:-}" ]] || rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$MAUI_IOS_PROFILE_UUID.mobileprovision"
