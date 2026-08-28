@@ -12,10 +12,10 @@ namespace InfraAdvisor.AgentApi.Services.Evaluators;
 //
 // Cost note: each evaluator that runs adds ONE judge model call. At the
 // default EVAL_SAMPLE_RATE=0.1 that's 10% of /query × N evaluators extra
-// inference calls. The judge model is the same gpt-4.1-mini we use for
+// inference calls. The judge model is the same gpt-5.4-mini used by default for
 // the agent (configured via IChatClient DI) — M.E.AI's prompts are
 // "designed to be model-agnostic" but tuned best for GPT-4o-class models,
-// so scores from gpt-4.1-mini are still useful as a trend signal but
+// so scores from the configured model are still useful as a trend signal but
 // shouldn't be used for absolute thresholds.
 //
 // Shape note: M.E.AI Quality evaluators return EvaluationResult containing

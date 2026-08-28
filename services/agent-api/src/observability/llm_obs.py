@@ -12,6 +12,7 @@ Instrumentation strategy
 import asyncio
 import logging
 import os
+import random
 import time
 from typing import Any
 
@@ -228,8 +229,17 @@ def schedule_faithfulness_score(
     answer: str,
     query_domain: str = "general",
 ) -> None:
-    """Fire-and-forget wrapper for faithfulness scoring."""
+    """Sample and schedule non-blocking faithfulness scoring.
+
+    The judge uses the same Azure OpenAI capacity as interactive traffic, so
+    evaluating every answer can amplify a quota incident. Sampling preserves
+    the demo signal while keeping user requests ahead of background analysis.
+    """
     try:
+        sample_rate = max(0.0, min(float(os.environ.get("EVAL_SAMPLE_RATE", "0.1")), 1.0))
+        if random.random() >= sample_rate:
+            logger.debug("faithfulness scoring skipped by sample rate")
+            return
         loop = asyncio.get_event_loop()
         loop.create_task(
             _compute_faithfulness(query, context_chunks, answer, query_domain)

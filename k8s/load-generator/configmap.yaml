@@ -16,4 +16,7 @@ data:
   DD_DATA_STREAMS_ENABLED: "true"
   KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
   AGENT_API_URL: "http://agent-api.infra-advisor.svc.cluster.local:8001"
+  # Keep synthetic DSM traffic useful without competing with interactive chat.
+  QUERIES_PER_RUN_MIN: "2"
+  QUERIES_PER_RUN_MAX: "4"
   LOG_LEVEL: "INFO"

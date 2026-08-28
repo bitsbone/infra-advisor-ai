@@ -130,7 +130,7 @@ def history_to_langchain_messages(history: list[dict[str, Any]]) -> list[Any]:
 
 
 _MODEL_SUFFIX = "model"
-_DEFAULT_MODEL = "gpt-4.1-mini"
+_DEFAULT_MODEL = "gpt-5.4-mini"
 
 
 def get_session_model(session_id: str) -> str:

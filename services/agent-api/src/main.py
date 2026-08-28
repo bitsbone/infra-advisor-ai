@@ -15,6 +15,7 @@ from typing import Any, Literal
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage
+from openai import RateLimitError
 from pydantic import BaseModel, Field
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -103,11 +104,11 @@ async def lifespan(app: FastAPI):
         _llm_connected = False
 
     # Parse available model list from env
-    raw_models = os.environ.get("AVAILABLE_MODELS", "gpt-4.1-mini")
+    raw_models = os.environ.get("AVAILABLE_MODELS", "gpt-5.4-mini")
     _AVAILABLE_MODELS.extend(m.strip()
                              for m in raw_models.split(",") if m.strip())
     if not _AVAILABLE_MODELS:
-        _AVAILABLE_MODELS.append("gpt-4.1-mini")
+        _AVAILABLE_MODELS.append("gpt-5.4-mini")
 
     # Start Kafka consumer background thread (non-fatal if Kafka unavailable)
     if _mcp_client:
@@ -476,7 +477,7 @@ def _parse_suggestions(text: str) -> list[SuggestionItem]:
 @app.get("/models")
 async def list_models() -> dict:
     """Return the list of available Azure OpenAI deployment names."""
-    return {"models": _AVAILABLE_MODELS, "default": _AVAILABLE_MODELS[0] if _AVAILABLE_MODELS else "gpt-4.1-mini"}
+    return {"models": _AVAILABLE_MODELS, "default": _AVAILABLE_MODELS[0] if _AVAILABLE_MODELS else "gpt-5.4-mini"}
 
 
 @app.post("/media/upload", response_model=Attachment)
@@ -557,6 +558,16 @@ async def query(
     except Exception as exc:
         trace_id = current_trace_id()
         logger.error("Query failed error_type=%s", type(exc).__name__)
+        if isinstance(exc, RateLimitError):
+            return JSONResponse(
+                status_code=503,
+                headers={"Retry-After": "5"},
+                content={
+                    "detail": "The AI service is temporarily busy. Please retry in a moment.",
+                    "error_type": "rate_limited",
+                    "trace_id": trace_id,
+                },
+            )
         return JSONResponse(
             status_code=500,
             content={

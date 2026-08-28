@@ -76,7 +76,7 @@ public final class ApiClient {
                             if (!value.isEmpty()) models.add(value);
                         }
                     }
-                    if (models.isEmpty()) models.add("gpt-4.1-mini");
+                    if (models.isEmpty()) models.add("gpt-5.4-mini");
                     result.success(new ModelOptions(models, json.optString("default", models.get(0))));
                 }, result::failure);
     }

@@ -29,12 +29,12 @@ public class MemoryService
         {
             var db = _redis.GetDatabase();
             var val = await db.StringGetAsync($"{SessionPrefix}:{sessionId}:model");
-            return val.IsNullOrEmpty ? "gpt-4.1-mini" : val.ToString();
+            return val.IsNullOrEmpty ? "gpt-5.4-mini" : val.ToString();
         }
         catch (Exception ex)
         {
             _logger.LogWarning("get_session_model failed error_type={ErrorType}", ex.GetType().Name);
-            return "gpt-4.1-mini";
+            return "gpt-5.4-mini";
         }
     }
 

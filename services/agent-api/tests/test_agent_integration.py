@@ -22,8 +22,10 @@ import os
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from openai import RateLimitError
 
 # ---------------------------------------------------------------------------
 # Env setup
@@ -334,10 +336,31 @@ def test_query_internal_error_has_stable_public_shape(client):
     assert sentinel not in resp.text
 
 
+def test_query_rate_limit_is_retryable_without_provider_details(client):
+    response = httpx.Response(
+        429,
+        request=httpx.Request("POST", "https://mock.openai.azure.com/chat"),
+    )
+    error = RateLimitError("sensitive provider quota detail", response=response, body=None)
+    with patch("main.run_agent", new=AsyncMock(side_effect=error)):
+        resp = client.post("/query", json={"query": "Trigger provider capacity."})
+
+    assert resp.status_code == 503
+    assert resp.headers["retry-after"] == "5"
+    assert resp.json()["error_type"] == "rate_limited"
+    assert "sensitive provider quota detail" not in resp.text
+
+
 def test_query_answer_is_non_empty(client):
     resp = client.post("/query", json={"query": "What are the top bridges in Texas?"})
     assert resp.status_code == 200
     assert resp.json()["answer"] != ""
+
+
+def test_models_default_to_gpt_5_4_mini(client):
+    resp = client.get("/models")
+    assert resp.status_code == 200
+    assert resp.json()["default"] == "gpt-5.4-mini"
 
 
 # ---------------------------------------------------------------------------

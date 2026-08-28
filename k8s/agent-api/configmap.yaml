@@ -42,10 +42,14 @@ data:
   # both satisfied). Patches BaseTool.invoke/ainvoke + chat model calls with no
   # code changes. DD_APP_KEY (required by the integration) lives in agent-api-secret.
   DD_AI_GUARD_ENABLED: "true"
-  AZURE_OPENAI_DEPLOYMENT: "gpt-4.1-mini"
+  AZURE_OPENAI_DEPLOYMENT: "gpt-5.4-mini"
+  # Honor Azure Retry-After responses before surfacing a retryable chat error.
+  AZURE_OPENAI_MAX_RETRIES: "5"
   AZURE_OPENAI_EVAL_DEPLOYMENT: "gpt-4.1-mini"
+  # The evaluator shares model capacity with chat; sample it to protect users.
+  EVAL_SAMPLE_RATE: "0.1"
   AZURE_OPENAI_WHISPER_DEPLOYMENT: "whisper"
-  AVAILABLE_MODELS: "gpt-4.1-mini,gpt-4.1,gpt-5.4-mini"
+  AVAILABLE_MODELS: "gpt-5.4-mini,gpt-4.1-mini,gpt-4.1"
   # Chat attachment upload (POST /media/upload) — image/audio blobs land in this
   # container, addressed to callers via a read-only SAS URL minted at upload time.
   AZURE_STORAGE_MEDIA_CONTAINER: "chat-media"

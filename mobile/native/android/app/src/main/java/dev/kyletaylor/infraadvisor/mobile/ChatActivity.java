@@ -179,9 +179,9 @@ public final class ChatActivity extends AppCompatActivity {
                 model.setEnabled(true);
             }
             @Override public void failure(Exception failure) {
-                model.setAdapter(adapter(Collections.singletonList("gpt-4.1-mini")));
+                model.setAdapter(adapter(Collections.singletonList("gpt-5.4-mini")));
                 model.setEnabled(true);
-                error.setText("Could not load models; using gpt-4.1-mini. " + readable(failure));
+                error.setText("Could not load models; using gpt-5.4-mini. " + readable(failure));
             }
         });
     }

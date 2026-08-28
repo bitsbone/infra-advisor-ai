@@ -46,6 +46,8 @@ Specialists cover transportation, water/energy, business development, document w
 
 Use the running FastAPI OpenAPI schema for exact bodies and responses. Streaming emits typed events for workflow steps, tool start/end, artifacts, text chunks, completion metadata, and safe errors.
 
+New conversations default to `gpt-5.4-mini`. `AVAILABLE_MODELS` controls the ordered selector options, and an explicitly saved model remains attached to its conversation.
+
 ## State and tenancy
 
 JWT `sub` is the user identity. Conversation ownership is checked before memory restoration or model work. Redis keys derive from user plus conversation/session input; PostgreSQL queries repeat ownership predicates around durable writes. Missing and foreign conversations intentionally share a not-found response.
@@ -62,7 +64,9 @@ Recognized procurement MCP results become versioned chat artifacts. They travel 
 
 `ddtrace.auto` loads before framework imports. Automatic integrations cover supported web, data, Kafka, model, and MCP calls; explicit `LLMObs` spans express workflow, router, specialist, retrieval, media, and evaluation meaning.
 
-The background faithfulness task annotates its own task span and emits `eval.faithfulness_score`. It does not use the .NET external-evaluator dispatcher. User feedback does use `LLMObs.submit_evaluation()` against a known span.
+The background faithfulness task is sampled with `EVAL_SAMPLE_RATE`, annotates its own task span, and emits `eval.faithfulness_score`. Sampling keeps the judge from competing with interactive chat for all shared Azure OpenAI capacity. It does not use the .NET external-evaluator dispatcher. User feedback uses the Datadog Evaluations API against a known span.
+
+Azure OpenAI 429 responses are retried by the provider client according to `AZURE_OPENAI_MAX_RETRIES`, including the provider's `Retry-After` guidance. If capacity remains unavailable, streaming returns a safe `rate_limited` event and non-streaming requests return HTTP 503 with `Retry-After: 5`, so clients can offer an explicit retry instead of presenting an unknown application failure.
 
 Custom telemetry uses bounded metadata. Provider-adapter capture, media URLs/content, prompts, responses, session IDs, and credentials follow the privacy rules documented in [Agent Observability](/infra-advisor-ai/llm-engineering/).
 

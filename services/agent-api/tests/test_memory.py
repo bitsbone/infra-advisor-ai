@@ -27,6 +27,7 @@ from memory import (  # noqa: E402
     append_exchange,
     append_exchange_with_attachments,
     clear_session,
+    get_session_model,
     history_to_langchain_messages,
     load_history,
     save_history,
@@ -57,6 +58,13 @@ def test_load_history_empty_when_key_missing():
     with patch("memory._redis_client", return_value=mock_redis):
         result = load_history("session-abc")
     assert result == []
+
+
+def test_session_model_defaults_to_gpt_5_4_mini():
+    mock_redis = _make_redis_mock(stored_value=None)
+    with patch("memory._redis_client", return_value=mock_redis):
+        result = get_session_model("new-session")
+    assert result == "gpt-5.4-mini"
 
 
 def test_load_history_returns_parsed_messages():

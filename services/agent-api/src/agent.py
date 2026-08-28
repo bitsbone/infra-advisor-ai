@@ -12,6 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import AzureChatOpenAI
 from langgraph.prebuilt import create_react_agent
+from openai import RateLimitError
 from pydantic import BaseModel
 
 from artifacts import extract_chat_artifact, extract_chat_artifact_source_urls
@@ -21,6 +22,30 @@ from observability.ai_guard import check_query
 from observability.llm_obs import schedule_faithfulness_score, tag_agent_run
 
 logger = logging.getLogger(__name__)
+
+
+def _bounded_retry_count(raw_value: str) -> int:
+    """Parse retry configuration without making a bad env value fatal."""
+    try:
+        return max(0, min(int(raw_value), 10))
+    except ValueError:
+        logger.warning("Invalid AZURE_OPENAI_MAX_RETRIES; using default")
+        return 5
+
+
+def _stream_error_event(exc: Exception) -> dict[str, str]:
+    """Map internal failures to stable, non-sensitive SSE errors."""
+    if isinstance(exc, RateLimitError):
+        return {
+            "event": "error",
+            "message": "The AI service is temporarily busy. Please retry in a moment.",
+            "category": "rate_limited",
+        }
+    return {
+        "event": "error",
+        "message": "The agent encountered an unexpected error. Please retry your question.",
+        "category": "unknown",
+    }
 
 # ─── Routing model ─────────────────────────────────────────────────────────────
 
@@ -233,7 +258,11 @@ def build_mcp_client() -> MultiServerMCPClient:
 
 
 def build_llm(deployment: str | None = None) -> AzureChatOpenAI:
-    dep = deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
+    dep = deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5.4-mini")
+    # Azure returns Retry-After metadata with 429 responses. Let the OpenAI
+    # client honor it before failing an interactive request; keep the value
+    # configurable so deployments can tune resilience without a code change.
+    max_retries = _bounded_retry_count(os.environ.get("AZURE_OPENAI_MAX_RETRIES", "5"))
     return AzureChatOpenAI(
         azure_deployment=dep,
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
@@ -242,6 +271,7 @@ def build_llm(deployment: str | None = None) -> AzureChatOpenAI:
         api_version="2025-01-01-preview",
         temperature=0,
         streaming=True,
+        max_retries=max_retries,
     )
 
 
@@ -948,8 +978,4 @@ async def run_agent_stream(
 
     except Exception as exc:
         logger.warning("run_agent_stream failed error_type=%s", type(exc).__name__)
-        yield {
-            "event": "error",
-            "message": "The agent encountered an unexpected error. Please retry your question.",
-            "category": "unknown",
-        }
+        yield _stream_error_event(exc)

@@ -55,9 +55,9 @@ static string? GetDdSpanId(Activity? activity)
 // ── Configuration ─────────────────────────────────────────────────────────────
 var azureEndpoint = Env("AZURE_OPENAI_ENDPOINT");
 var azureApiKey   = Env("AZURE_OPENAI_API_KEY");
-var azureDeployment = EnvOr("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini");
+var azureDeployment = EnvOr("AZURE_OPENAI_DEPLOYMENT", "gpt-5.4-mini");
 var azureEmbeddingDeployment = EnvOr("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small");
-var availableModelsRaw = EnvOr("AVAILABLE_MODELS", "gpt-4.1-mini");
+var availableModelsRaw = EnvOr("AVAILABLE_MODELS", "gpt-5.4-mini");
 var mcpServerUrl = EnvOr("MCP_SERVER_URL", "http://mcp-server-dotnet.infra-advisor.svc.cluster.local:8000/mcp");
 var redisHost = EnvOr("REDIS_HOST", "redis.infra-advisor.svc.cluster.local");
 var redisPort = int.Parse(EnvOr("REDIS_PORT", "6379"));
@@ -350,7 +350,7 @@ builder.Services.AddSingleton<IResponseEvaluator, CitationPresentEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, BdToolOrderingEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, ToolRoutingAccuracyEvaluator>();
 // LLM-as-judge — wrappers around Microsoft.Extensions.AI.Evaluation.Quality.
-// Uses the same IChatClient as the agent (gpt-4.1-mini) for the judge call;
+// Uses the same IChatClient as the agent (gpt-5.4-mini by default) for the judge call;
 // per-eval cost is one extra inference call on each sampled trace.
 builder.Services.AddSingleton<IResponseEvaluator, MeaiRelevanceEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, MeaiGroundednessEvaluator>();
@@ -454,7 +454,7 @@ catch (Exception ex) { startupLogger.LogWarning("Conversation DB init failed err
 var availableModels = availableModelsRaw
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .ToList();
-if (availableModels.Count == 0) availableModels.Add("gpt-4.1-mini");
+if (availableModels.Count == 0) availableModels.Add("gpt-5.4-mini");
 appState.AvailableModels.AddRange(availableModels);
 
 // MCP connects lazily on the first /query (via McpClientHolder). We mark
@@ -947,7 +947,7 @@ app.MapGet("/eval/status", (
         },
         judge = new
         {
-            deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4.1-mini",
+            deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-5.4-mini",
             note = "M.E.AI Quality evaluator prompts tuned best for GPT-4o-class models. " +
                    "Scores from this deployment are useful as trend signal; " +
                    "absolute thresholds need recalibration.",

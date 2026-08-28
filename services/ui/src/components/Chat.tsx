@@ -648,7 +648,7 @@ export function Chat() {
   const [showStillWorking, setShowStillWorking] = useState(false);
   const lastEventAtRef = useRef<number>(Date.now());
   const [recommendations, setRecommendations] = useState<Suggestion[]>([]);
-  const [availableModels, setAvailableModels] = useState<string[]>(["gpt-4.1-mini"]);
+  const [availableModels, setAvailableModels] = useState<string[]>(["gpt-5.4-mini"]);
   const [selectedModel, setSelectedModel] = useState<string>(getModel());
   const [selectedBackend, setSelectedBackend] = useState<BackendType>(getBackend());
   const [conversationId, setConversationId] = useState<string | null>(null);

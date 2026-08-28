@@ -39,6 +39,8 @@ The service implements query, streaming, media, models, tools, suggestions, feed
 
 Use the running endpoint metadata and shared client models for exact fields. Both query modes transport the same additive artifact and attachment contracts.
 
+New conversations default to `gpt-5.4-mini`. `AVAILABLE_MODELS` controls the ordered selector options, and an explicitly saved model remains attached to its conversation.
+
 ## Stateful boundaries
 
 `ConversationService` verifies JWT ownership before a conversation influences agent state, then repeats the owner predicate during writes. Redis uses an opaque tenant/session hash for Microsoft agent sessions and selected model state.

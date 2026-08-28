@@ -225,7 +225,7 @@ public class SuggestionService
         _azure = azure;
         _deployment = configuration["AZURE_OPENAI_DEPLOYMENT"]
             ?? Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT")
-            ?? "gpt-4.1-mini";
+            ?? "gpt-5.4-mini";
         _logger = logger;
     }
 

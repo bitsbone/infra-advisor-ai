@@ -9,7 +9,7 @@ metadata:
     tags.datadoghq.com/service: infra-advisor-load-generator
     tags.datadoghq.com/version: latest
 spec:
-  schedule: "*/5 * * * *"
+  schedule: "*/15 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

@@ -35,8 +35,8 @@ _CORPUS_WEIGHTS = {
     "adversarial": 0.10,
 }
 
-QUERIES_PER_RUN_MIN = 10
-QUERIES_PER_RUN_MAX = 20
+QUERIES_PER_RUN_MIN = int(os.environ.get("QUERIES_PER_RUN_MIN", "2"))
+QUERIES_PER_RUN_MAX = int(os.environ.get("QUERIES_PER_RUN_MAX", "4"))
 
 
 # ─── Kafka producer ────────────────────────────────────────────────────────────
@@ -110,7 +110,9 @@ def _answer_hash(query: str) -> str:
 # ─── Main execution ────────────────────────────────────────────────────────────
 
 def run() -> None:
-    query_count = random.randint(QUERIES_PER_RUN_MIN, QUERIES_PER_RUN_MAX)
+    query_min = max(1, QUERIES_PER_RUN_MIN)
+    query_max = max(query_min, QUERIES_PER_RUN_MAX)
+    query_count = random.randint(query_min, query_max)
     logger.info("Load generator run starting — firing %d queries", query_count)
 
     producer = _build_producer()

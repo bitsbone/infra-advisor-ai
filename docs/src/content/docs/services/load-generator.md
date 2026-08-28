@@ -36,7 +36,7 @@ Synthetic query content is intentionally sent through Kafka and the agent. Treat
 
 ## Operational behavior
 
-The CronJob forbids overlapping runs. `ddtrace.auto` instruments Kafka production and the run adds a `load_generator.run` span with the query count. The consumer uses a system tenant prefix so synthetic state cannot collide with authenticated users.
+The CronJob runs every 15 minutes and forbids overlapping runs. Each run samples between `QUERIES_PER_RUN_MIN` and `QUERIES_PER_RUN_MAX`, configured as two to four queries by default so synthetic model calls do not crowd out interactive chat. `ddtrace.auto` instruments Kafka production and the run adds a `load_generator.run` span with the query count. The consumer uses a system tenant prefix so synthetic state cannot collide with authenticated users.
 
 To trigger a controlled run:
 

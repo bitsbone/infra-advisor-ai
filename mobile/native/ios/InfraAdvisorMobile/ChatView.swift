@@ -19,10 +19,10 @@ final class ChatViewModel: ObservableObject {
     @Published var prompt = ""
     @Published private(set) var conversations: [ConversationSummary] = []
     @Published private(set) var messages: [ConversationMessage] = []
-    @Published private(set) var availableModels = ["gpt-4.1-mini"]
+    @Published private(set) var availableModels = ["gpt-5.4-mini"]
     @Published var selectedConversationID: String?
     @Published var selectedBackend: Backend = .python
-    @Published var selectedModel = "gpt-4.1-mini"
+    @Published var selectedModel = "gpt-5.4-mini"
     @Published private(set) var lastResponse: QueryResponse?
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
@@ -106,12 +106,12 @@ final class ChatViewModel: ObservableObject {
     private func loadModels() async {
         do {
             let response = try await api.models(backend: selectedBackend)
-            availableModels = response.models.isEmpty ? ["gpt-4.1-mini"] : response.models
+            availableModels = response.models.isEmpty ? ["gpt-5.4-mini"] : response.models
             if !availableModels.contains(selectedModel) { selectedModel = response.defaultModel }
         } catch {
-            availableModels = ["gpt-4.1-mini"]
+            availableModels = ["gpt-5.4-mini"]
             selectedModel = availableModels[0]
-            errorMessage = "Could not load models; using gpt-4.1-mini. \(error.localizedDescription)"
+            errorMessage = "Could not load models; using gpt-5.4-mini. \(error.localizedDescription)"
         }
     }
 

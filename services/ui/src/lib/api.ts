@@ -110,7 +110,7 @@ export interface BridgeData {
 const MODEL_STORAGE_KEY = "infra_advisor_model";
 
 export function getModel(): string {
-  return localStorage.getItem(MODEL_STORAGE_KEY) || "gpt-4.1-mini";
+  return localStorage.getItem(MODEL_STORAGE_KEY) || "gpt-5.4-mini";
 }
 
 export function setModel(model: string): void {
@@ -424,11 +424,11 @@ export async function fetchInitialSuggestions(): Promise<SuggestionItem[]> {
 export async function fetchModels(): Promise<ModelsResponse> {
   try {
     const response = await fetch(`${getApiBase()}/models`);
-    if (!response.ok) return { models: ["gpt-4.1-mini"], default: "gpt-4.1-mini" };
+    if (!response.ok) return { models: ["gpt-5.4-mini"], default: "gpt-5.4-mini" };
     return await response.json();
   } catch (err) {
     console.error("[api] fetchModels failed:", err);
-    return { models: ["gpt-4.1-mini"], default: "gpt-4.1-mini" };
+    return { models: ["gpt-5.4-mini"], default: "gpt-5.4-mini" };
   }
 }
 
