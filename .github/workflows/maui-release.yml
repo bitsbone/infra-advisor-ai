@@ -64,9 +64,10 @@ jobs:
         env:
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
           DD_APP_KEY: ${{ secrets.DD_APP_KEY }}
-          MOBILE_APPLICATION_ID: ${{ vars.DATADOG_SYNTHETICS_MAUI_ANDROID_APPLICATION_ID }}
+          MOBILE_APPLICATION_ID: ${{ secrets.DATADOG_SYNTHETICS_MAUI_ANDROID_APPLICATION_ID }}
         run: datadog-ci synthetics upload-application --mobileApplicationId "$MOBILE_APPLICATION_ID" --mobileApplicationVersionFilePath "$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-android -name '*-Signed.apk' -print -quit)" --versionName "${{ inputs.version_name }} (${{ github.run_number }})" ${{ inputs.mark_latest && '--latest' || '' }}
       - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
         with:
           name: infra-advisor-maui-android-${{ inputs.version_name }}-${{ github.run_number }}
           retention-days: 14
@@ -119,9 +120,10 @@ jobs:
         env:
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
           DD_APP_KEY: ${{ secrets.DD_APP_KEY }}
-          MOBILE_APPLICATION_ID: ${{ vars.DATADOG_SYNTHETICS_MAUI_IOS_APPLICATION_ID }}
+          MOBILE_APPLICATION_ID: ${{ secrets.DATADOG_SYNTHETICS_MAUI_IOS_APPLICATION_ID }}
         run: datadog-ci synthetics upload-application --mobileApplicationId "$MOBILE_APPLICATION_ID" --mobileApplicationVersionFilePath "$(find mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/Release/net10.0-ios -name '*.ipa' -print -quit)" --versionName "${{ inputs.version_name }} (${{ github.run_number }})" ${{ inputs.mark_latest && '--latest' || '' }}
       - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
         with:
           name: infra-advisor-maui-ios-${{ inputs.version_name }}-${{ github.run_number }}
           retention-days: 14

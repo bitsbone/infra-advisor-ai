@@ -24,3 +24,4 @@
 - Treat synthetic agent runs and asynchronous LLM judges as consumers of the same provider quota as interactive chat: make their volume configurable, sample optional evaluations, honor provider retry guidance, and return a distinct retryable error category when capacity is exhausted.
 - A model-default change must update both backend configuration order and every client-side offline fallback; otherwise fresh sessions and degraded metadata requests silently select different models.
 - A deployment workflow must include Kubernetes-only paths in service change detection and apply non-Deployment workloads such as CronJobs; successfully publishing an image does not prove its ConfigMap or schedule reached the cluster.
+- GitHub Actions repository variables and secrets are separate contexts even when their names match; document the chosen storage class, reference that exact context in workflows, and retain build artifacts with `always()` when a downstream upload can fail.
