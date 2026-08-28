@@ -13,19 +13,14 @@ sidebar:
 
 import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 import ObservationChecklist from '@components/ObservationChecklist.astro';
+import FlowExplorer from '@components/FlowExplorer.jsx';
+import { mcpBoundaryFlows } from '../../../../data/learning-flows.js';
 
 An agent trace is incomplete if it ends at “call tool.” The useful debugging path continues through the MCP client, the server handling the tool, and the downstream provider request.
 
 ## The trace you are trying to preserve
 
-```text
-agent decision
-└── execute tool                 Agent Observability: tool
-    └── MCP client request       protocol operation
-        └── POST /mcp            APM: agent API → MCP server
-            └── tools/call       server-side MCP operation
-                └── provider     HTTP, database, or search work
-```
+<FlowExplorer client:visible title="Cross the MCP boundary without losing causality" flows={mcpBoundaryFlows} />
 
 W3C `traceparent` is the continuity mechanism. Both services must instrument the MCP library, and the transport must propagate the active context.
 

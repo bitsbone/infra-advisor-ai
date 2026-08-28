@@ -13,20 +13,14 @@ sidebar:
 
 import { Aside } from '@astrojs/starlight/components';
 import ObservationChecklist from '@components/ObservationChecklist.astro';
+import FlowExplorer from '@components/FlowExplorer.jsx';
+import { multimodalFlows } from '../../../data/learning-flows.js';
 
 InfraAdvisor accepts image and audio attachments without placing media bytes in the query JSON or conversation history. Azure OpenAI processes the media; Datadog retains operational metadata rather than filenames, signed URLs, transcripts, descriptions, or bytes.
 
 ## The cascade
 
-```text
-authenticated upload → private Blob container → read-only attachment reference
-                                                  │
-query + reference ──validate───────────────────────┤
-                                                  ├─ audio → Whisper → effective text query
-                                                  └─ image → vision-capable model input
-                                                               │
-                                                     normal agent workflow
-```
+<FlowExplorer client:visible title="Trace the attachment without exposing it" flows={multimodalFlows} />
 
 Audio becomes text before routing, retrieval, and tool selection. An image is supplied to the model path for the current turn. Stored conversation history does not re-download or reprocess earlier attachments.
 

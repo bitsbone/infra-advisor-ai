@@ -11,23 +11,12 @@ sidebar:
   order: 1
 ---
 
+import FlowExplorer from '@components/FlowExplorer.jsx';
+import { requestServingFlows } from '../../../data/platform-flows.js';
+
 ## Request-serving path
 
-```text
-Web / mobile client
-        │
-        ├── auth ───────────────▶ Auth API ─────▶ PostgreSQL
-        │
-        ├── Python query ───────▶ Agent API ────▶ Python MCP server
-        │                            │                  │
-        │                            ├─ Redis           └─ external data APIs
-        │                            └─ PostgreSQL
-        │
-        └── .NET query ─────────▶ .NET Agent API ─▶ .NET MCP server
-                                     │                   │
-                                     ├─ Redis            └─ external data APIs
-                                     └─ PostgreSQL
-```
+<FlowExplorer client:visible title="Map the request-serving system" flows={requestServingFlows} />
 
 The UI reverse proxy routes `/api/*` to Python, `/api-dotnet/*` to .NET, and `/auth/*` to the authentication service. Both agent paths share user-visible contracts while preserving different internal framework and telemetry choices.
 

@@ -316,3 +316,23 @@ The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM be
 - Reduced the documentation prose from approximately 56,600 to 32,300 words while retaining the comparative instrumentation lab and other longer pages whose depth supports a genuine learning or reference purpose.
 - The final Astro build produced 66 pages; the internal-link checker found zero broken links and the content audit reported zero errors or warnings across 65 source pages. A headless-browser crawl rendered all 65 routes at 320px and 390px with no page-level horizontal overflow after stacking document actions, pagination, and homepage actions at narrow widths. Repository whitespace validation also passed.
 - Removed the learner-facing feature-status badges and homepage maturity legend after usability review showed that "verified" and dated status labels read as arbitrary guarantees to newcomers. Implementation state and limitations remain explicit in page prose.
+
+---
+
+# Interactive documentation learning layer
+
+## Plan
+
+- [x] Inventory text-only workflows and distinguish meaningful graphs from simple sequences.
+- [x] Build a reusable, read-only React Flow explorer with guided stage navigation, contextual evidence, keyboard access, responsive layout, reduced-motion behavior, and a text fallback.
+- [x] Replace the decorative observation callout with a persistent field exercise that provides native controls, visible progress, reset, and a completion reflection.
+- [x] Apply the explorer to architecture lifecycles, SDK-versus-OpenTelemetry responsibility, artifact transport, multimodal input, MCP tracing, and backend trace-shape comparison.
+- [x] Remove editor behaviors from the trace viewer and add a keyboard-selectable span inspector.
+- [x] Verify production checks, real browser interaction, narrow layouts, light/dark themes, keyboard navigation, and reduced motion.
+
+## Review
+
+- Replaced high-value text diagrams with one reusable React Flow learning surface across system architecture, request lifecycles, observability correlation, Airflow ingestion, SDK-versus-OpenTelemetry responsibility, artifacts, multimodal input, MCP tracing, and backend trace shapes. Each selected stage explains its responsibility, rationale, and evidence, with flow switching, guided navigation, zoom controls, and a text fallback.
+- Rebuilt `ObservationChecklist` as a page-scoped persistent field exercise with native check controls, visible progress, reset, and a completion reflection. Updated the trace viewer to be read-only and added selected-span inspection instead of editor behavior and mouse-only hover dependence.
+- Updated contributor instructions to require meaningful learner action when interactivity helps while explicitly preserving prose and ordered lists for simple sequences. Remaining text diagrams are candidates for topic-specific treatment, not an automatic React Flow migration.
+- The final site check built 66 pages, found zero broken internal links, and reported zero content errors or warnings. A Chrome audit completed 18 route/viewport checks at 320 px and 390 px with zero page overflow, successful tab changes, later-stage selection, field-exercise progress, reduced-motion behavior, light-theme rendering, and Enter-key activation of a focused graph stage.

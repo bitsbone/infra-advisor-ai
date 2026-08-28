@@ -21,6 +21,8 @@ import { Aside } from '@astrojs/starlight/components';
 import TraceViewer from '@components/TraceViewer.jsx';
 import ObservationChecklist from '@components/ObservationChecklist.astro';
 import traceData from '@data/trace-1169394720470872.json';
+import FlowExplorer from '@components/FlowExplorer.jsx';
+import { backendShapeFlows } from '../../../../data/learning-flows.js';
 
 A useful agent trace answers a causal question: how did this input become this answer? Read it from the request boundary inward rather than scanning every span equally.
 
@@ -53,16 +55,7 @@ Use APM, logs, database monitoring, RUM, and infrastructure metrics to explain w
 
 The frameworks emit different names, but the questions are the same:
 
-```text
-Python                              .NET
-query-processing                    HTTP request
-├── load-history                    ├── classify_domain
-├── router                          ├── retrieval / embeddings
-│   └── model                       └── invoke_agent
-└── specialist                         └── chat
-    ├── model                              └── execute_tool
-    └── MCP tool                               └── MCP server
-```
+<FlowExplorer client:visible title="Compare trace shape without forcing symmetry" flows={backendShapeFlows} />
 
 Do not force identical trees merely for visual symmetry. Require equivalent visibility into decisions and boundaries.
 

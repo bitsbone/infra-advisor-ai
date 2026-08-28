@@ -13,6 +13,8 @@ sidebar:
 
 import { Aside } from '@astrojs/starlight/components';
 import ObservationChecklist from '@components/ObservationChecklist.astro';
+import FlowExplorer from '@components/FlowExplorer.jsx';
+import { artifactFlows } from '../../../data/learning-flows.js';
 
 Assistant prose explains a result; it should not become the client's data contract. InfraAdvisor's chat artifacts carry normalized MCP evidence beside the answer so the MAUI client can render stable cards, preserve them with a conversation, and link to official sources.
 
@@ -20,18 +22,7 @@ The first contract, `procurement_opportunities` version `1.0`, combines SAM.gov 
 
 ## Follow the artifact boundary
 
-```text
-SAM.gov + Grants.gov
-        │
-        ▼
-MCP provider adapters → normalized artifact v1
-        │
-        ▼
-agent extraction → SSE artifact event → conversation JSONB
-        │
-        ▼
-MAUI version mapper → evidence cards
-```
+<FlowExplorer client:visible title="Follow one evidence artifact" flows={artifactFlows} />
 
 Each boundary accepts only the shared contract. Raw provider JSON never becomes an accidental mobile API.
 

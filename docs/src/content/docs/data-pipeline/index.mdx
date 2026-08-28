@@ -11,19 +11,14 @@ sidebar:
   order: 7
 ---
 
+import FlowExplorer from '@components/FlowExplorer.jsx';
+import { pipelineFlows } from '../../../data/platform-flows.js';
+
 Airflow refreshes public infrastructure data, preserves source snapshots in private Blob Storage, and builds documents for Azure AI Search. The search index is a serving layer; the staged source data and manifests make each run explainable and reproducible.
 
 ## Shared ingestion pattern
 
-```text
-provider API or reviewed file
-  → validate and normalize records
-  → write deterministic JSONL staging object
-  → XCom small versioned manifest
-  → verify checksum/count/source and read records
-  ├─ write Parquet snapshot
-  └─ create narratives → chunk → embed → upsert Search
-```
+<FlowExplorer client:visible title="Inspect the manifest boundary" flows={pipelineFlows} />
 
 Bulk records do not travel through Airflow's metadata database. XCom carries only control metadata: container, object path, source, run ID, count, checksum, content type, and schema version.
 

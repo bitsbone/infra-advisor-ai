@@ -1,20 +1,116 @@
 ---
-interface Props { title?: string; }
-const { title = 'Observe the result' } = Astro.props;
+interface Props {
+    title?: string;
+    id?: string;
+    prompt?: string;
+}
+
+const {
+    title = 'Build an evidence trail',
+    id,
+    prompt = 'Mark each item only after you can point to the evidence. Your progress stays in this browser.',
+} = Astro.props;
+const storageKey = `infra-advisor:field-exercise:${id ?? title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 ---
 
-<aside class="observation-checklist">
-    <div class="observation-checklist__icon" aria-hidden="true">◎</div>
-    <div>
-        <h3>{title}</h3>
-        <div class="observation-checklist__content"><slot /></div>
-    </div>
-</aside>
+<section class="field-exercise not-content" data-field-exercise data-storage-key={storageKey}>
+    <header class="field-exercise__header">
+        <div>
+            <p class="field-exercise__eyebrow">Field exercise</p>
+            <h3>{title}</h3>
+            <p class="field-exercise__prompt">{prompt}</p>
+        </div>
+        <div class="field-exercise__meter" aria-live="polite">
+            <strong data-progress-value>0 / 0</strong>
+            <span>evidence found</span>
+        </div>
+    </header>
+    <div class="field-exercise__bar" aria-hidden="true"><span data-progress-bar></span></div>
+    <div class="field-exercise__content" data-exercise-content><slot /></div>
+    <footer class="field-exercise__footer">
+        <p data-reflection hidden><strong>Evidence set complete.</strong> Explain the relationship in your own words before moving on.</p>
+        <button type="button" data-reset-exercise>Reset exercise</button>
+    </footer>
+</section>
+
+<script>
+    function enhanceFieldExercise(exercise, instanceIndex) {
+        if (exercise.dataset.enhanced === 'true') return;
+        exercise.dataset.enhanced = 'true';
+
+        const items = [...exercise.querySelectorAll('[data-exercise-content] li')];
+        const value = exercise.querySelector('[data-progress-value]');
+        const bar = exercise.querySelector('[data-progress-bar]');
+        const reflection = exercise.querySelector('[data-reflection]');
+        const reset = exercise.querySelector('[data-reset-exercise]');
+        const storageKey = `${exercise.dataset.storageKey}:${location.pathname}:${instanceIndex}`;
+        let saved = [];
+
+        try { saved = JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch { saved = []; }
+
+        const update = () => {
+            const inputs = [...exercise.querySelectorAll('input[type="checkbox"]')];
+            const checked = inputs.filter((input) => input.checked).length;
+            const total = inputs.length;
+            value.textContent = `${checked} / ${total}`;
+            bar.style.width = total ? `${(checked / total) * 100}%` : '0%';
+            reflection.hidden = !total || checked !== total;
+            exercise.dataset.complete = String(total > 0 && checked === total);
+            try { localStorage.setItem(storageKey, JSON.stringify(inputs.map((input) => input.checked))); } catch {}
+        };
+
+        items.forEach((item, index) => {
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `${storageKey.replace(/[^a-z0-9_-]/gi, '-')}-${index}`;
+            checkbox.checked = Boolean(saved[index]);
+
+            const label = document.createElement('label');
+            label.htmlFor = checkbox.id;
+            while (item.firstChild) label.appendChild(item.firstChild);
+            item.append(checkbox, label);
+            checkbox.addEventListener('change', update);
+        });
+
+        reset?.addEventListener('click', () => {
+            exercise.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = false; });
+            update();
+            exercise.querySelector('input[type="checkbox"]')?.focus();
+        });
+
+        update();
+    }
+
+    const enhanceAll = () => document.querySelectorAll('[data-field-exercise]').forEach((exercise, index) => enhanceFieldExercise(exercise, index));
+    enhanceAll();
+    document.addEventListener('astro:page-load', enhanceAll);
+</script>
 
 <style>
-    .observation-checklist { display: grid; grid-template-columns: auto 1fr; gap: 0.9rem; margin-block: 1.5rem; padding: 1.15rem 1.25rem; border-left: 3px solid #22c55e; border-radius: 0 0.8rem 0.8rem 0; background: color-mix(in srgb, #22c55e 8%, var(--sl-color-gray-6)); }
-    .observation-checklist__icon { display: grid; place-items: center; width: 1.75rem; height: 1.75rem; border-radius: 50%; color: #052e16; background: #4ade80; font-weight: 900; }
-    .observation-checklist h3 { margin: 0; font-size: 1rem; }
-    .observation-checklist__content { margin-top: 0.45rem; }
-    .observation-checklist__content :global(ul) { margin-block: 0; }
+    .field-exercise { margin-block: 2rem; overflow: hidden; border: 1px solid color-mix(in srgb, #34d399 32%, var(--sl-color-gray-5)); border-radius: 1.15rem; background: linear-gradient(145deg, color-mix(in srgb, #10b981 8%, var(--sl-color-gray-6)), var(--sl-color-gray-6)); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.13); }
+    .field-exercise__header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: center; padding: 1.3rem 1.4rem 1rem; }
+    .field-exercise__eyebrow { margin: 0 0 0.3rem; color: #34d399; font-size: 0.66rem; font-weight: 850; letter-spacing: 0.12em; text-transform: uppercase; }
+    .field-exercise h3 { margin: 0; color: var(--sl-color-white); font-size: 1.08rem; }
+    .field-exercise__prompt { max-width: 42rem; margin: 0.4rem 0 0; color: var(--sl-color-gray-2); font-size: 0.78rem; line-height: 1.45; }
+    .field-exercise__meter { min-width: 6rem; padding: 0.65rem 0.8rem; border: 1px solid var(--sl-color-gray-5); border-radius: 0.8rem; text-align: center; background: color-mix(in srgb, var(--sl-color-gray-6) 82%, transparent); }
+    .field-exercise__meter strong { display: block; color: #6ee7b7; font-size: 1.1rem; line-height: 1; }
+    .field-exercise__meter span { display: block; margin-top: 0.3rem; color: var(--sl-color-gray-3); font-size: 0.58rem; font-weight: 750; letter-spacing: 0.07em; text-transform: uppercase; }
+    .field-exercise__bar { height: 3px; background: var(--sl-color-gray-5); }
+    .field-exercise__bar span { display: block; width: 0; height: 100%; background: linear-gradient(90deg, #10b981, #a3e635); transition: width 220ms ease; }
+    .field-exercise__content { padding: 0.4rem 1.4rem 0.8rem; }
+    .field-exercise__content :global(ul), .field-exercise__content :global(ol) { display: grid; gap: 0.55rem; margin: 0; padding: 0; list-style: none; }
+    .field-exercise__content :global(li) { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.7rem; align-items: start; margin: 0; padding: 0.72rem 0.8rem; border: 1px solid var(--sl-color-gray-5); border-radius: 0.75rem; color: var(--sl-color-gray-1); background: color-mix(in srgb, var(--sl-color-gray-6) 78%, transparent); transition: border-color 160ms ease, background 160ms ease; }
+    .field-exercise__content :global(li:has(input:checked)) { border-color: color-mix(in srgb, #34d399 50%, var(--sl-color-gray-5)); background: color-mix(in srgb, #10b981 9%, var(--sl-color-gray-6)); }
+    .field-exercise__content :global(input) { width: 1.05rem; height: 1.05rem; margin: 0.15rem 0 0; accent-color: #10b981; cursor: pointer; }
+    .field-exercise__content :global(label) { cursor: pointer; font-size: 0.82rem; line-height: 1.45; }
+    .field-exercise__content :global(input:checked + label) { color: var(--sl-color-gray-3); }
+    .field-exercise__content :global(input:focus-visible) { outline: 3px solid var(--sl-color-accent-high); outline-offset: 3px; }
+    .field-exercise__footer { display: flex; justify-content: space-between; gap: 1rem; align-items: center; min-height: 3.25rem; padding: 0.75rem 1.4rem; border-top: 1px solid var(--sl-color-gray-5); }
+    .field-exercise__footer p { margin: 0; color: #6ee7b7; font-size: 0.76rem; }
+    .field-exercise__footer button { margin-left: auto; border: 0; color: var(--sl-color-gray-3); background: transparent; font: inherit; font-size: 0.7rem; text-decoration: underline; text-underline-offset: 0.2em; cursor: pointer; }
+    .field-exercise__footer button:hover { color: var(--sl-color-white); }
+    .field-exercise[data-complete='true'] { border-color: #34d399; }
+    @media (max-width: 36rem) { .field-exercise__header { grid-template-columns: 1fr; } .field-exercise__meter { justify-self: stretch; text-align: left; } .field-exercise__meter strong, .field-exercise__meter span { display: inline; } .field-exercise__meter span { margin-left: 0.4rem; } .field-exercise__footer { align-items: flex-start; flex-direction: column; } .field-exercise__footer button { margin-left: 0; } }
+    @media (prefers-reduced-motion: reduce) { .field-exercise__bar span, .field-exercise__content :global(li) { transition: none; } }
+    :global([data-theme='light']) .field-exercise h3 { color: var(--sl-color-black); }
 </style>

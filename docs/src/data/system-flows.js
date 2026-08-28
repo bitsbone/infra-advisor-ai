@@ -1,0 +1,78 @@
+export const systemFlows = [
+  {
+    id: 'interactive',
+    label: 'Interactive query',
+    description: 'The user-facing path. It crosses identity, policy, model, tool, and persistence boundaries before the answer returns.',
+    nodes: [
+      { id: 'request', label: 'Authenticated request', kind: 'client', summary: 'Text, attachment references, identity, and backend choice enter together.', detail: 'The web or mobile client sends the query through the UI proxy. Authentication is not decoration: the resulting user identity scopes attachment ownership, conversation state, and agent memory.', why: 'A raw conversation identifier is not a tenant boundary.', evidence: 'RUM action or mobile resource, request headers, backend route, and the returned trace identity.', position: { x: 0, y: 0 } },
+      { id: 'proxy', label: 'UI reverse proxy', kind: 'boundary', summary: 'Routes the request to the selected Python or .NET API.', detail: 'The proxy preserves one client contract while `/api/*` and `/api-dotnet/*` lead to intentionally different agent and instrumentation implementations.', why: 'The comparison needs a shared user experience without pretending the backends are internally identical.', evidence: 'An HTTP resource continuing from the client into the selected backend service.', position: { x: 245, y: 0 } },
+      { id: 'agent', label: 'Agent pre-flight', kind: 'service', summary: 'Validates ownership, applies AI Guard, restores state, and classifies the request.', detail: 'The Agent API rejects invalid attachment references and blocked content before model work. It then restores tenant-scoped memory and retrieves the context required for reasoning.', why: 'Policy and state decisions must happen before an expensive or unsafe model call.', evidence: 'Application spans and logs for guard outcome, conversation lookup, classification, and retrieval.', position: { x: 490, y: 0 } },
+      { id: 'model', label: 'Model reasoning', kind: 'intelligence', summary: 'Chooses an answer path and, when needed, an MCP tool.', detail: 'Python models orchestration with explicit LLMObs spans around framework calls. .NET emits OpenTelemetry activities and GenAI conventions. Both should make the reasoning boundary legible.', why: 'Automatic library spans cannot infer all product-specific orchestration.', evidence: 'Agent, workflow, and LLM operations with model, provider, token, duration, and error fields where emitted.', position: { x: 735, y: 0 } },
+      { id: 'mcp', label: 'MCP tool boundary', kind: 'boundary', summary: 'Turns a model tool decision into a typed provider request.', detail: 'The matching MCP client and server carry the selected operation across a service boundary. The server normalizes provider-specific data into a tool result.', why: 'Tool intent, protocol transport, and provider work are different responsibilities and should remain distinguishable.', evidence: 'A tool operation, an agent-to-MCP HTTP span, the server operation, and downstream provider work.', position: { x: 735, y: 170 } },
+      { id: 'source', label: 'External evidence source', kind: 'source', summary: 'Returns government, project, search, or infrastructure data.', detail: 'Provider responses are normalized by the MCP layer before the model sees them. Client-facing source cards and artifacts are derived later; they are not raw MCP payloads.', why: 'Normalization isolates agent reasoning from provider-specific response shapes.', evidence: 'Provider HTTP/database/search span plus bounded logs that do not capture sensitive raw payloads.', position: { x: 490, y: 170 } },
+      { id: 'persist', label: 'Persist and respond', kind: 'state', summary: 'Saves durable conversation state and returns answer, sources, steps, artifacts, and trace identity.', detail: 'PostgreSQL receives durable messages and artifacts. Redis receives replaceable hot memory. The API then streams or returns the user-facing result.', why: 'Durable history and performance-oriented memory have different recovery and isolation properties.', evidence: 'Database work, Redis work, the response/stream completion, and client rendering correlated to the request.', position: { x: 245, y: 170 } },
+      { id: 'evaluation', label: 'Optional evaluation', kind: 'telemetry', summary: 'Runs after the answer under backend-specific delivery semantics.', detail: 'Python schedules an asynchronous faithfulness task and emits a gauge. .NET samples registered response evaluators and submits results against the completed agent span.', why: 'An evaluation result is not automatically synchronous, durable, or joined to every other output.', evidence: 'Python task span and gauge, or .NET evaluator submission associated with the completed agent span.', position: { x: 0, y: 170 } },
+    ],
+    edges: [
+      { source: 'request', target: 'proxy', label: 'HTTPS' },
+      { source: 'proxy', target: 'agent', label: 'selected backend' },
+      { source: 'agent', target: 'model', label: 'safe context' },
+      { source: 'model', target: 'mcp', label: 'tool call' },
+      { source: 'mcp', target: 'source', label: 'provider request' },
+      { source: 'source', target: 'persist', label: 'normalized evidence' },
+      { source: 'persist', target: 'evaluation', label: 'after response' },
+    ],
+  },
+  {
+    id: 'kafka',
+    label: 'Synthetic Kafka loop',
+    description: 'A background load path that exercises the ordinary Python agent without sitting between a user and an answer.',
+    nodes: [
+      { id: 'cron', label: 'Load Generator CronJob', kind: 'service', summary: 'Creates a synthetic infrastructure question on a schedule.', why: 'Repeatable background traffic makes the stream observable without requiring manual queries.', evidence: 'CronJob run, producer logs, and Data Streams Monitoring producer identity.' },
+      { id: 'query-topic', label: 'infra.query.events', kind: 'stream', summary: 'Buffers the question and carries trace context to the consumer.', why: 'Kafka decouples production time from agent execution time.', evidence: 'Topic, partition, offset, consumer lag, and pathway latency.' },
+      { id: 'consumer', label: 'Python agent consumer', kind: 'intelligence', summary: 'Runs the ordinary agent path under a system tenant key.', why: 'Synthetic work should exercise the real orchestration rather than a parallel fake implementation.', evidence: 'Consumer span followed by the same agent/model/tool operations used for an interactive request.' },
+      { id: 'result-topic', label: 'infra.eval.results', kind: 'telemetry', summary: 'Carries answer, sources, tools, latency, corpus type, and domain.', why: 'The result event supports stream analysis; it is not a completed evaluation store.', evidence: 'A result event whose `faithfulness_score` remains null because the Python judge completes independently.' },
+    ],
+    edges: [
+      { source: 'cron', target: 'query-topic', label: 'produce' },
+      { source: 'query-topic', target: 'consumer', label: 'consume' },
+      { source: 'consumer', target: 'result-topic', label: 'produce' },
+    ],
+  },
+  {
+    id: 'ingestion',
+    label: 'Ingestion and retrieval',
+    description: 'A scheduled data lifecycle. Raw source recovery and the derived search-serving layer remain separate concerns.',
+    nodes: [
+      { id: 'government', label: 'Government source', kind: 'source', summary: 'Publishes the source records used by one ingestion DAG.', why: 'Each provider has its own availability, schema, and refresh behavior.', evidence: 'Provider response status, record count, and source-specific Airflow task logs.', column: 0, row: 0 },
+      { id: 'fetch', label: 'Airflow fetch and validate', kind: 'service', summary: 'Retrieves, normalizes, and validates source records.', why: 'Invalid or partial records should fail before they become serving data.', evidence: 'DAG run, task duration, validation counts, and provider request spans.', column: 1, row: 0 },
+      { id: 'blob', label: 'Private Blob snapshot', kind: 'state', summary: 'Stores a recoverable source snapshot and deterministic staging data.', why: 'The search index is replaceable; the source snapshot supports replay and diagnosis.', evidence: 'Blob operation, checksum, object version, and bounded manifest passed through XCom.', column: 2, row: 0 },
+      { id: 'transform', label: 'Transform and chunk', kind: 'service', summary: 'Creates serving narratives and bounded retrieval chunks.', why: 'Provider records are not automatically useful retrieval documents.', evidence: 'Input/output counts, transformation errors, and chunk metrics.', column: 2, row: 1 },
+      { id: 'embed', label: 'Embed and index', kind: 'intelligence', summary: 'Creates vectors and upserts the derived documents into Azure AI Search.', why: 'Hybrid retrieval needs both content shaping and an embedding representation.', evidence: 'Embedding calls, token/cost telemetry where available, Search operations, and indexed-document counts.', column: 1, row: 1 },
+      { id: 'retrieve', label: 'Agent retrieval', kind: 'telemetry', summary: 'Queries the serving index during an interactive request.', why: 'Ingestion and retrieval are related lifecycles, not one distributed trace.', evidence: 'Search spans in the request trace; use dataset/version metadata to relate them back to the pipeline.', column: 0, row: 1 },
+    ],
+    edges: [
+      { source: 'government', target: 'fetch' },
+      { source: 'fetch', target: 'blob', label: 'snapshot' },
+      { source: 'blob', target: 'transform', label: 'read staged data' },
+      { source: 'transform', target: 'embed', label: 'documents' },
+      { source: 'embed', target: 'retrieve', label: 'Search index' },
+    ],
+  },
+  {
+    id: 'memory',
+    label: 'Conversation state',
+    description: 'Durable records, replaceable hot memory, and shared suggestions have intentionally different ownership and lifetimes.',
+    nodes: [
+      { id: 'identity', label: 'Authenticated identity', kind: 'client', summary: 'Combines user identity with conversation or session input.', why: 'Client-provided identifiers alone cannot enforce tenant isolation.', evidence: 'Authenticated user ID and the derived, non-sensitive state key.' },
+      { id: 'postgres', label: 'PostgreSQL history', kind: 'state', summary: 'Persists users, conversations, messages, attachments, and artifacts.', why: 'Conversation history must survive cache eviction and application restarts.', evidence: 'Database spans and durable rows associated with the authenticated owner.', column: 1, row: 0 },
+      { id: 'redis', label: 'Redis hot memory', kind: 'state', summary: 'Caches tenant-scoped agent memory and model choice with a TTL.', why: 'Fast context restoration is useful, but this representation can be rebuilt.', evidence: 'Redis operations, TTL, and a key derived from identity plus conversation/session.', column: 1, row: 1 },
+      { id: 'suggestions', label: 'Shared suggestion pool', kind: 'intelligence', summary: 'Background work maintains low-latency starter prompts outside any conversation.', why: 'Suggestions should not require page-load inference or inherit private conversation state.', evidence: 'Background refresh logs/metrics and shared cache operations.', column: 2, row: 1 },
+    ],
+    edges: [
+      { source: 'identity', target: 'postgres', label: 'durable owner' },
+      { source: 'identity', target: 'redis', label: 'scoped cache key' },
+      { source: 'redis', target: 'suggestions', label: 'separate shared state' },
+    ],
+  },
+];

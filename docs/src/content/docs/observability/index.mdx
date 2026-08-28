@@ -12,6 +12,9 @@ sidebar:
   label: Observability
 ---
 
+import FlowExplorer from '@components/FlowExplorer.jsx';
+import { observabilityFlows } from '../../../data/platform-flows.js';
+
 InfraAdvisor uses several Datadog products because no single signal can explain the browser experience, agent decisions, application work, data stores, streaming systems, and infrastructure at once.
 
 ## Start from the question
@@ -27,15 +30,7 @@ InfraAdvisor uses several Datadog products because no single signal can explain 
 
 ## Correlation contracts
 
-```text
-RUM action → traced HTTP request → agent-specific spans → MCP/provider spans
-                               ├─ structured logs with trace IDs
-                               ├─ PostgreSQL / DBM context
-                               └─ pod and infrastructure identity
-
-Kafka producer → topic → consumer → agent execution → result topic
-Airflow run → task process → provider request → Blob/Search operation
-```
+<FlowExplorer client:visible title="Choose a correlation path" flows={observabilityFlows} />
 
 These joins depend on consistent service, environment, version, and trace context. A nearby timestamp is not correlation evidence.
 

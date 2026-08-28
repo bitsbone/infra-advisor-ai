@@ -13,7 +13,7 @@
  *   height  – number – canvas height in px (default 480)
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import {
   ReactFlow,
   Handle,
@@ -21,9 +21,8 @@ import {
   MarkerType,
   Background,
   Controls,
+  Panel,
   useNodesState,
-  useEdgesState,
-  addEdge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -119,6 +118,22 @@ const STYLE_RESET = `
     border-color:     var(--xy-theme-edge-hover) !important;
     background-color: #ffffff                    !important;
   }
+
+  .trace-inspector {
+    width: min(220px, 42%);
+    padding: 10px 12px !important;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+    color: #334155;
+    background: rgba(255,255,255,.94);
+    box-shadow: 0 12px 30px rgba(15,23,42,.14);
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+  .trace-inspector__eyebrow { margin: 0 0 3px !important; color: #64748B; font-size: 8px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+  .trace-inspector strong { display: block; color: #0F172A; font-size: 11px; line-height: 1.25; }
+  .trace-inspector dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; margin: 8px 0 0 !important; font-size: 9px; }
+  .trace-inspector dt { color: #64748B; font-weight: 700; }
+  .trace-inspector dd { margin: 0 !important; overflow: hidden; color: #334155; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ── Error glow animation ──────────────────────────────────────────────────
      Overrides the inline box-shadow on error cards with a pulsing red halo.
@@ -401,106 +416,13 @@ function buildLayout(spans) {
 // `overflow: hidden` canvas. `pointerEvents: none` prevents it from
 // interfering with mouse events on the nodes.
 
-function SpanTooltip({ data, x, y }) {
-  const p = TYPE_PALETTE[data.type] ?? FALLBACK;
-  const dot = STATUS_COLOR[data.status] ?? '#9CA3AF';
-
-  // Flip left when near the right viewport edge
-  const flipLeft = typeof window !== 'undefined' && x + 220 > window.innerWidth;
-  const showResource = data.resource && data.resource !== data.operation;
-
-  return (
-    <div style={{
-      position: 'fixed',
-      top: y - 10,
-      left: flipLeft ? x - 216 : x + 16,
-      zIndex: 9999,
-      pointerEvents: 'none',
-      width: 200,
-      background: '#ffffff',
-      border: '1px solid #E2E8F0',
-      borderRadius: 8,
-      boxShadow: '0 4px 20px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.06)',
-      fontFamily: 'ui-sans-serif, system-ui, sans-serif',
-      overflow: 'hidden',
-    }}>
-      {/* header strip */}
-      <div style={{
-        background: p.bg,
-        borderBottom: `1px solid ${p.border}30`,
-        padding: '8px 10px 7px',
-        display: 'flex', alignItems: 'center', gap: '7px',
-      }}>
-        <span style={{
-          background: p.badge, color: '#fff', borderRadius: 3, flexShrink: 0,
-          padding: '2px 5px', fontSize: 8, fontWeight: 700,
-          textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1.5,
-        }}>
-          {data.type || 'span'}
-        </span>
-        <span style={{
-          color: p.text, fontSize: 11, fontWeight: 700,
-          overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
-        }}>
-          {data.service}
-        </span>
-      </div>
-
-      {/* body */}
-      <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-
-        <div>
-          <div style={{ color: '#94A3B8', fontSize: 9, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>Operation</div>
-          <div style={{ color: '#1E293B', fontSize: 11, fontStyle: 'italic', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-            {data.operation}
-          </div>
-        </div>
-
-        {showResource && (
-          <div>
-            <div style={{ color: '#94A3B8', fontSize: 9, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>Resource</div>
-            <div style={{ color: '#1E293B', fontSize: 11, fontWeight: 700, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-              {data.resource}
-            </div>
-          </div>
-        )}
-
-        {/* status + duration row */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #F1F5F9', paddingTop: '6px' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 10, color: dot, fontWeight: 600 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: dot, display: 'inline-block' }} />
-            {data.status}
-          </span>
-          <span style={{ fontSize: 10, fontWeight: 700, color: p.text }}>
-            {data.duration}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── component ────────────────────────────────────────────────────────────────
 
 export default function TraceViewer({ spans = [], height = 480 }) {
   const { nodes: init, edges: initEdges } = buildLayout(spans);
 
   const [nodes, , onNodesChange] = useNodesState(init);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initEdges);
-  const [tooltip, setTooltip] = useState(null); // { data, x, y }
-
-  const onConnect = useCallback(
-    (params) => setEdges((es) => addEdge(params, es)),
-    [setEdges],
-  );
-
-  const onNodeMouseEnter = useCallback((event, node) => {
-    setTooltip({ data: node.data, x: event.clientX, y: event.clientY });
-  }, []);
-
-  const onNodeMouseLeave = useCallback(() => {
-    setTooltip(null);
-  }, []);
+  const [selectedSpan, setSelectedSpan] = useState(init[0]?.data ?? null);
 
   if (init.length === 0) {
     return (
@@ -523,21 +445,37 @@ export default function TraceViewer({ spans = [], height = 480 }) {
       <style>{STYLE_RESET}</style>
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={initEdges}
         onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onNodeMouseEnter={onNodeMouseEnter}
-        onNodeMouseLeave={onNodeMouseLeave}
+        onSelectionChange={({ nodes: selectedNodes }) => selectedNodes[0] && setSelectedSpan(selectedNodes[0].data)}
         nodeTypes={NODE_TYPES}
         fitView
         fitViewOptions={{ padding: 0.2 }}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        deleteKeyCode={null}
+        multiSelectionKeyCode={null}
+        selectionKeyCode={null}
+        panOnScroll={false}
+        zoomOnDoubleClick={false}
         attributionPosition="bottom-left"
+        aria-label="Interactive trace viewer. Use Tab to move through spans and Enter to inspect one."
       >
         <Background />
-        <Controls />
+        <Controls showInteractive={false} aria-label="Trace zoom controls" />
+        {selectedSpan && (
+          <Panel position="top-right" className="trace-inspector" aria-live="polite">
+            <p className="trace-inspector__eyebrow">Selected span</p>
+            <strong>{selectedSpan.service}</strong>
+            <dl>
+              <dt>Operation</dt><dd>{selectedSpan.operation}</dd>
+              <dt>Type</dt><dd>{selectedSpan.type || 'custom'}</dd>
+              <dt>Status</dt><dd>{selectedSpan.status}</dd>
+              <dt>Duration</dt><dd>{selectedSpan.duration}</dd>
+            </dl>
+          </Panel>
+        )}
       </ReactFlow>
-      {tooltip && <SpanTooltip data={tooltip.data} x={tooltip.x} y={tooltip.y} />}
     </div>
   );
 }

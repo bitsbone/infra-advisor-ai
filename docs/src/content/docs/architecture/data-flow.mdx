@@ -11,79 +11,31 @@ sidebar:
   order: 2
 ---
 
-import Mermaid from '../../../components/Mermaid.astro';
+import FlowExplorer from '@components/FlowExplorer.jsx';
 import ObservationChecklist from '@components/ObservationChecklist.astro';
+import { systemFlows } from '../../../data/system-flows.js';
+
 
 InfraAdvisor has four distinct flows. Keeping them separate prevents common misconceptions—for example, Kafka is not on the interactive request path, and a faithfulness gauge is not automatically a span-joined external evaluation.
 
-## Interactive query
+<FlowExplorer client:visible title="Follow one datum across the system" flows={systemFlows} />
 
-<Mermaid code={`
-sequenceDiagram
-    actor Client
-    participant Proxy
-    participant Agent as Selected Agent API
-    participant State as Redis / PostgreSQL
-    participant Model as Azure OpenAI
-    participant MCP as Matching MCP Server
-    participant Source as External source
+## Interpret the boundaries
 
-    Client->>Proxy: query or streaming query + auth
-    Proxy->>Agent: route by backend prefix
-    Agent->>Agent: validate attachment references
-    Agent->>Agent: AI Guard pre-flight
-    Agent->>State: load memory
-    Agent->>Agent: classify and retrieve context
-    Agent->>Model: route / reason
-    Model->>MCP: select tool
-    MCP->>Source: provider request
-    Source-->>MCP: provider response
-    MCP-->>Model: normalized tool result
-    Model-->>Agent: answer
-    Agent->>State: save memory and conversation
-    Agent-->>Client: answer, sources, steps, artifacts, trace identity
-`} />
+The interactive flow is the only path that directly serves a user's answer. Python models routing with explicit `LLMObs` agent spans around framework calls; .NET performs deterministic domain classification and uses Microsoft agent and OpenTelemetry operations. Their resulting trees differ, but both should explain the selected path and evidence.
 
-Python models routing with explicit `LLMObs` agent spans around framework calls. .NET performs deterministic domain classification and uses Microsoft agent and OpenTelemetry operations. The resulting trees differ, but both should explain the selected path and evidence.
+The Kafka loop is synthetic background work. Data Streams Monitoring observes its producer, topic, consumer, and result path; it does not turn the result topic into a durable evaluation system. The result event's `faithfulness_score` is currently `null` because the Python faithfulness task completes independently.
 
-### Optional work after the answer
+The ingestion pipeline is another lifecycle entirely. Raw snapshots remain recoverable in private storage while Azure AI Search is a derived serving layer. A request trace can show retrieval from that layer, but it should not be expected to contain the earlier Airflow run. See [Data pipeline](/infra-advisor-ai/data-pipeline/) for per-source behavior.
 
-Python schedules a faithfulness model task, annotates its task span, and emits a gauge. .NET samples its registered response evaluators and submits their results against the completed agent span. These are different delivery contracts and can be lost if the process stops before fire-and-forget work completes.
+PostgreSQL and Redis also encode different promises. PostgreSQL owns durable conversation records. Redis owns replaceable tenant-scoped hot memory and model choice with a TTL. The suggestion pool is separate shared Redis state maintained by background work; it reduces page-load inference latency and does not belong to an individual conversation.
 
-## Synthetic Kafka loop
-
-```text
-Load Generator CronJob
-  └─ produce infra.query.events
-       └─ Python Agent API consumer
-            ├─ run the ordinary agent path under a system tenant key
-            └─ produce infra.eval.results
-```
-
-The result event includes the answer, sources, tools, latency, corpus type, and domain. Its `faithfulness_score` field is currently `null` because the Python faithfulness task completes independently. Data Streams Monitoring observes the Kafka path; it does not turn the result topic into a completed evaluation store.
-
-## Ingestion and retrieval
-
-```text
-government source → Airflow fetch → private Blob snapshot
-                                      │
-                                      └─ transform / chunk / embed → Azure AI Search
-```
-
-Each source has its own schedule and transformation details. The shared invariant is that raw snapshots remain recoverable in private storage while the search index is a derived serving layer. See [Data pipeline](/infra-advisor-ai/data-pipeline/) for per-source behavior.
-
-## Conversation and memory state
-
-PostgreSQL stores durable conversation records. Redis stores a tenant-scoped hot-memory representation and model choice with a TTL. The agent derives its key from authenticated user identity plus conversation or session input; a raw client identifier is never the complete isolation boundary.
-
-The suggestion pool is separate shared Redis state maintained by background work. It reduces page-load inference latency and does not belong to an individual conversation.
-
-<ObservationChecklist title="Locate one datum at each stage">
+<ObservationChecklist id="architecture-data-lifecycles" title="Prove that the lifecycles stay separate" prompt="Use the explorer and one real trace. Check an item only when you can identify the concrete stage or signal.">
 
 - Identify where the user's text, attachment reference, and authenticated identity enter.
 - Distinguish normalized MCP results from client-facing artifacts and assistant prose.
 - Confirm which state is durable in PostgreSQL and which is replaceable in Redis.
-- Locate the Kafka result and note that its faithfulness field is not populated by the asynchronous judge.
+- Locate the Kafka result and note why its faithfulness field is not populated by the asynchronous judge.
 - Follow trace context across the agent-to-MCP boundary without expecting the ingestion pipeline in the same trace.
 
 </ObservationChecklist>

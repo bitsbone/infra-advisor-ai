@@ -59,10 +59,11 @@ The components in `docs/src/components` are composable aids:
 
 - `LearningObjectives` helps when explicit outcomes orient the reader.
 - `ImplementationPath` separates meaningful alternatives or system paths.
-- `ObservationChecklist` identifies evidence a reader should collect.
+- `ObservationChecklist` creates a persistent field exercise when a reader must collect and account for several pieces of evidence.
 - `TelemetryComparison` supports a genuine side-by-side comparison.
+- `FlowExplorer` makes a consequential relationship, branch, lifecycle, or service boundary selectable and pairs each stage with its purpose and observable evidence.
 
-None is required on every page. Use a component only when it clarifies structure, reduces repetition, or makes evidence easier to interpret.
+None is required on every page. Use a component only when it clarifies structure, reduces repetition, or makes evidence easier to interpret. A learner action should change what they can inspect, compare, recall, or track; visual motion and card chrome alone do not make content interactive. Keep simple sequences in prose or an ordered list, and include a usable text path for graph content.
 
 ## Review before publishing
 

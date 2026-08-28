@@ -1,0 +1,50 @@
+.flow-explorer, .flow-explorer * { box-sizing: border-box; }
+.flow-explorer { width: 100%; max-width: 100%; min-width: 0; margin-block: 2rem; overflow: hidden; border: 1px solid var(--sl-color-gray-5); border-radius: 1.25rem; background: color-mix(in srgb, var(--sl-color-gray-6) 90%, transparent); box-shadow: 0 24px 80px rgba(0,0,0,.15); }
+.flow-explorer > *, .flow-explorer__header > *, .flow-explorer__workspace > * { min-width: 0; }
+.flow-explorer__header { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 1rem; align-items: end; padding: 1.4rem 1.5rem 1.1rem; border-bottom: 1px solid var(--sl-color-gray-5); }
+.flow-explorer__eyebrow { margin: 0 0 .35rem; color: var(--sl-color-accent-high); font-size: .7rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+.flow-explorer h2 { margin: 0; overflow-wrap: anywhere; color: var(--sl-color-white); font-size: clamp(1.2rem,2vw,1.65rem); letter-spacing: -.025em; }
+.flow-explorer__instruction { max-width: 29rem; margin: 0; color: var(--sl-color-gray-2); font-size: .82rem; text-align: right; }
+.flow-explorer__switcher { display: flex; gap: .45rem; padding: .85rem 1.5rem; overflow-x: auto; border-bottom: 1px solid var(--sl-color-gray-5); scrollbar-width: thin; }
+.flow-explorer__switch { flex: 0 0 auto; padding: .55rem .8rem; border: 1px solid transparent; border-radius: 999px; color: var(--sl-color-gray-2); background: transparent; font: inherit; font-size: .78rem; font-weight: 720; cursor: pointer; }
+.flow-explorer__switch:hover { color: var(--sl-color-white); background: var(--sl-color-gray-5); }
+.flow-explorer__switch[aria-selected='true'] { border-color: color-mix(in srgb,var(--sl-color-accent) 50%,transparent); color: var(--sl-color-white); background: color-mix(in srgb,var(--sl-color-accent) 18%,transparent); }
+.flow-explorer__context { display: flex; justify-content: space-between; gap: 1rem; padding: .85rem 1.5rem; color: var(--sl-color-gray-2); background: color-mix(in srgb,var(--sl-color-gray-6) 70%,transparent); }
+.flow-explorer__context p { margin: 0; max-width: 56rem; font-size: .84rem; }
+.flow-explorer__context span { flex: 0 0 auto; color: var(--sl-color-gray-3); font-size: .72rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.flow-explorer__workspace { display: grid; grid-template-columns: minmax(0,1fr); }
+.flow-explorer__canvas { min-width: 0; min-height: 27rem; border-bottom: 1px solid var(--sl-color-gray-5); background: radial-gradient(circle at 50% 0%,color-mix(in srgb,var(--sl-color-accent) 8%,transparent),transparent 45%); }
+.flow-explorer .react-flow { --xy-background-color: transparent; --xy-edge-stroke: var(--sl-color-gray-4); --xy-controls-button-background-color: var(--sl-color-gray-6); --xy-controls-button-background-color-hover: var(--sl-color-gray-5); --xy-controls-button-color: var(--sl-color-gray-1); --xy-controls-button-border-color: var(--sl-color-gray-5); }
+.flow-explorer .react-flow__edge-path { stroke-width: 1.6; }
+.flow-explorer .react-flow__edge-text { fill: var(--sl-color-gray-2); font-size: 10px; }
+.flow-explorer .react-flow__edge-textbg { fill: var(--sl-color-gray-6); }
+.flow-explorer .react-flow__node { border: 0; background: transparent; }
+.flow-node:focus-visible { outline: 3px solid var(--sl-color-accent-high); outline-offset: 3px; }
+.flow-node { width: 12rem; min-height: 6.15rem; padding: .75rem .8rem; border: 1px solid color-mix(in srgb,var(--node-accent) 55%,var(--sl-color-gray-5)); border-radius: .85rem; color: var(--sl-color-white); background: linear-gradient(145deg,var(--node-tint),color-mix(in srgb,var(--sl-color-gray-6) 94%,transparent)); box-shadow: 0 12px 28px rgba(0,0,0,.16); font: inherit; text-align: left; cursor: pointer; transition: opacity .18s ease,transform .18s ease,box-shadow .18s ease; }
+.flow-node[data-muted='true'] { opacity: .42; }
+.flow-node[data-selected='true'] { transform: translateY(-2px); box-shadow: 0 0 0 2px var(--node-accent),0 18px 35px rgba(0,0,0,.28); }
+.flow-node__topline { display: flex; justify-content: space-between; gap: .5rem; align-items: center; }
+.flow-node__step { display: grid; place-items: center; width: 1.35rem; height: 1.35rem; border-radius: 50%; color: #071017; background: var(--node-accent); font-size: .67rem; font-weight: 900; }
+.flow-node__kind { color: var(--node-accent); font-size: .62rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.flow-node strong { display: block; margin-top: .55rem; color: var(--sl-color-white); font-size: .86rem; line-height: 1.15; }
+.flow-node p { display: -webkit-box; margin: .32rem 0 0; overflow: hidden; color: var(--sl-color-gray-2); font-size: .68rem; line-height: 1.35; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.flow-explorer__detail { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr); gap: 1.25rem; padding: 1.35rem; background: color-mix(in srgb,var(--sl-color-gray-6) 83%,transparent); }
+.flow-explorer__detail-label { margin: 0 0 .45rem; color: var(--detail-accent); font-size: .66rem; font-weight: 850; letter-spacing: .11em; text-transform: uppercase; }
+.flow-explorer__detail h3 { margin: 0; color: var(--sl-color-white); font-size: 1.18rem; line-height: 1.15; }
+.flow-explorer__detail-summary { margin: .65rem 0 0; color: var(--sl-color-gray-2); font-size: .86rem; line-height: 1.55; }
+.flow-explorer__detail-block { margin-top: 0; padding-left: 1.25rem; border-left: 1px solid var(--sl-color-gray-5); }
+.flow-explorer__detail-block span { display: block; margin-bottom: .35rem; color: var(--sl-color-gray-3); font-size: .63rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.flow-explorer__detail-block p { margin: 0; color: var(--sl-color-gray-1); font-size: .8rem; line-height: 1.5; }
+.flow-explorer__navigator { grid-column: 1 / -1; display: grid; grid-template-columns: 2.3rem minmax(0,18rem) 2.3rem; justify-content: end; gap: .45rem; align-items: center; padding-top: .15rem; }
+.flow-explorer__navigator button, .flow-explorer__navigator select { min-height: 2.3rem; border: 1px solid var(--sl-color-gray-5); border-radius: .65rem; color: var(--sl-color-white); background: var(--sl-color-gray-6); font: inherit; font-size: .72rem; }
+.flow-explorer__navigator button { display: grid; place-items: center; cursor: pointer; }
+.flow-explorer__navigator button:hover:not(:disabled) { border-color: var(--sl-color-accent-high); }
+.flow-explorer__navigator button:disabled { opacity: .3; cursor: default; }
+.flow-explorer__navigator select { min-width: 0; padding-inline: .55rem; }
+.flow-explorer__fallback { margin: .8rem 1.5rem 1.25rem; }
+.flow-explorer__fallback summary { color: var(--sl-color-gray-2); font-size: .78rem; cursor: pointer; }
+.flow-explorer__fallback ol { margin: .65rem 0 0; padding-left: 1.2rem; color: var(--sl-color-gray-2); font-size: .78rem; }
+@media (max-width:58rem) { .flow-explorer__detail { grid-template-columns: 1fr 1fr; } .flow-explorer__detail-intro { grid-column: 1 / -1; } }
+@media (max-width:36rem) { .flow-explorer { border-radius: 1rem; } .flow-explorer__header { grid-template-columns: minmax(0,1fr); padding: 1.15rem; } .flow-explorer__instruction { text-align: left; } .flow-explorer__switcher,.flow-explorer__context { padding-inline: 1.15rem; } .flow-explorer__context { display: block; } .flow-explorer__context span { display: block; margin-top: .45rem; } .flow-explorer__canvas { min-height: 24rem; } .flow-explorer__detail { grid-template-columns: minmax(0,1fr); min-height: 0; } .flow-explorer__detail-intro { grid-column: auto; } .flow-explorer__detail-block { padding: 1rem 0 0; border-top: 1px solid var(--sl-color-gray-5); border-left: 0; } .flow-explorer__navigator { grid-column: auto; grid-template-columns: 2.3rem minmax(0,1fr) 2.3rem; justify-content: stretch; } }
+@media (prefers-reduced-motion:reduce) { .flow-node { transition: none; } }
+[data-theme='light'] .flow-explorer h2,[data-theme='light'] .flow-node,[data-theme='light'] .flow-node strong,[data-theme='light'] .flow-explorer__detail h3,[data-theme='light'] .flow-explorer__navigator button,[data-theme='light'] .flow-explorer__navigator select { color: #172033; }

@@ -23,6 +23,8 @@ import LearningObjectives from '@components/LearningObjectives.astro';
 import ImplementationPath from '@components/ImplementationPath.astro';
 import ObservationChecklist from '@components/ObservationChecklist.astro';
 import TelemetryComparison from '@components/TelemetryComparison.astro';
+import FlowExplorer from '@components/FlowExplorer.jsx';
+import { instrumentationFlows } from '../../../../data/learning-flows.js';
 
 InfraAdvisor runs the same agent experience through two backends. The Python service uses Datadog's native SDK and integrations. The .NET service uses OpenTelemetry and exports OTLP data through the Datadog Agent. Keeping both paths makes an otherwise abstract instrumentation decision observable: you can inspect the code, run the same workflow, and compare what reaches Datadog.
 
@@ -35,6 +37,8 @@ This is a comparison because the topic benefits from one. It is not the required
     <li>Evaluate the paths by the evidence they produce rather than by setup syntax alone.</li>
   </ul>
 </LearningObjectives>
+
+<FlowExplorer client:visible title="Inspect where instrumentation responsibility moves" flows={instrumentationFlows} />
 
 ## Why two paths exist
 
