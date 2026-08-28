@@ -12,10 +12,7 @@ sidebar:
   order: 4
 ---
 
-import FeatureStatus from '@components/FeatureStatus.astro';
 import ObservationChecklist from '@components/ObservationChecklist.astro';
-
-<FeatureStatus status="partial" verifiedOn="2026-08-27" label="Version correlation implemented on .NET" />
 
 When a prompt changes, date ranges are a weak comparison boundary: deployments overlap, rollbacks happen, and unrelated code may ship at the same time. A content-derived version lets traces and evaluations identify the prompt definition that actually ran.
 

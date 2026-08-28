@@ -13,11 +13,8 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
-import FeatureStatus from '@components/FeatureStatus.astro';
 
-<FeatureStatus status="planned" verifiedOn="2026-08-27" label="Optional investigation workflow; not an InfraAdvisor runtime dependency" />
-
-A Datadog MCP connection can let an MCP-compatible assistant inspect observability data through natural-language investigation. It is useful for interactive questions such as “find the trace behind this bad answer” or “show the logs around this tool failure.”
+A Datadog MCP connection can let an MCP-compatible assistant inspect observability data through natural-language investigation. It is useful for interactive questions such as “find the trace behind this bad answer” or “show the logs around this tool failure.” This is an optional developer workflow; it is not an InfraAdvisor runtime dependency or a connection configured by this repository.
 
 Keep this boundary separate from InfraAdvisor's own MCP servers. InfraAdvisor's runtime MCP clients call infrastructure-data tools. A developer's Datadog MCP connection reads operational evidence while investigating the system.
 

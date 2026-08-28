@@ -12,10 +12,7 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
-import FeatureStatus from '@components/FeatureStatus.astro';
 import ObservationChecklist from '@components/ObservationChecklist.astro';
-
-<FeatureStatus status="stable" verifiedOn="2026-08-27" label="Image and audio paths implemented in Python and .NET" />
 
 InfraAdvisor accepts image and audio attachments without placing media bytes in the query JSON or conversation history. Azure OpenAI processes the media; Datadog retains operational metadata rather than filenames, signed URLs, transcripts, descriptions, or bytes.
 

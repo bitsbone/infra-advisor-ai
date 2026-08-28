@@ -57,7 +57,6 @@ Avoid:
 
 The components in `docs/src/components` are composable aids:
 
-- `FeatureStatus` communicates project maturity and verification date.
 - `LearningObjectives` helps when explicit outcomes orient the reader.
 - `ImplementationPath` separates meaningful alternatives or system paths.
 - `ObservationChecklist` identifies evidence a reader should collect.
@@ -76,4 +75,4 @@ Ask:
 5. Is a new page and sidebar entry genuinely warranted?
 6. Can a testable claim be verified through a concrete application or Datadog signal?
 
-The documentation checks flag structural risks such as missing experiment objectives, unverified maturity labels, heading jumps, and unusually long prose. Warnings prompt editorial review; they are not substitutes for judgment.
+The documentation checks flag structural risks such as missing experiment objectives, stale review metadata, heading jumps, and unusually long prose. Warnings prompt editorial review; they are not substitutes for judgment.

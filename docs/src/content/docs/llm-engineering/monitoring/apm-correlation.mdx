@@ -12,10 +12,7 @@ sidebar:
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
-import FeatureStatus from '@components/FeatureStatus.astro';
 import ObservationChecklist from '@components/ObservationChecklist.astro';
-
-<FeatureStatus status="stable" verifiedOn="2026-08-27" />
 
 Agent Observability explains agent-specific work. Correlation explains the application and infrastructure work surrounding it. The contract is simple: preserve trace context and emit the identifiers or database attributes Datadog needs to join each signal.
 

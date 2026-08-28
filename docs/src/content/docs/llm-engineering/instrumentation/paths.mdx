@@ -19,13 +19,10 @@ learning:
     - Access to Datadog Agent Observability
 ---
 
-import FeatureStatus from '@components/FeatureStatus.astro';
 import LearningObjectives from '@components/LearningObjectives.astro';
 import ImplementationPath from '@components/ImplementationPath.astro';
 import ObservationChecklist from '@components/ObservationChecklist.astro';
 import TelemetryComparison from '@components/TelemetryComparison.astro';
-
-<FeatureStatus status="stable" verifiedOn="2026-08-27" label="Both paths verified" />
 
 InfraAdvisor runs the same agent experience through two backends. The Python service uses Datadog's native SDK and integrations. The .NET service uses OpenTelemetry and exports OTLP data through the Datadog Agent. Keeping both paths makes an otherwise abstract instrumentation decision observable: you can inspect the code, run the same workflow, and compare what reaches Datadog.
 
