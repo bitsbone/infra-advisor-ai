@@ -1,109 +1,56 @@
 ---
-title: RUM & Session Replay
-description: Browser SDK initialization, custom events, RUM-to-LLM Obs linking, and distributed tracing
+title: Follow a browser session into the backend
+description: Use privacy-safe RUM actions, resources, Session Replay, and distributed tracing to explain the web experience
+docType: guide
+audience:
+  - frontend-developer
+  - observability-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 2
+  label: Browser RUM
 ---
 
-Datadog Real User Monitoring captures every browser session with full session replay, performance metrics, and custom event tracking. It links directly to backend LLM Observability traces so you can jump from a user's browser session to the exact agent reasoning trace that produced a response.
+Browser RUM explains what happened around an agent request: the view, user action, resource timing, JavaScript errors, long tasks, and replay context. Distributed tracing connects the matching same-origin API request to APM.
 
-Navigate to **Datadog → RUM → Sessions** to explore.
+## Initialization boundary
 
-## Initialization
+`services/ui/src/lib/datadog-rum.ts` initializes RUM only when the application ID and client token are supplied at build time. The service, environment, and version identify the frontend release. Session Replay uses `mask-user-input`, and same-origin URLs are eligible for trace-header injection.
 
-The RUM SDK is initialized in `services/ui/src/lib/datadog-rum.ts`:
+The current configuration samples all sessions and replays for the demo environment. That is a deliberate learning setting, not a production-volume recommendation.
 
-```typescript
-datadogRum.init({
-  applicationId: import.meta.env.VITE_DD_RUM_APP_ID,
-  clientToken: import.meta.env.VITE_DD_RUM_CLIENT_TOKEN,
-  site: import.meta.env.VITE_DD_RUM_SITE,   // us3.datadoghq.com
-  service: 'infra-advisor-ui',
-  env: 'dev',
-  version: '<build-sha>',
-  sessionSampleRate: 100,
-  sessionReplaySampleRate: 100,
-  trackUserInteractions: true,
-  trackResources: true,
-  trackLongTasks: true,
-  defaultPrivacyLevel: 'mask-user-input',  // hides typed text in replay
-})
-datadogRum.startSessionReplayRecording()
-```
+## Custom actions retain shape, not content
 
-## Custom events
+The UI records stable workflow facts:
 
-Three custom events are tracked explicitly:
+| Action family | Safe attributes |
+|---|---|
+| Query | query length and routed domain |
+| Suggestion | a bounded preview |
+| Citation or evidence | document type, score, or card count |
+| Feedback | category and domain |
+| Attachment | kind, size, duration, and bounded failure category |
 
-| Event name | Triggered when | Attributes |
-|------------|---------------|-----------|
-| `query_submitted` | User submits a query (send button or Enter) | `query` (text), `domain` (routed domain) |
-| `citation_expanded` | User clicks a citation card to expand it | `tool_name` (e.g., `get_bridge_condition`) |
-| `suggestion_clicked` | User clicks a suggestion pill or domain tile | `label` (suggestion text) |
+The query text is **not** attached to `query_submitted`. This corrects an older design that would have copied prompts into RUM actions. Review new actions for the same property: retain what supports product analysis without duplicating user content, tokens, filenames, URLs, or responses.
 
-These appear in RUM session timelines and are queryable in RUM Analytics.
+## Two different correlations
 
-## RUM → LLM Obs session linking
+The RUM SDK injects distributed trace headers into allowed API requests. Python and .NET continue supported trace context, producing the RUM resource-to-APM link.
 
-Every query request includes the RUM session ID as a custom header:
+The UI also sends `X-DD-RUM-Session-ID` as application metadata. Do not assume that this automatically becomes an Agent Observability `session.id`; the current agent instrumentation does not add that custom tag. Treat browser session identity, chat conversation identity, and one request's trace identity as distinct concepts.
 
-```typescript
-// lib/datadog-rum.ts
-export function getRumSessionId(): string | undefined {
-  return datadogRum.getInternalContext()?.session_id
-}
+## Verify one user journey
 
-// lib/api.ts
-headers: {
-  'X-DD-RUM-Session-ID': getRumSessionId() ?? ''
-}
-```
+1. Open a new browser session and submit a tool-using query.
+2. In RUM, locate the `query_submitted` action and confirm it contains length/domain metadata but not the prompt.
+3. Open the API resource and follow its backend trace.
+4. Confirm service, environment, and version match the deployed frontend and backend.
+5. Inspect the replay and verify input masking.
+6. Compare resource duration with time to first streamed content; a complete streaming request duration is not itself time to first token.
 
-The Agent API sets this as `session.id` on all LLM Obs spans:
+## Release diagnostics
 
-```python
-obs_session_id = rum_session_id or session_id
-LLMObs.annotate(span, tags={"session.id": obs_session_id})
-```
+Production builds upload JavaScript source maps with the same service and release version used by RUM. A source map is useful only when those identifiers match the deployed bundle. Verify one controlled error resolves to the original TypeScript line after each release-pipeline change.
 
-**Result:** In LLM Obs, every trace shows the RUM session ID as `session.id`. Clicking **"View Session Replay"** on a trace opens the corresponding browser recording. In RUM sessions, clicking an XHR event on the `/api/query` call opens the backend trace.
-
-## Distributed tracing (RUM → APM)
-
-The Datadog RUM SDK auto-injects distributed trace headers on outgoing XHR/fetch requests matching `allowedTracingUrls`. For requests to `/api/*`, the SDK injects:
-
-```
-X-Datadog-Trace-Id: 3421959702764693
-X-Datadog-Parent-Id: 8721043291846321
-X-Datadog-Origin: rum
-X-Datadog-Sampling-Priority: 1
-```
-
-The Agent API's ddtrace picks up these headers, continuing the same trace. The `trace_id` in the query response is the same trace ID injected by RUM.
-
-This creates a single trace that spans from the browser click through the nginx proxy, FastAPI, Redis, LangChain agent, MCP tool calls, and back.
-
-## Sourcemaps
-
-After each production build, sourcemaps are uploaded to Datadog so that JavaScript errors in RUM show the original TypeScript source file and line number (not the minified bundle):
-
-```bash
-npx @datadog/datadog-ci sourcemaps upload dist/ \
-  --service=infra-advisor-ui \
-  --release-version=<sha> \
-  --minified-path-prefix=/assets/
-```
-
-This is run automatically by the GitHub Actions build pipeline.
-
-## Performance monitoring
-
-RUM automatically captures:
-- **Core Web Vitals:** LCP, INP, CLS on every page load
-- **Resource timing:** Load times for JS/CSS bundles
-- **Long tasks:** Any main thread work > 50ms
-- **User interactions:** Click/scroll events with timing
-
-The primary user interaction to monitor is the **Time To First Token** — the latency between query submission and the first character of the answer appearing. This corresponds to the `POST /api/query` XHR duration in RUM resource timing.
-
-## Native mobile clients
-
-The repository also includes native iOS and Android RUM reference applications that authenticate against the same backend and continue mobile traces into the AI query service. See [Native Mobile RUM](/infra-advisor-ai/observability/mobile-rum/) for CocoaPods, SwiftUI, Java, Volley, local build instructions, telemetry lifecycles, and privacy boundaries.
+Continue to [APM and tracing](../apm/) for backend correlation or [Mobile RUM](../mobile-rum/) for the native client comparison.

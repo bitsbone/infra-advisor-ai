@@ -254,6 +254,29 @@ The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM be
 
 ---
 
+# InfraAdvisor Prism navigation and mobile UI migration
+
+## Plan
+
+- [x] Validate the stable Prism MAUI package against the existing .NET 10 Android and iOS targets and record its license.
+- [x] Replace Shell and direct window page replacement with Prism startup, registered navigation, and a Prism-created four-tab root.
+- [x] Consolidate the shared InfraAdvisor design tokens, SVG icons, and reusable mobile controls.
+- [x] Rebuild the Chat landing, active conversation, composer, response settings, history, and Evidence experiences to match the approved concept.
+- [x] Restyle Login, History, Errors, and Info while preserving authentication, uploads, audio, backend/model selection, and Datadog behavior.
+- [x] Add or update tests and public documentation for the Prism navigation and shared cross-platform UI patterns.
+- [x] Verify tests, Android and iOS builds, simulator behavior, accessibility, privacy, and repository hygiene.
+
+## Review
+
+- Prism 9.0.537 now owns startup, page-scoped dependency injection, navigation, and the authenticated four-tab root; MAUI Shell files were removed.
+- Shared XAML now presents the InfraAdvisor concept consistently across Android and iOS with local SVG icons, compact configuration, focused chat and evidence surfaces, and explicit action labels.
+- Verification passed with 73 unit/contract tests, a zero-warning Android build, an installed Android emulator smoke test, and a clean documentation build/link/content check.
+- The iOS build compiled the managed projects and reached Apple's asset compiler, then stopped because the installed iOS simulator runtimes do not match SDK build 23F81a. Install a matching runtime or select the matching Xcode before simulator acceptance.
+
+- Pending implementation.
+
+---
+
 # Documentation learning experience
 
 ## Plan
@@ -272,3 +295,23 @@ The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM be
 - Added optional frontmatter for document type, audience, maturity, verification date, Datadog source, and learning metadata; added five composable Astro components and a contributor guide that explicitly treats archetypes as guidance rather than required templates.
 - Added a verified Datadog SDK versus OpenTelemetry comparison experiment as the pilot, enhanced the existing quickstart without restructuring it unnecessarily, and classified selected reference, runbook, maintainer, and planned content.
 - Added `npm run check-content` and the aggregate `npm run check` workflow. The final Astro build produced 66 pages; internal-link validation and content checks completed with zero errors or warnings, and `git diff --check` passed.
+
+---
+
+# Documentation content migration
+
+## Plan
+
+- [x] Audit all documentation pages by audience, document type, learning purpose, duplication, density, and required action.
+- [x] Rewrite and resequence the complete Agent Observability learning journey.
+- [x] Rewrite the architecture, observability, deployment, and development journeys.
+- [x] Refactor service, data-pipeline, runbook, and maintainer content around clear reference and operational purposes.
+- [x] Complete a corpus-wide editorial audit and verify the site build, links, content checks, responsive layout, and repository hygiene.
+
+## Review
+
+- Rewrote the full 65-page corpus around reader questions, observable outcomes, and explicit implementation boundaries. Agent Observability now progresses from a first trace through instrumentation, investigation, evaluation, configuration, security, and experimental capabilities without imposing one page template.
+- Corrected drift against the implementation, including the Python/.NET evaluation and metric asymmetries, RUM versus Agent Observability session identity, current streaming behavior, local Compose and Vite limits, Kubernetes/Datadog deployment ownership, ingestion dataset scope, MCP lifetimes, authentication bootstrap behavior, and artifact storage paths.
+- Replaced duplicated service inventories, command catalogs, configuration snapshots, and a dated Azure migration recipe with durable maps, decision tables, source-of-truth links, verification evidence, and operational boundaries.
+- Reduced the documentation prose from approximately 56,600 to 32,300 words while retaining the comparative instrumentation lab and other longer pages whose depth supports a genuine learning or reference purpose.
+- The final Astro build produced 66 pages; the internal-link checker found zero broken links and the content audit reported zero errors or warnings across 65 source pages. A headless-browser crawl rendered all 65 routes at 320px and 390px with no page-level horizontal overflow after stacking document actions, pagination, and homepage actions at narrow widths. Repository whitespace validation also passed.

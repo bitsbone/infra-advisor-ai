@@ -1,86 +1,60 @@
 ---
-title: Mobile RUM
-description: RUM, tracing, Session Replay, logs, and Error Tracking for the InfraAdvisor mobile clients
+title: Compare mobile observability paths
+description: See how native iOS, native Android, and .NET MAUI represent the same authenticated AI workflow
+docType: concept
+audience:
+  - mobile-developer
+  - observability-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 3
+  label: Mobile RUM
 ---
 
-InfraAdvisor includes native iOS, native Android, and .NET MAUI clients. Each client demonstrates the same observable AI workflow:
+InfraAdvisor includes native iOS, native Android, and .NET MAUI clients. Each should make the same causal chain observable:
 
 ```text
-User action → RUM resource → mobile trace → backend trace → AI model or MCP tool
+mobile action → RUM resource → client span → backend request → agent/model/tool work
 ```
 
-## What is instrumented
+## Shared privacy and lifecycle contract
 
-- Login and authenticated user identity
-- Chat, history, diagnostics, and profile views
-- API resources and distributed trace headers
-- AI model and backend selection
-- Image and audio uploads
-- Logs, handled errors, API failures, and crashes
-- Session Replay with sensitive inputs masked
+All clients can observe views, authenticated resources, backend/model selection, media uploads, handled errors, logs, and crashes. They do not add passwords, JWTs, prompts, answers, filenames, signed URLs, or media content to custom telemetry.
 
-Credentials, JWTs, prompts, responses, and uploaded media are not added to telemetry.
+Identity is set only after authentication and cleared on logout. A request resource and span must start once and complete once—even when cancellation, streaming, or error paths race.
 
-## Native iOS
+## Implementation comparison
 
-The SwiftUI app uses CocoaPods and Datadog's iOS SDK. `URLSession` instrumentation creates RUM resources and propagates Datadog and W3C trace headers to the InfraAdvisor API.
+| Client | Networking path | Key learning point |
+|---|---|---|
+| Native iOS | Instrumented `URLSession` | SDK-native RUM and trace propagation around SwiftUI workflows |
+| Native Android | Volley adapter | Explicit lifecycle wrapper that prevents duplicate completion |
+| .NET MAUI | Typed `HttpClient` and Datadog MAUI SDK | Shared presentation/domain code with platform release artifacts |
 
-See the [iOS source and run guide](https://github.com/kyletaylored/infra-advisor-ai/tree/main/mobile/native/ios).
+The MAUI client also demonstrates streaming chat, history, structured evidence, backend/model selection, image/audio upload, and diagnostics. See the repository's mobile READMEs for local simulator and device prerequisites; those commands change more often than the observability model.
 
-## Native Android
+The MAUI client uses Prism page navigation rather than MAUI Shell. The global Prism navigation event records only navigation type and outcome through the existing sanitized observability facade, while Datadog's automatic view tracking continues to name Login, Chat, History, Errors, and Info. Navigation failures therefore remain observable without adding routes, query parameters, prompts, or account data to custom telemetry.
 
-The Java app uses Volley. Its reusable request adapter creates one RUM resource and client span per request, injects trace headers, and completes telemetry exactly once.
+## Verify one mobile request
 
-See the [Android source and run guide](https://github.com/kyletaylored/infra-advisor-ai/tree/main/mobile/native/android).
+1. Log in and confirm the RUM user contains the intended stable account identity only.
+2. Submit a query and locate one resource with one matching client span.
+3. Follow distributed trace context into the selected backend.
+4. Add media and verify telemetry contains kind/size/duration but not filename, signed URL, or content.
+5. Log out and verify later events no longer carry the prior user identity.
+6. Exercise a handled failure and confirm the resource, span, log, and error agree on outcome.
 
-## .NET MAUI
+## Release symbols and test artifacts
 
-The MAUI app uses one typed `HttpClient`, which Datadog instruments automatically. It includes streaming chat, conversation history, structured infrastructure evidence, model/backend selection, image/audio uploads, and diagnostics.
+Release builds produce platform-specific debug artifacts: Android R8 mappings and iOS dSYMs. The MAUI workflow can upload those artifacts only in authorized operations where Datadog credentials come from secret storage. Mobile App Testing application uploads are a separate step with platform-specific application IDs.
 
-`DdSdk.SetUserInfo` associates the backend user ID and email after login. `DdSdk.ClearUserInfo` removes the identity during logout.
+Build-only workflows should remain useful without signing or Datadog write credentials. Installable iOS artifacts require the appropriate certificate and App Store Connect material; none belongs in committed configuration.
 
-Android and iOS share one MAUI RUM application:
+<span id="source-guides"></span>
 
-- Application ID: `fe90f908-da00-4d7c-9b24-6af11cee68a4`
-- Client token: `pub884d0800477e2d252b992acb168fc7a5`
+- [Native iOS source and run guide](https://github.com/kyletaylored/infra-advisor-ai/tree/main/mobile/native/ios)
+- [Native Android source and run guide](https://github.com/kyletaylored/infra-advisor-ai/tree/main/mobile/native/android)
+- [.NET MAUI source and run guide](https://github.com/kyletaylored/infra-advisor-ai/tree/main/mobile/cross-platform/maui)
 
-See the [MAUI source and run guide](https://github.com/kyletaylored/infra-advisor-ai/tree/main/mobile/cross-platform/maui).
-
-Run the MAUI clients from the repository root:
-
-- `make run-android`: run on the connected Android emulator.
-- `make run-ios`: run on the currently booted iOS simulator.
-- `make run-ios IOS_SIMULATOR_UDID=SIMULATOR-UDID`: run on a specific iOS simulator.
-
-The iOS target passes the selected UDID to the .NET launcher so it does not start a different compatible simulator.
-
-## MAUI release configuration
-
-`Datadog.Maui` uploads Android R8 mappings and iOS dSYMs when `DatadogUploadSymbols=true`.
-
-Add these GitHub Actions secrets:
-
-- `DD_API_KEY`: Datadog API key.
-- `DD_APP_KEY`: Datadog application key.
-- `MAUI_IOS_SIGNING_CERTIFICATE_BASE64`: Base64-encoded Development or Ad Hoc `.p12`.
-- `MAUI_IOS_SIGNING_CERTIFICATE_PASSWORD`: `.p12` password.
-- `APP_STORE_CONNECT_KEY_ID`: App Store Connect API key ID.
-- `APP_STORE_CONNECT_ISSUER_ID`: App Store Connect API issuer ID.
-- `APP_STORE_CONNECT_PRIVATE_KEY`: App Store Connect `.p8` contents.
-
-Android uses a temporary test keystore generated during the workflow. The iOS signing values are required only when producing an installable IPA; `build-only` produces a simulator `.app` without them.
-
-Add these GitHub Actions variables:
-
-- `DATADOG_SYNTHETICS_MAUI_ANDROID_APPLICATION_ID`: Android Mobile App Testing application ID.
-- `DATADOG_SYNTHETICS_MAUI_IOS_APPLICATION_ID`: iOS Mobile App Testing application ID.
-
-The Synthetics IDs are platform-specific Mobile App Testing upload targets. They are separate from the shared MAUI RUM application ID.
-
-Run **Build and sync .NET MAUI mobile applications** from GitHub Actions:
-
-- `build-only`: build an Android APK and iOS simulator app.
-- `upload-symbols`: build and upload mapping and dSYM files.
-- `build-and-sync`: build, upload symbols, and upload the APK and IPA to Mobile App Testing.
-
-The same variable names are listed in `.env.example` as a setup template. Keep API keys and signing material in GitHub Secrets, never in committed environment files.
+Continue to [Browser RUM](../rum/) to compare the web path or [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for the backend media boundary.

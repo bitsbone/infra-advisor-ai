@@ -1,178 +1,103 @@
 ---
-title: Local Setup
-description: Running InfraAdvisor AI locally without an AKS cluster
+title: Run the supported local stack
+description: Start the local infrastructure and one agent path while recognizing which production dependencies are not supplied by Docker Compose
+docType: guide
+audience:
+  - application-developer
+maturity: partial
+verifiedOn: 2026-08-27
+sidebar:
+  order: 1
+  label: Local setup
 ---
 
-Run InfraAdvisor AI locally without an AKS cluster. You'll need Redis and Kafka running locally (via Docker), Azure credentials for OpenAI/Search/Storage, and each service started separately.
+The checked-in Docker Compose file supplies Redis, a Redpanda-compatible Kafka endpoint, and the two synthetic topics. It does **not** supply PostgreSQL, Azure OpenAI, Azure AI Search, or Blob Storage. A complete authenticated web workflow therefore needs additional local or remote dependencies.
 
-## 1. Clone and configure
+## 1. Configure external services
 
 ```bash
-git clone https://github.com/kyletaylored/infra-advisor-ai.git
-cd infra-advisor-ai
 cp .env.example .env
-# Fill in Azure OpenAI, Search, Storage keys at minimum
-set -a && source .env && set +a
+set -a
+source .env
+set +a
 ```
+
+Use development credentials and keep `.env` ignored. At minimum, agent behavior needs the configured Azure OpenAI and Search resources. Authentication and durable conversations require a reachable PostgreSQL `DATABASE_URL`.
 
 ## 2. Start Redis and Kafka
 
 ```bash
 docker compose up -d
+docker compose ps
 ```
 
-The `docker-compose.yml` starts:
-- Redis on `localhost:6379`
-- Kafka on `localhost:9092`
-- Zookeeper (Kafka dependency)
+Wait for Redis and Kafka to become healthy. `kafka-init` creates `infra.query.events` and `infra.eval.results`.
 
-## 3. Start MCP Server
+## 3. Start the Python MCP server
 
 ```bash
 cd services/mcp-server
-uv sync
-uv run uvicorn src.main:app --reload --port 8000
+uv sync --frozen
+LOCAL=1 uv run uvicorn src.main:app --reload --port 8000
 ```
 
-Verify:
-```bash
-curl http://localhost:8000/health | python3 -m json.tool
-```
+Verify `http://localhost:8000/health` before starting the agent.
 
-## 4. Start Agent API (Python)
+## 4. Start one agent backend
+
+Python:
 
 ```bash
 cd services/agent-api
-uv sync
+uv sync --frozen
 MCP_SERVER_URL=http://localhost:8000/mcp \
 REDIS_HOST=localhost \
 KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
 uv run uvicorn src.main:app --reload --port 8001
 ```
 
-Verify:
-```bash
-curl http://localhost:8001/health | python3 -m json.tool
-```
-
-## 4b. Start Agent API (.NET) — optional
-
-Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
+.NET can run separately on another port, preferably against the .NET MCP server:
 
 ```bash
+cd services/mcp-server-dotnet
+dotnet run --urls http://localhost:8004
+
+# in another shell
 cd services/agent-api-dotnet
-dotnet restore
-
-AZURE_OPENAI_ENDPOINT=<your-endpoint> \
-AZURE_OPENAI_API_KEY=<your-key> \
-MCP_SERVER_URL=http://localhost:8000/mcp \
+MCP_SERVER_URL=http://localhost:8004/mcp \
 REDIS_HOST=localhost \
 KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
 dotnet run --urls http://localhost:8003
 ```
 
-The .NET backend listens on port 8003 locally (the Python backend owns 8001). In the cluster both listen on 8001 in separate pods.
+Both paths still require the relevant Azure environment variables.
 
-Verify:
-```bash
-curl http://localhost:8003/health | python3 -m json.tool
-```
+## 5. Add authentication only with PostgreSQL
 
-> **Conversation persistence (.NET):** Add `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/infraadvisor` to the environment above. Tables are created automatically on startup.
-
-## 4c. Start MCP Server (.NET) — optional
-
-```bash
-cd services/mcp-server-dotnet
-dotnet restore
-
-AZURE_OPENAI_ENDPOINT=<your-endpoint> \
-AZURE_OPENAI_API_KEY=<your-key> \
-AZURE_SEARCH_ENDPOINT=<your-endpoint> \
-AZURE_SEARCH_API_KEY=<your-key> \
-dotnet run --urls http://localhost:8004
-```
-
-Then point the .NET Agent API at it: `MCP_SERVER_URL=http://localhost:8004/mcp`.
-
-## 5. Start Auth API
+The Auth API is PostgreSQL-specific; SQLite is not a supported drop-in. Start or connect to a disposable PostgreSQL database, set `DATABASE_URL` and `JWT_SECRET`, then run:
 
 ```bash
 cd services/auth-api
-uv sync
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/infraadvisor \
+uv sync --frozen
 uv run uvicorn src.main:app --reload --port 8002
 ```
 
-Or use SQLite for local dev (modify `database.py` connection string):
-```python
-engine = create_engine("sqlite:///./auth.db")
-```
+The service creates its schema on startup. Do not point local experiments at a shared production database.
 
-## 6. Start the UI
+## 6. Understand the UI limitation
 
-```bash
-cd services/ui
-npm install
-npm run dev
-```
+The current Vite development proxy listens on port 3000 and forwards `/api` to the Python Agent API (or `VITE_AGENT_API_URL`). It does not reproduce the deployed nginx routes for `/auth` and `/api-dotnet`. Running `npm run dev` is useful for frontend work, but a complete local multi-backend/auth flow needs explicit proxy work or the deployed environment.
 
-Opens at `http://localhost:5173`.
+That limitation is documented here so a developer does not spend time debugging services that Vite never routes to.
 
-The Vite dev server proxies `/api/*` → `localhost:8001` and `/auth/*` → `localhost:8002` (configured in `vite.config.ts`).
+## Optional local telemetry
 
-## 7. Test a query
-
-1. Register at `http://localhost:5173`
-2. Ask: `"Show bridges in Harris County TX with sufficiency below 50"`
-
-## Running without all dependencies
-
-You can run the MCP Server standalone to test individual tools:
-
-```bash
-curl -X POST http://localhost:8000/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_bridge_condition","arguments":{"state":"TX","county":"Harris","max_sufficiency":50,"limit":5}}}'
-```
-
-## Environment variable tips
-
-For local dev, keep a `.env.local` for machine-specific overrides:
-
-```bash
-# .env.local (not committed)
-MCP_SERVER_URL=http://localhost:8000/mcp
-REDIS_HOST=localhost
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/infraadvisor
-```
-
-Source both files:
-```bash
-set -a && source .env && source .env.local && set +a
-```
-
-## Vite dev server proxy
-
-`vite.config.ts` proxies both backends:
-
-| Browser path | Proxied to |
-|-------------|-----------|
-| `/api/*` | `http://localhost:8001` (Python Agent API) |
-| `/api-dotnet/*` | `http://localhost:8003` (.NET Agent API) |
-| `/auth/*` | `http://localhost:8002` (Auth API) |
-
-Switch backends in the UI using the **Python / .NET** toggle in the chat toolbar.
-
-## Disabling Datadog in local dev
-
-`ddtrace.auto` is a no-op when no Datadog Agent is reachable — it just produces warnings. To suppress:
+Without a reachable Datadog Agent, disable tracing to reduce warnings:
 
 ```bash
 DD_TRACE_ENABLED=false uv run uvicorn src.main:app --reload --port 8001
 ```
 
-## Native mobile apps
+Disabling telemetry changes what can be verified. Re-enable it when working on tracing, correlation, security, or evaluation behavior.
 
-The native iOS and Android clients can be built independently and use the deployed InfraAdvisor APIs by default, so the backend stack above is not required for a first run. See [Native Mobile RUM](/infra-advisor-ai/observability/mobile-rum/#run-locally) for prerequisites, simulator/emulator steps, build-time overrides, tests, and Datadog verification.
+Stop local infrastructure with `docker compose down`. Continue to [Testing](../testing/) before submitting changes.

@@ -1,181 +1,66 @@
 ---
-title: APM & Tracing
-description: Distributed tracing span coverage, log-trace correlation, DBM, and error linking
+title: Follow application traces
+description: Understand span ownership, log and database joins, and the boundaries between Python ddtrace and .NET OpenTelemetry
+docType: guide
+audience:
+  - application-developer
+  - observability-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 1
+  label: APM & tracing
 ---
 
-All Python services and the Airflow scheduler use `ddtrace` for automatic instrumentation. `import ddtrace.auto` is the **first import** in every Python service entrypoint.
+APM records the application work surrounding an agent run: HTTP requests, Redis and PostgreSQL access, Kafka operations, MCP calls, provider requests, and Airflow tasks. Agent Observability adds AI-specific meaning; it does not replace this application trace.
 
-The .NET services (`agent-api-dotnet`, `mcp-server-dotnet`) use **OpenTelemetry** with OTLP HTTP export to the Datadog Agent at port 4318. The Agent API also loads the Datadog .NET profiler for App and API Protection, but `DD_APM_TRACING_ENABLED=false` prevents that profiler from producing a parallel application trace tree. See [App & API Protection](/infra-advisor-ai/observability/app-api-protection/) for the tracer-versus-gateway decision and the exact security boundary.
+## Know who creates each span
 
-## Span coverage — Python services
+| Runtime | Automatic coverage | Explicit coverage | Export path |
+|---|---|---|---|
+| Python services | FastAPI, HTTP clients, Redis, PostgreSQL, Kafka, supported AI libraries | Load-generator run, Blob upload, and application orchestration | `ddtrace` through Datadog Agent |
+| .NET services | ASP.NET Core, HTTP clients, Npgsql, Microsoft AI decorators | Redis, agent-specific tasks, security HTTP checks, and project operations | OpenTelemetry OTLP HTTP through Datadog Agent |
+| Airflow task processes | HTTP, Azure/OpenAI integrations where supported | Blob and pipeline operations | `ddtrace` initialized in each task process |
 
-### MCP Server (`mcp-server`)
+Do not infer coverage from a package reference. Verify that the instrumentation is registered, the operation executes, export succeeds, and the span is classified as expected.
 
-| Span type | Source | Tags |
-|-----------|--------|------|
-| HTTP request | FastAPI (auto) | `http.method`, `http.url`, `http.status_code` |
-| Outbound HTTP (ArcGIS, FEMA, EIA, EPA, SAM.gov, etc.) | httpx (auto) | `http.url`, `peer.hostname` |
-| Azure AI Search | azure-search-documents (auto) | index name, operation |
-| Outbound HTTP (Azure OpenAI Responses for web search) | httpx (auto) | `http.url` ends with `/openai/v1/responses` |
+The .NET AI path sets `EnableSensitiveData=false`. Model and agent spans should retain timing and bounded metadata without prompt, response, or attachment content.
 
-### Agent API (`agent-api`)
+## Correlate structured logs
 
-| Span type | Source | Tags |
-|-----------|--------|------|
-| HTTP request | FastAPI (auto) | |
-| Redis commands | redis-py (auto) | `db.type`, `db.statement` |
-| Outbound HTTP (MCP Server) | httpx (auto) | |
-| Kafka produce | confluent-kafka (auto) | `messaging.destination`, `messaging.system` |
-| LangChain chat model | langchain (auto) | model, token counts |
-| LangGraph executor | langgraph (auto) | |
+Logs emitted while a span is active include `dd.trace_id` and `dd.span_id`. Python uses Datadog log injection; .NET uses a Serilog enricher that converts W3C activity identifiers to Datadog-compatible decimal fields. Airflow configures a JSON formatter and initializes tracing inside LocalExecutor task subprocesses.
 
-### Auth API (`auth-api`)
+Verify correlation from the trace's Logs pivot. A log in the same time window is not sufficient—it must carry the matching trace identity and service context.
 
-| Span type | Source | Tags |
-|-----------|--------|------|
-| HTTP request | FastAPI (auto) | |
-| PostgreSQL queries | psycopg2 (auto) | `db.statement`, `db.type` |
-| DBM propagation | ddtrace (auto) | Full trace context in SQL comments |
+## Correlate PostgreSQL work
 
-### Load Generator (`load-generator`)
+Python database integrations use full DBM propagation where configured. .NET emits Npgsql spans and the collector applies the DBM attributes expected by Datadog. The PostgreSQL integration also needs stable database host identity.
 
-| Span type | Source | Tags |
-|-----------|--------|------|
-| `load_generator.run` | Manual `tracer.trace()` | `query_count` |
-| Kafka produce | confluent-kafka (auto) | |
+To validate the join, start from a request that saves or loads a conversation, open its SQL span, and follow the DBM pivot. If it is empty, inspect statement capture, propagation mode, collector processing, and reported hostname independently.
 
-### Airflow Scheduler
+## Preserve source identity
 
-| Span type | Source | Tags |
-|-----------|--------|------|
-| HTTP (external API calls in DAG tasks) | httpx (auto) | |
-| Azure Blob Storage uploads | Manual `tracer.trace()` via `_dd_blob.py` | `blob.container`, `blob.path`, `dag.id`, `blob.size_bytes` |
-| Azure AI Search upserts | azure-search-documents (auto) | |
-| Azure OpenAI embeddings | openai (auto) | |
+Deployed .NET projects embed Source Link metadata and retain portable symbols. Datadog's repository integration and matching release commit are also required before a stack frame can open the correct source. Mobile symbol upload is a separate release workflow for R8 mappings and dSYMs.
 
-## Span coverage — .NET services
+## Keep health probes out of request analysis
 
-The .NET services share the same `OTEL_EXPORTER_OTLP_ENDPOINT` (port 4318 on the Datadog Agent) and emit spans that appear in Datadog APM alongside the Python services.
+Workloads expose:
 
-### Agent API (.NET) (`agent-api-dotnet`)
+- `/livez` for shallow process health;
+- `/readyz` for cached readiness state;
+- `/health` for human diagnostics and older consumers.
 
-| Span type | Source | Tags |
-|-----------|--------|------|
-| HTTP request | `AddAspNetCoreInstrumentation` (auto) | `http.method`, `http.url`, `http.status_code` |
-| Outbound HTTP (MCP Server) | `AddHttpClientInstrumentation` (auto) | `http.url`, `peer.hostname` |
-| PostgreSQL queries | `AddNpgsql()` (auto) | `db.statement`, `db.system=postgresql` |
-| Redis commands | StackExchange.Redis (manual via ActivitySource) | |
-| LLM span (router + specialists) | `LlmTelemetry.StartLlmActivity` (custom) | `openinference.span.kind=LLM`, `gen_ai.system`, `gen_ai.request.model`, `gen_ai.prompt.0.content` |
+Kubernetes probes use the shallow routes. Python sampling rules and .NET ASP.NET Core filters exclude the verified liveness/readiness resource names before export. This reduces ingest volume without hiding login, query, model, tool, media, conversation, or error traffic.
 
-### MCP Server (.NET) (`mcp-server-dotnet`)
+After a tracer upgrade, confirm route resource names on a canary before broadening an exclusion. A retention filter changes indexing; it does not prevent span ingestion.
 
-| Span type | Source | Tags |
-|-----------|--------|------|
-| HTTP request | `AddAspNetCoreInstrumentation` (auto) | |
-| Outbound HTTP (government APIs) | `AddHttpClientInstrumentation` (auto) | |
-| Azure AI Search | `AddHttpClientInstrumentation` (auto, via REST calls) | |
+## Investigation exercise
 
-## Code origin
+1. Submit a request that calls an MCP tool and persists a conversation.
+2. Locate the root HTTP trace and identify the slowest service boundary.
+3. Follow one matching log by trace ID.
+4. Follow one PostgreSQL span into DBM.
+5. Confirm the model or agent span omits sensitive content.
+6. Verify liveness/readiness traffic is absent while the real request remains complete.
 
-`DD_CODE_ORIGIN_FOR_SPANS_ENABLED=true` is set on all four service configmaps. When viewing a span in Datadog APM, the **Code Origin** section links directly to the source file and line that created the span.
-
-### .NET Source Link
-
-The repository's deployable .NET services, experiments, and MAUI assemblies reference `Microsoft.SourceLink.GitHub` as a private build dependency. Release builds write the GitHub repository and commit mapping into portable PDBs so Datadog can associate symbolicated stack frames with the matching source revision without embedding credentials or application data.
-
-Source Link is enabled for:
-
-- `services/aca-agentic-poc-dotnet`
-- `services/agent-api-dotnet`
-- `services/mcp-server-dotnet`
-- `experiments/dotnet-maf-poc`
-- `experiments/dotnet-otel-poc`
-- `mobile/cross-platform/maui/src/InfraAdvisor.Mobile`
-- `mobile/cross-platform/maui/src/InfraAdvisor.Mobile.Core`
-- `mobile/cross-platform/maui/src/InfraAdvisor.Mobile.Presentation`
-
-Test assemblies are excluded because they are not deployed. Service publish outputs retain portable PDBs, while the MAUI release workflow uploads the platform symbol files generated from the same revision. Datadog's GitHub integration must also be connected to `kyletaylored/infra-advisor-ai` for source links in the Datadog UI to resolve for authorized users.
-
-## Log-trace correlation
-
-Structured JSON logs from all services include `dd.trace_id` and `dd.span_id` fields. When you view a trace in Datadog APM, the correlated logs panel shows logs from the same trace ID.
-
-The Airflow scheduler uses a custom `DDJsonFormatter` (defined in `airflowLocalSettings` in `k8s/airflow/values.yaml`) that injects these fields into every task log line:
-
-```json
-{
-  "timestamp": "2026-04-23T05:00:12.341Z",
-  "level": "INFO",
-  "logger": "airflow.task",
-  "message": "Fetched 2000 NBI bridge records",
-  "dd.trace_id": "3421959702764693",
-  "dd.span_id": "8721043291846321",
-  "dd.env": "dev",
-  "dd.service": "airflow-scheduler",
-  "dag_id": "nbi_refresh",
-  "task_id": "fetch_nbi_bridges",
-  "run_id": "manual__2026-04-23T05:00:00+00:00"
-}
-```
-
-`sitecustomize.py` (in `/opt/airflow/dags/`) ensures ddtrace is initialized in every LocalExecutor task subprocess (not just the scheduler main process), so task logs get trace IDs even when tasks run in separate Python processes.
-
-## Database Monitoring (DBM)
-
-`DD_DBM_PROPAGATION_MODE=full` is set on all services that use PostgreSQL directly: `auth-api`, `agent-api`, and `agent-api-dotnet`. This injects full trace context as SQL comments, enabling **"View Trace"** links from every DBM query sample back to the originating APM trace.
-
-**Python services** (ddtrace): propagation is injected automatically by `psycopg2` instrumentation:
-
-```sql
-/*dddbs='agent-api',dde='dev',ddh='agent-api-pod',ddps='agent-api',ddpv='latest',
-traceparent='00-3421959702764693-8721043291846321-01'*/
-SELECT * FROM conversations WHERE user_id = $1
-```
-
-**agent-api-dotnet** (Npgsql + OTel): `AddNpgsql()` in the OTel tracing pipeline captures database spans. The `DD_DBM_PROPAGATION_MODE=full` variable is present in the configmap for future Npgsql DDM propagation support — Npgsql DB spans already appear in APM via OTel.
-
-In Datadog DBM, each query sample shows a **"View Trace"** link that opens the originating APM trace.
-
-## Error trace linking
-
-When the Agent API returns a 500, the response body includes the ddtrace trace ID:
-
-```json
-{
-  "detail": "OpenAI connection timeout",
-  "trace_id": "3421959702764693"
-}
-```
-
-The UI renders a **"View trace →"** link that opens `https://us3.datadoghq.com/apm/trace/{trace_id}`.
-
-## Health probes without trace noise
-
-Application workloads expose three compatible health routes:
-
-- `/livez` is a shallow process check and never calls a database, model, MCP server, or third-party provider.
-- `/readyz` uses startup state or cached connectivity to decide whether the pod should receive traffic; it does not invoke paid or external APIs.
-- `/health` remains available for human diagnostics and older integrations.
-
-Kubernetes uses a startup probe every five seconds for up to two minutes, readiness every 30 seconds, and liveness every 60 seconds. This keeps rollout and recovery behavior while substantially reducing the steady stream of probe requests that previously ran every 15 and 30 seconds.
-
-Python services keep 100% sampling for real demo traffic but apply first-match `DD_TRACE_SAMPLING_RULES` with a zero sample rate for the verified `GET /livez` and `GET /readyz` resources. The .NET services apply the equivalent exclusion in `AddAspNetCoreInstrumentation` before export. This source-level control reduces ingested spans; an APM retention filter alone would only change indexing. Kubernetes health metrics and pod conditions remain the authoritative probe signals.
-
-After deployment, compare ingested span volume by service/resource and confirm that real login, query, model, tool, media, conversation, and error traces remain complete. If a tracer upgrade changes route resource names, inspect a canary pod before adjusting the sampling rule rather than broadening the filter to all health-like paths.
-
-## Service map
-
-Navigate to **Datadog → APM → Service Map** to see the auto-discovered service dependency graph:
-
-```
-browser → ui/nginx → agent-api         → mcp-server         → [arcgis, openfema, eia, epa, samgov, azure-openai]
-                   → agent-api-dotnet  → mcp-server-dotnet  → [arcgis, openfema, eia, epa, samgov, azure-openai]
-                   → auth-api          → postgres
-                   → postgres (conversations)
-                   → redis
-                   → kafka
-airflow-scheduler  → [openai, blob, search]
-load-generator     → kafka
-```
-
-Python services appear as `ddtrace`-instrumented services. .NET services appear as OpenTelemetry-sourced services under the same `dd.env=dev` tag. Both are visible in the same service map.
+Continue to [Agent trace investigation](/infra-advisor-ai/llm-engineering/monitoring/spans-and-traces/) for the AI-specific tree or [App and API Protection](../app-api-protection/) for the .NET dual-runtime boundary.

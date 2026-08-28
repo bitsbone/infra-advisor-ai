@@ -1,253 +1,50 @@
 ---
 title: MCP Server (Python)
-description: Data access layer with 11 MCP tools for InfraAdvisor AI
+description: Understand the stateless FastMCP boundary between agent reasoning and external infrastructure providers
+docType: reference
+audience:
+  - application-developer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 3
 ---
 
-**Port:** 8000 | **Protocol:** Model Context Protocol (HTTP) | **Replicas:** 2
+The Python MCP server turns provider-specific APIs and the project knowledge index into bounded tools. It owns authentication to sources, request mapping, normalization, and safe failure results. It does not own conversation memory or decide which tool the agent should call.
 
-The MCP Server is the data access layer for InfraAdvisor AI. It exposes 11 tools over the [Model Context Protocol](https://modelcontextprotocol.io/) HTTP transport. The Agent API calls these tools on behalf of the LLM; no reasoning happens here — only data fetching, transformation, and document templating.
+## Transport and lifecycle
 
-All external API calls are instrumented with Datadog APM spans and custom metrics.
+FastMCP exposes Streamable HTTP at `/mcp`. The server runs in stateless HTTP mode because the Python agent adapter creates short-lived client interactions. This differs from the .NET transport and removes the need for load-balancer session affinity on this path.
 
-## Tools
+`/health` reports the service and tool catalog. `/livez` and `/readyz` support shallow Kubernetes probes without calling providers.
 
-### `get_bridge_condition`
+## Provider boundaries
 
-Fetches bridge inspection records from the [FHWA National Bridge Inventory](https://www.fhwa.dot.gov/bridge/nbi.cfm) via ArcGIS REST FeatureServer.
+The tool catalog covers bridges, disasters, energy, water, ERCOT, TxDOT, federal opportunities, contract awards, web procurement, project knowledge, and document drafting. See the [MCP tool guide](../mcp-tools/) for choosing among them.
 
-**Parameters:**
-- `state` (required) — Two-letter state abbreviation (`TX`, `CA`, etc.)
-- `county` — County name filter (partial match)
-- `max_sufficiency` — Upper bound on sufficiency rating (0–100)
-- `structural_condition` — Minimum deck/superstructure/substructure condition (0–9)
-- `limit` — Max records (default 100)
+Each tool should:
 
-**Returns:** List of bridge objects with:
-- Structure number, facility, location, county
-- Year built, Average Daily Traffic (ADT)
-- Deck / superstructure / substructure condition codes (0–9) with human-readable labels
-- Scour-critical flag, structurally deficient flag
-- Sufficiency rating (0–100)
-- Last inspection date, latitude/longitude
+1. validate and bound its input;
+2. call the narrowest provider endpoint;
+3. normalize source fields without inventing meaning;
+4. return a stable empty, partial, or error result;
+5. retain enough public provenance for citations;
+6. exclude credentials, raw bodies, contacts, and arbitrary provider fields from telemetry.
 
-**Key field names** (exact FHWA schema, do not rename):
-`STRUCTURE_NUMBER_008`, `FACILITY_CARRIED_007`, `STATE_CODE_001`, `COUNTY_CODE_003`,
-`SUFFICIENCY_RATING`, `DECK_COND_058`, `SUPERSTRUCTURE_COND_059`, `SUBSTRUCTURE_COND_060`
+`get_procurement_opportunities` is the strongest example. It combines SAM.gov and Grants.gov into the versioned `procurement_opportunities` artifact while preserving partial-provider failure and missing-field information.
 
----
+## Observability boundary
 
-### `get_disaster_history`
+`ddtrace.auto` loads first, covering supported FastAPI/HTTP/Azure/OpenAI calls. Tool wrappers add bounded counts, latency, source, and status fields.
 
-Fetches federal disaster declarations from [OpenFEMA](https://www.fema.gov/about/reports-and-data/openfema).
+This deployment explicitly disables Agent Observability payload capture and HTTP query-string tagging. Those controls prevent tool arguments/results and the SAM.gov key from entering broad telemetry. Ordinary APM timing, safe metrics, and normalized result-summary logs remain available.
 
-**Parameters:**
-- `state` — Two-letter state abbreviation
-- `incident_type` — Flood, Hurricane, Tornado, Wildfire, Winter Storm, etc.
-- `start_date` / `end_date` — ISO date strings
-- `declaration_type` — DR (major), EM (emergency), FM (fire)
-- `limit` — Max records (default 100)
+## Failure behavior
 
-**Returns:** List of disaster declarations with:
-- Disaster number, title, state, county/area
-- Incident type, declaration type
-- Declaration date, incident begin/end dates, closeout date
-- Program declarations (IHP, PA, HM, etc.)
+Expected provider failures return structured data with a stable category and retry guidance so the agent can decide whether to continue. Logs record provider, status/code, response size or fingerprint, and retry class—not exception prose or the response body.
 
----
+## Verify a tool change
 
-### `get_energy_infrastructure`
+Run the focused provider test and `make test-mcp`. Cover successful, empty, malformed, paginated, partial, timeout, authentication, and rate-limit responses as applicable. Assert the outbound request and normalized result, then search logs/spans for sentinel secrets and provider body content that must remain absent.
 
-Fetches state electricity generation and capacity data from the [EIA API v2](https://www.eia.gov/opendata/).
-
-**Parameters:**
-- `state` — Two-letter state abbreviation
-- `fuel_type` — COL (coal), NG (natural gas), NUC (nuclear), SUN (solar), WND (wind), WAT (hydro), GEO (geothermal), OTH (other)
-- `year_start` / `year_end` — Integer year range
-- `limit` — Max records
-
-**Returns:** Aggregated generation (MWh) and capacity (MW) by state, fuel type, and year.
-
-**Note:** EIA data covers generation/capacity metrics only. Cost, plant age, investment, and vulnerability data are not available through this tool.
-
----
-
-### `get_water_infrastructure`
-
-Fetches water infrastructure data from two sources:
-1. **EPA SDWIS** — [Safe Drinking Water Information System](https://enviro.epa.gov/enviro/efservice) (community water systems, violations)
-2. **TWDB 2027 State Water Plan** — [Texas Water Development Board](https://www.twdb.texas.gov/waterplanning/data/rwp-database/index.asp) (water supply projects)
-
-**Parameters:**
-- `state` — Two-letter state abbreviation
-- `pws_type` — CWS (community), NTNCWS (non-transient non-community), TNCWS (transient)
-- `source_type` — GW (groundwater), SW (surface water), GU (groundwater under influence)
-- `query` — Keyword filter on system name or project description
-
-**Returns:** Water system records with compliance status, population served, and violation history; TWDB project records with cost estimates (by decade 2030–2080), supply volume, and project type.
-
----
-
-### `get_ercot_energy_storage`
-
-Fetches Texas grid energy storage data from the [ERCOT public API](https://www.ercot.com/gridinfo/resource).
-
-**Parameters:**
-- `start_time` / `end_time` — ISO datetime strings (data is at 4-second intervals)
-- `resource_name` — Filter by battery/storage resource name
-
-**Returns:** Energy storage charge/discharge timeseries with MW values at 4-second resolution.
-
-**Coverage:** Texas only (ERCOT grid).
-
----
-
-### `search_txdot_open_data`
-
-Searches the [TxDOT Open Data portal](https://gis-txdot.opendata.arcgis.com/) (ArcGIS Hub).
-
-**Parameters:**
-- `query` — Keyword search
-- `dataset_type` — traffic_counts, construction_projects, pavement, crashes, bridges
-- `limit` — Max results
-
-**Returns:** Dataset records from TxDOT GIS portal with AADT (Annual Average Daily Traffic), construction project status, and other transport metrics.
-
-**Coverage:** Texas only.
-
----
-
-### `get_procurement_opportunities`
-
-Searches for active federal contract and grant opportunities from:
-1. **SAM.gov** — Federal contract solicitations (`api.sam.gov/opportunities/v2/search`)
-2. **Grants.gov** — Federal assistance opportunities (`api.grants.gov/v1/api/search2`)
-
-**Parameters:**
-- `query` — Keywords (NAICS code derived automatically from query)
-- `geography` — State name, two-letter state abbreviation, or a location containing one
-- `naics_codes` — Optional explicit NAICS codes
-- `min_value_usd` / `max_value_usd` — Inclusive funding range; opportunities without a usable funding value are excluded when either bound is present
-- `opportunity_types` — `contract`, `grant`, or both
-- `limit` — Requested result count, capped at 20 by the public artifact contract
-
-**Returns:** A `procurement_opportunities` chat artifact version `1.0`, capped at 20 normalized contract/grant records and sorted by deadline. Before return, the producer rebuilds each item from an allowlist, derives provider/type identity, validates dates and numeric bounds, removes unsupported classifications, strips URL credentials/query strings/fragments, and discards every additional provider field. The envelope distinguishes complete, empty, partial, and failed provider results and carries provider counts, truncation, safe source links, funding/classification fields, and explicit missing-data metadata. See [Structured Chat Artifacts](/infra-advisor-ai/llm-engineering/chat-artifacts/).
-
-**Date range:** The SAM.gov request is bounded to its one-year search limit. Grants.gov uses its current Search2 response under `data.oppHits`.
-
----
-
-### `get_contract_awards`
-
-Searches historical federal contract awards from [USASpending.gov](https://www.usaspending.gov/).
-
-**Parameters:**
-- `query` — Keywords (NAICS derived automatically)
-- `state` — Filter by place of performance state
-- `agency_names` — List of agency name filters
-- `min_award_usd` — Minimum award amount in dollars
-- `limit` — Max records
-
-**Returns:** Award records with recipient, amount, agency, contract description, location, NAICS code, and award date.
-
-**Use:** Competitive intelligence — see which firms are winning infrastructure contracts.
-
----
-
-### `search_web_procurement`
-
-Searches government websites for state/local RFPs, bond election information, and procurement notices via [Azure OpenAI's Responses API](https://learn.microsoft.com/azure/ai-services/openai/) with the `web_search_preview` tool. The model runs a live web search and extracts structured procurement records in one round trip — no separate vendor key required.
-
-**Parameters:**
-- `query` — Search query
-- `state` — Focus on specific state
-- `limit` — Max results
-
-**Returns:** Extracted procurement records from `.gov`, `.us`, DemandStar, BidNet, and BonfireHub pages. Each record has title, description, agency, deadline, and source URL where available.
-
-**Requires:** `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY`; the configured `AZURE_OPENAI_DEPLOYMENT_NAME` must support `web_search_preview` (gpt-4o / gpt-4.1 family — not gpt-4.1-nano).
-
----
-
-### `search_project_knowledge`
-
-Hybrid semantic + BM25 search against the Azure AI Search knowledge base populated by the Airflow pipelines.
-
-**Parameters:**
-- `query` — Natural language or keyword search
-- `domain` — Filter by domain (transportation, water, energy, environmental, business_development)
-- `document_type` — Filter by doc type
-- `top` — Number of results (default 5)
-
-**Returns:** Ranked document chunks with content, source, domain, and relevance score.
-
-**Index:** `infra-advisor-knowledge` — populated by all 9 Airflow DAGs.
-
-See [MCP Tool Reference](/services/mcp-tools) for the complete, authoritative tool signatures.
-
----
-
-### `draft_document`
-
-Generates structured document scaffolds using Jinja2 templates. No LLM is invoked — this tool produces deterministic template output.
-
-**Parameters:**
-- `document_type` — `scope_of_work`, `risk_summary`, `cost_estimate_scaffold`, `funding_positioning_memo`
-- `context` — Dict of values to inject into template fields
-
-**Returns:** Rendered document text (Markdown) for the specified document type.
-
-**Templates:**
-- `scope_of_work` — SOW with scope, deliverables, timeline, exclusions
-- `risk_summary` — Risk register with likelihood, impact, mitigation
-- `cost_estimate_scaffold` — Line-item cost table with totals
-- `funding_positioning_memo` — Federal funding opportunity summary with eligibility and match requirements
-
----
-
-## Health endpoint
-
-```
-GET /health
-GET /livez
-GET /readyz
-```
-
-`/health` returns backward-compatible service diagnostics and API key configuration. `/livez` is the shallow Kubernetes process check and `/readyz` reports serving readiness without calling a provider.
-
-```json
-{
-  "status": "ok",
-  "tools": ["get_bridge_condition", "get_disaster_history", ...],
-  "keys_configured": {
-    "samgov": true,
-    "azure_openai": true
-  }
-}
-```
-
-## Observability
-
-**Custom Datadog metrics (emitted on every tool call):**
-
-| Metric | Tags | Description |
-|--------|------|-------------|
-| `mcp.tool.calls` | `tool`, `status` (success/error) | Tool invocation count |
-| `mcp.tool.latency_ms` | `tool` | End-to-end tool execution time |
-| `mcp.external_api.latency_ms` | `source` (arcgis_nbi, openfema, eia, etc.) | Upstream API response time |
-| `mcp.external_api.errors` | `source`, `error_type` | Upstream API error count |
-
-**APM:** `ddtrace.auto` instruments all outbound HTTP requests via `httpx`. Spans appear in Datadog APM under service `mcp-server`.
-
-## Error handling
-
-Each tool returns structured errors rather than raising exceptions, allowing the LLM to reason about failures:
-
-```python
-{
-  "error": "Azure AI Search index 'infra-advisor-knowledge' not found",
-  "action": "Run knowledge_base_init Airflow DAG (make run-dags) to initialize the index",
-  "retriable": false
-}
-```
-
-The `retriable: false` flag tells the Agent API's LangChain executor not to retry, preventing endless tool call loops.
+Compare the [.NET MCP server](../mcp-server-dotnet/) when changing a shared tool contract.

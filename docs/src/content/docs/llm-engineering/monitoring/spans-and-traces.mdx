@@ -1,148 +1,108 @@
 ---
-title: Spans and traces
-description: The shape of an LLM Observability trace, how to query it, and the UI patterns (sessions, agent view) that turn it into something useful.
+title: Investigate an agent trace
+description: Read one request as a sequence of agent decisions, model calls, tools, and supporting application work
+docType: lesson
+audience:
+  - application-developer
+  - observability-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+datadogDocs: https://docs.datadoghq.com/llm_observability/investigate/querying/
+learning:
+  estimatedMinutes: 15
+  objectives:
+    - Explain an agent response from its trace structure
+    - Use focused queries to find failures, slow operations, and tool decisions
 sidebar:
   order: 1
 ---
 
-import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
-import TraceViewer from "@components/TraceViewer.jsx";
-import traceData from "@data/trace-1169394720470872.json";
+import { Aside } from '@astrojs/starlight/components';
+import TraceViewer from '@components/TraceViewer.jsx';
+import FeatureStatus from '@components/FeatureStatus.astro';
+import ObservationChecklist from '@components/ObservationChecklist.astro';
+import traceData from '@data/trace-1169394720470872.json';
+
+<FeatureStatus status="stable" verifiedOn="2026-08-27" />
+
+A useful agent trace answers a causal question: how did this input become this answer? Read it from the request boundary inward rather than scanning every span equally.
 
 <TraceViewer client:load spans={traceData.spans} />
 
-Once your service is [instrumented](../../instrumentation/python/), every request produces an LLMObs trace. This page is about what that trace looks like, how to slice it, and the UI features that make it more than a pretty waterfall.
+## Read the trace in four passes
 
-## Anatomy of one /query trace
+### 1. Establish the request boundary
 
-Both InfraAdvisor backends produce a similar trace shape, with implementation-specific details. The keystone is one `trace_id` from RUM browser → agent → MCP server → upstream API, propagated via W3C `traceparent`.
+Begin with the root operation. Confirm the service, environment, version, duration, error state, and conversation or session identifiers. If the browser initiated the request, verify that the RUM context continues into the backend trace.
 
-<Tabs syncKey="lang">
-  <TabItem label="Python (ddtrace)">
+### 2. Follow agent decisions
 
-```
-[infra-advisor-ui]                                  SERVICE
-RUM browser trace                          (rum)    ← W3C traceparent injected
-└── [agent-api]
-    POST /api/query                        workflow ← FastAPI auto
-    └── query-processing                   workflow ← LLMObs.workflow()
-        ├── load-history                   task
-        ├── router (agent)                 agent    ← LLMObs.agent()
-        │   └── ChatOpenAI.ainvoke         llm      ← auto: langchain
-        ├── specialist-engineering (agent) agent    ← LLMObs.agent()
-        │   ├── ChatOpenAI.ainvoke         llm      ← auto
-        │   └── MCP tool call              tool     ← auto: mcp
-        │       └── HTTP POST → mcp-server (http)
-        └── extract-sources                task
-```
+Find the router, planner, specialist, or agent operations. Ask:
 
-  </TabItem>
-  <TabItem label=".NET (OpenTelemetry)">
+- Which domain or specialist was selected?
+- Did the agent use a tool when the question required current or external data?
+- Did it repeat a model or tool call unexpectedly?
+- Did a deterministic task become the latency bottleneck?
 
-```
-[infra-advisor-ui]                                  SERVICE
-RUM browser trace                          (rum)    ← W3C traceparent injected
-└── [agent-api-dotnet]
-    POST /query                            workflow ← AspNetCore
-    ├── classify_domain                    task     ← manual ActivitySource
-    ├── retrieve_best_practices            retrieval ← manual
-    │   └── embeddings                     embedding ← M.E.AI auto
-    └── invoke_agent                       agent    ← MAF auto
-        └── chat                           llm      ← M.E.AI auto
-            ├── HTTP POST → Azure OpenAI   (http)
-            └── execute_tool               tool     ← M.E.AI auto
-                └── HTTP POST → mcp-server (http)
-                    └── [mcp-server-dotnet]
-                        POST /mcp/         workflow
-                        └── tools/call     (mcp)
+### 3. Inspect model and tool evidence
+
+Model spans explain inference cost, tokens, latency, errors, and permitted input/output content. Tool spans explain which external capability the agent selected. Follow the tool call through MCP and into its provider operation when the trace crosses services.
+
+### 4. Correlate supporting signals
+
+Use APM, logs, database monitoring, RUM, and infrastructure metrics to explain what the Agent Observability spans alone cannot. A slow tool may actually be a slow provider request or database query.
+
+## Recognize the two backend shapes
+
+The frameworks emit different names, but the questions are the same:
+
+```text
+Python                              .NET
+query-processing                    HTTP request
+├── load-history                    ├── classify_domain
+├── router                          ├── retrieval / embeddings
+│   └── model                       └── invoke_agent
+└── specialist                         └── chat
+    ├── model                              └── execute_tool
+    └── MCP tool                               └── MCP server
 ```
 
-  </TabItem>
-</Tabs>
+Do not force identical trees merely for visual symmetry. Require equivalent visibility into decisions and boundaries.
 
-The two trees expose the same logical decisions (route → specialist → tool) under different framework idioms.
+## Query from a question
 
-## Querying spans
+| Question | Starting query |
+|---|---|
+| Which production requests failed? | `env:production status:error` |
+| Which model calls took more than five seconds? | `@meta.span.kind:llm duration:>5s` |
+| Which traces used the bridge tool? | `@meta.tools_called:get_bridge_condition` |
+| Which conversations have poor groundedness? | `@evaluations.meai_groundedness.value:<2` |
+| Did a prompt version regress? | Filter to spans with `@meta.prompt.version:*`, then group by version and compare the same evaluation |
 
-The DD trace explorer supports the full APM query language plus LLMObs-specific filters. The most useful shapes:
+Use **trace** search when the root operation should match. Use **span** search when any nested operation may match. Group results by trace when investigating one logical request rather than one operation.
 
-| Goal                              | Query                                                                            |
-| --------------------------------- | -------------------------------------------------------------------------------- |
-| All traces for one user/session   | `@ml_app:infra-advisor-ai @session.id:<uuid>`                                    |
-| Only failed queries               | `@ml_app:infra-advisor-ai status:error`                                          |
-| Slow LLM calls                    | `@ml_app:infra-advisor-ai operation_name:chat duration:>5s`                      |
-| One conversation, all turns       | `@ml_app:infra-advisor-ai @meta.gen_ai.conversation.id:<id>` group by `trace_id` |
-| Traces that used a specific tool  | `@ml_app:infra-advisor-ai @meta.tools_called:get_bridge_condition`               |
-| Tool routing accuracy regressions | `@ml_app:infra-advisor-ai @evaluations.tool_routing_accuracy.value:false`        |
+## Sessions and conversations are different
 
-Save these as **Saved Views** in the trace explorer. The trace explorer's "Group by → trace_id" view is the right default for LLMObs work because one logical request is always one trace.
+InfraAdvisor propagates the browser RUM session identifier so a trace can link to the user's replay. A conversation identifier groups turns in one chat. One browser session can contain several conversations, and one conversation can outlive a browser session.
 
-## Sessions and RUM linking
+Do not overload one identifier to represent both concepts. Use each for the question it answers:
 
-In LLMObs, a **session** is a series of related traces sharing a `session.id` tag. We set it from the browser-supplied RUM session header so LLMObs sessions group by browser session — and link to RUM session replay.
+- Session: what did this user experience in this browser visit?
+- Conversation: what happened across this chat's turns?
+- Trace: what work happened for this one request?
 
-<Tabs syncKey="lang">
-  <TabItem label="Python (ddtrace)">
-
-```python
-# In the FastAPI handler:
-rum_session = request.headers.get("X-DD-RUM-Session-ID")
-session_id = rum_session or internal_chat_uuid
-
-LLMObs.annotate(
-    span=workflow_span,
-    tags={
-        "session.id": session_id,
-        **({"session.rum_id": rum_session} if rum_session else {}),
-    },
-)
-```
-
-  </TabItem>
-  <TabItem label=".NET (OpenTelemetry)">
-
-```csharp
-// In the /query endpoint:
-var rumSession = httpContext.Request.Headers["X-DD-RUM-Session-ID"].FirstOrDefault();
-var sessionId = rumSession ?? internalChatUuid;
-Activity.Current?.SetTag("session.id", sessionId);
-if (rumSession != null) Activity.Current?.SetTag("session.rum_id", rumSession);
-```
-
-MAF's `AgentSession` also automatically emits `gen_ai.conversation.id` which DD groups by — orthogonal to `session.id`. The two coexist (session ≈ browser tab, conversation ≈ chat thread).
-
-  </TabItem>
-</Tabs>
-
-Click any LLMObs trace → "View session replay" to land on the user's actual click stream at the moment they sent the query.
-
-## The Agent view
-
-DD's "Agent" view in LLMObs collapses a trace into a decision-graph: nodes for each `agent` / `task` span, edges for sequential calls. It's the right view for explaining a single bad answer:
-
-- Did the router pick the wrong specialist? (compare `query.domain` tag to the actual query)
-- Did the specialist call the wrong tool? (look at `tools_called` and the tool's input args)
-- Did the LLM ignore tool results? (read the prompt + completion next to the tool output)
-
-The view works automatically as long as your span kinds are correct. If a step is missing from the Agent view, it's almost always because its span kind isn't being set — see [Instrumentation](../../instrumentation/python/#explicit-orchestration-spans) for the .NET escape hatch.
-
-## Patterns: common LLMObs queries
-
-A handful of saved views worth keeping handy:
-
-1. **"Last 10 errors in production"** — `@ml_app:... env:production status:error` sorted by `@duration` desc. The slowest errors are usually the most interesting.
-2. **"Tool starvation"** — `@ml_app:... @meta.agent.tools_called:""` finds traces where the agent answered without using any tools, which is sometimes wrong (especially for data-lookup queries).
-3. **"Hallucination candidates"** — `@evaluations.meai_groundedness.value:<2` (.NET) or `@evaluations.faithfulness.value:<0.5` (Python) — traces where the LLM-judge flagged the answer as poorly grounded.
-4. **"New prompt regression"** — `@meta.prompt.version:v2-* @evaluations.meai_relevance.value:<3`. Useful right after a prompt rollout.
+<ObservationChecklist title="Explain one real request">
+  <ul>
+    <li>State which agent path was selected and why the trace supports that conclusion.</li>
+    <li>Identify the slowest meaningful operation, excluding idle or transport noise.</li>
+    <li>Confirm whether a tool supplied evidence for the answer.</li>
+    <li>Follow at least one correlation into APM, logs, RUM, or DBM.</li>
+    <li>Record what remains unknowable and which instrumentation boundary should supply it.</li>
+  </ul>
+</ObservationChecklist>
 
 <Aside type="tip">
-  **Group by trace_id, almost always.** LLMObs's UI sometimes defaults to
-  grouping by span. For agent debugging you want one row per logical request —
-  that's `trace_id`.
+The goal is not a perfectly dense trace. Keep the smallest span model that answers operational and quality questions without duplicating the same operation at several instrumentation layers.
 </Aside>
 
-## What's next
-
-- [APM correlation](../apm-correlation/) — getting DBM and log lines onto the same trace.
-- [MCP clients](../mcp-clients/) — cross-service trace propagation for tool-call sub-spans.
-- [Metrics](../metrics/) — counters that ride alongside traces for cheaper aggregations.
+Continue to [APM correlation](../apm-correlation/) for supporting signals or [MCP tool tracing](../mcp-clients/) for the cross-service tool boundary.

@@ -1,337 +1,69 @@
 ---
-title: Core Conventions (Agent Guide)
-description: Detailed coding patterns and structural conventions for AI agent contributors
+title: Maintainer Invariants
+description: Cross-cutting rules that prevent security, routing, schema, and observability regressions
+docType: maintainer
+audience:
+  - contributor
+maturity: stable
+verifiedOn: 2026-08-27
 ---
 
-## Python style rules
+Most style choices are enforced by each language's formatter, linter, project file, and tests. This page records the smaller set of project invariants that are easy to violate across service boundaries.
 
-- **Python version:** 3.12 exclusively across all services
-- **Package manager:** `uv` — never `pip install` directly; always `uv add` or `uv sync`
-- **Project format:** `pyproject.toml` only — no `setup.py`, no `requirements.txt`
-- **Linter/formatter:** `ruff` — configured in `pyproject.toml`; runs automatically via PostToolUse hook
-- **Type hints:** Required on all function signatures (parameters and return types)
-- **Docstrings:** Only on public functions and classes; one-line summary style preferred
-- **Line length:** 100 characters (configured in ruff)
-- **Imports:** stdlib → third-party → local, separated by blank lines; `isort` enforced via ruff
+For routine language and repository conventions, see [Development conventions](/infra-advisor-ai/development/conventions/).
 
-## Naming conventions
+## Protect configuration and user data
 
-### Python
+- Required server-side configuration must fail clearly when absent. Do not hide a missing credential behind a production-like default.
+- Keep privileged keys, connection strings, JWT secrets, private endpoints, and real user data out of source control and documentation.
+- Browser and mobile client identifiers may be public only when their provider explicitly designs them for distribution. They are not substitutes for privileged API or application keys.
+- Treat prompts, responses, attachments, and user identifiers as potentially sensitive telemetry. Capture the minimum needed for the experiment and document the boundary.
+- Create Kubernetes Secrets from ignored local configuration or a secret manager. Checked-in manifests should contain references or obvious placeholders only.
 
-| Item                  | Convention                 | Example                   |
-| --------------------- | -------------------------- | ------------------------- |
-| Modules               | `snake_case`               | `bridge_condition.py`     |
-| Classes               | `PascalCase`               | `BridgeConditionInput`    |
-| Functions             | `snake_case`               | `get_bridge_condition`    |
-| Constants             | `UPPER_SNAKE_CASE`         | `CONDITION_LABELS`        |
-| Environment variables | `UPPER_SNAKE_CASE`         | `AZURE_OPENAI_ENDPOINT`   |
-| Private methods       | `_snake_case` prefix       | `_build_where_clause`     |
-| Async functions       | `async def` + `snake_case` | `async def fetch_bridges` |
+## Preserve public ingress behavior
 
-### Kubernetes
+The UI nginx configuration is the cluster's public routing layer. Cluster services remain internal unless nginx exposes a route for them.
 
-| Item            | Convention                        | Example                                        |
-| --------------- | --------------------------------- | ---------------------------------------------- |
-| Resource names  | `kebab-case`                      | `mcp-server`, `agent-api`                      |
-| Label key       | `app`                             | `app: mcp-server`                              |
-| ConfigMap names | `<service>-config`                | `mcp-server-config`                            |
-| Secret names    | `<service>-secret` or descriptive | `ghcr-pull-secret`                             |
-| Namespace       | per service group                 | `infra-advisor`, `kafka`, `airflow`, `datadog` |
+When adding or changing a public subpath, verify all of these together:
 
-### Datadog
+1. `services/ui/nginx.conf` routes the prefix to the correct Kubernetes Service.
+2. The upstream either understands its base path or nginx deliberately strips the prefix.
+3. Streaming routes disable buffering and allow sufficient timeouts.
+4. The UI image is rebuilt because nginx configuration is copied into that image.
+5. Administrative surfaces have the intended access control before reaching nginx.
 
-| Item                | Convention                    | Example                                       |
-| ------------------- | ----------------------------- | --------------------------------------------- |
-| Custom metric names | `<service>.<category>.<name>` | `mcp.tool.calls`                              |
-| Metric tags         | `key:value` lowercase         | `tool:get_bridge_condition`, `status:success` |
-| Service names       | `kebab-case`                  | `infratools-mcp`, `infra-advisor-agent`       |
-| Span names          | `<component>.<action>`        | `agent.run`, `mcp.get_bridge_condition`       |
+Test the public route as well as the service directly. A localhost or ClusterIP response cannot reveal prefix rewriting, buffering, or external authentication failures.
 
-## Structural patterns
+## Keep service contracts explicit
 
-### Every Python service entrypoint
+- Python and .NET implementations are learning alternatives, not assumed replicas. Preserve intentional differences and document parity only where behavior is meant to match.
+- Update callers, tests, and docs together when an HTTP, streaming-event, MCP-tool, or persistence contract changes.
+- Use the live MCP schemas as the complete tool contract. The documentation's [tool catalog](/infra-advisor-ai/services/mcp-tools/) explains selection and domain boundaries rather than duplicating every field.
+- Preserve source dataset field names at ingestion boundaries. Map them into internal models only in an explicit transformation layer.
+- Kafka messages should carry stable, versionable payloads. The current evaluation-result stream is operational telemetry, not a substitute for the evaluation systems described under [Evaluations](/infra-advisor-ai/llm-engineering/evaluations/managed/).
 
-```python
-import ddtrace.auto  # MUST be first — monkey-patches all clients at import time
-from ddtrace import patch_all
-patch_all()
+## Make telemetry answer a question
 
-# All other imports follow
-import os
-import logging
-from fastapi import FastAPI
-# ...
-```
+Instrumentation should establish a useful relationship, such as request → agent run → model call → tool call, rather than maximize event volume.
 
-### Environment variable access
+- Keep `service`, `env`, and `version` consistent enough to correlate signals.
+- Use bounded tags for metrics; do not turn prompts, IDs, or arbitrary errors into metric tags.
+- Mark errors on the span that owns the failing operation and retain enough context to identify the boundary.
+- Do not claim browser RUM, APM, and Agent Observability sessions are correlated unless the implementation propagates and records the relevant identifiers.
+- Verify instrumentation in the Datadog product surface it is meant to populate.
 
-```python
-# Always use os.environ with a KeyError fail-fast — never os.getenv with a default
-# for required variables
-DD_AGENT_HOST = os.environ["DD_AGENT_HOST"]
-AZURE_OPENAI_ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"]
+The Python and .NET paths intentionally differ. See [Instrumentation paths](/infra-advisor-ai/llm-engineering/instrumentation/paths/) before copying an approach between runtimes.
 
-# Optional vars with defaults are acceptable
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
-```
+## Respect deployment ownership
 
-### Error handling in MCP tools
+- Application workloads use the `infra-advisor` namespace; Kafka, Airflow, and Datadog have dedicated namespaces.
+- Application deployments that pull private images require the repository's GHCR pull secret.
+- `make deploy-k8s` and the Datadog Operator workflow have separate ownership. Do not assume one installs the other.
+- Azure owns the resources inside the AKS node resource group. Change their desired behavior through AKS, Bicep, or Kubernetes—not by editing node resources directly.
+- Check the current Makefile and manifests before using commands copied from historical notes.
 
-```python
-# Return structured errors — never raise bare exceptions to callers
-try:
-    result = await fetch_data()
-except httpx.HTTPStatusError as e:
-    return {"error": str(e), "source": "bts_arcgis", "retriable": e.response.status_code >= 500}
-except httpx.RequestError as e:
-    return {"error": str(e), "source": "bts_arcgis", "retriable": True}
-```
+## Document the learning, not the patch
 
-### Datadog metric emission pattern
+A feature change should improve the public learning experience when it changes a durable behavior, concept, experiment, or verification path. It does not automatically justify a new page or a fixed page template.
 
-```python
-from services.mcp_server.src.observability.metrics import emit_tool_call, emit_external_api
-import time
-
-async def get_bridge_condition(input: BridgeConditionInput):
-    start = time.monotonic()
-    status = "success"
-    try:
-        result = await _fetch_from_arcgis(input)
-        return result
-    except Exception as e:
-        status = "error"
-        raise
-    finally:
-        latency_ms = (time.monotonic() - start) * 1000
-        emit_tool_call("get_bridge_condition", latency_ms, status, result_count=len(result))
-```
-
-### pyproject.toml structure
-
-```toml
-[project]
-name = "<service-name>"
-version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = [
-    # production deps here
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "respx>=0.21",
-    "pytest-asyncio>=0.23",
-    "ruff>=0.4",
-]
-
-[tool.ruff]
-line-length = 100
-
-[tool.ruff.lint]
-select = ["E", "F", "I"]  # pycodestyle, pyflakes, isort
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-```
-
-### Kubernetes Deployment template pattern
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: <service-name>
-  namespace: infra-advisor
-  labels:
-    app: <service-name>
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: <service-name>
-  template:
-    metadata:
-      labels:
-        app: <service-name>
-      annotations:
-        ad.datadoghq.com/<service-name>.logs: '[{"source":"python","service":"<dd-service-name>"}]'
-    spec:
-      imagePullSecrets:
-        - name: ghcr-pull-secret # REQUIRED on every deployment
-      containers:
-        - name: <service-name>
-          image: ghcr.io/kyletaylored/infra-advisor-ai/<service-name>:latest
-          ports:
-            - containerPort: <port>
-          envFrom:
-            - configMapRef:
-                name: <service-name>-config
-            - secretRef:
-                name: <service-name>-secret
-          env:
-            - name: DD_ENV
-              value: "dev"
-            - name: DD_SERVICE
-              value: "<dd-service-name>"
-            - name: DD_VERSION
-              value: "latest"
-            - name: DD_AGENT_HOST
-              value: "datadog-agent"
-            - name: DD_TRACE_AGENT_PORT
-              value: "8126"
-            - name: DD_DOGSTATSD_PORT
-              value: "8125"
-            - name: DD_LOGS_INJECTION
-              value: "true"
-            - name: DD_TRACE_SAMPLE_RATE
-              value: "1.0"
-            - name: DD_RUNTIME_METRICS_ENABLED
-              value: "true"
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: <port>
-            initialDelaySeconds: 15
-            periodSeconds: 30
-          resources:
-            requests:
-              memory: "<mem>"
-              cpu: "<cpu>"
-            limits:
-              memory: "<mem-limit>"
-              cpu: "<cpu-limit>"
-```
-
-## Public ingress routing (subpath services)
-
-The UI pod's nginx is the **only LoadBalancer** in the cluster — every public URL on `infra-advisor-ai.kyletaylor.dev` is routed through `services/ui/nginx.conf`. Cluster-internal services (mcp-server, redis, postgres, mailpit, etc.) sit on ClusterIP Services and reach the internet only by being proxied from this one nginx.
-
-**When you add a new service that needs a public subpath**, all of the following must happen in the same PR or it won't work end-to-end:
-
-1. **Add a `location ^~ /<subpath>/` block to `services/ui/nginx.conf`** pointing at the new service's ClusterIP. Use `^~` to lock the prefix match (otherwise the SPA fallback can swallow the route). Example shape:
-
-   ```nginx
-   location ^~ /<subpath>/ {
-       set $<subpath>_upstream http://<service>.<namespace>.svc.cluster.local:<port>;
-       proxy_pass $<subpath>_upstream;
-       proxy_http_version 1.1;
-       proxy_set_header Upgrade $http_upgrade;
-       proxy_set_header Connection "upgrade";
-       proxy_set_header Host $host;
-       proxy_set_header X-Real-IP $remote_addr;
-       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-       proxy_set_header X-Forwarded-Proto $scheme;
-       # If the upstream has its own auth, pass Authorization through:
-       proxy_pass_request_headers on;
-       proxy_read_timeout 60s;
-   }
-   ```
-
-2. **Configure the upstream to know its subpath.** Most apps default to root-relative URLs and break when proxied. Examples:
-   - Mailpit: `MP_WEBROOT=/mailpit`
-   - Airflow: `AIRFLOW__API__BASE_URL=https://.../airflow`
-   - Most Python apps: `--root-path /<subpath>` (uvicorn) or `RootPath` (FastAPI)
-
-   Without this, the upstream emits absolute links/redirects to `/` that escape the nginx prefix.
-
-3. **Rebuild the UI image and roll out.** `services/ui/nginx.conf` is `COPY`'d into the UI image at build time — runtime changes have no effect. CI rebuilds the UI on any `services/ui/**` change and `kubectl set image`s the new SHA. To force locally: `kubectl rollout restart deploy/ui -n infra-advisor` after the new image lands on GHCR.
-
-4. **Choose whether to strip the prefix in the upstream rewrite.** Two patterns in use:
-   - **Preserve the prefix** (`/airflow/foo` → upstream sees `/airflow/foo`). Right when the upstream handles its own sub-path (Airflow, Mailpit).
-   - **Strip the prefix** (`/api/foo` → upstream sees `/foo`). Right when the upstream is path-naive. Use `rewrite ^/<subpath>/(.*) /$1 break;` inside the location block.
-
-5. **Layer Cloudflare Access in front of admin/sensitive subpaths.** nginx-level auth (basic auth, JWT) is necessary but not sufficient for paths like `/airflow` or `/mailpit` whose contents enable account takeover or full credential exfiltration. Add a Cloudflare Access (Zero Trust) application policy requiring SSO before the request even hits our nginx.
-
-6. **Stream-aware subpaths need bigger timeouts and `proxy_buffering off`.** SSE / WebSocket / long-running responses (e.g. `/api-dotnet/query/stream`) hang when buffered. Put the specific stream path **above** the generic prefix block so longer-prefix matching wins.
-
-**The cheap mistake**: forgetting step 2 (subpath config) or step 3 (UI rebuild). Symptoms: a 200 that returns HTML for `/` instead of the subpath content, or links inside the subpath UI that escape to `/`. If you see either, walk the steps above.
-
-## Airflow DAG conventions
-
-```python
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.operators.http import SimpleHttpOperator
-import pendulum
-
-# Always define with explicit start_date and catchup=False
-with DAG(
-    dag_id="nbi_refresh",
-    start_date=pendulum.datetime(2025, 1, 1, tz="UTC"),
-    schedule="0 3 * * 0",  # weekly, Sunday 03:00 UTC
-    catchup=False,
-    tags=["ingestion", "transportation"],
-) as dag:
-    ...
-```
-
-## Test conventions
-
-```python
-import pytest
-import respx
-import httpx
-
-# All tests for async functions use pytest-asyncio
-@pytest.mark.asyncio
-async def test_get_bridge_condition_returns_results():
-    with respx.mock:
-        respx.get("https://services.arcgis.com/...").mock(
-            return_value=httpx.Response(200, json=MOCK_ARCGIS_RESPONSE)
-        )
-        result = await get_bridge_condition(BridgeConditionInput(state_code="48"))
-        assert len(result) > 0
-        assert result[0]["_source"] == "FHWA NBI"
-
-# Test files mirror source structure
-# services/mcp-server/tests/test_bridge_condition.py
-#   tests services/mcp-server/src/tools/bridge_condition.py
-```
-
-## NBI field names (do not modify)
-
-These exact field names come from the NTAD ArcGIS schema and must never be changed:
-
-```python
-NBI_FIELDS = [
-    "STRUCTURE_NUMBER_008",
-    "FACILITY_CARRIED_007",
-    "LOCATION_009",
-    "COUNTY_CODE_003",
-    "STATE_CODE_001",
-    "ADT_029",
-    "YEAR_ADT_030",
-    "DECK_COND_058",
-    "SUPERSTRUCTURE_COND_059",
-    "SUBSTRUCTURE_COND_060",
-    "STRUCTURALLY_DEFICIENT",
-    "SUFFICIENCY_RATING",
-    "INSPECT_DATE_090",
-    "YEAR_BUILT_027",
-    "LAT_016",
-    "LONG_017",
-]
-
-CONDITION_LABELS = {
-    "9": "excellent", "8": "very good", "7": "good",
-    "6": "satisfactory", "5": "fair", "4": "poor",
-    "3": "serious", "2": "critical", "1": "imminent failure", "0": "failed"
-}
-```
-
-## Secrets and security
-
-- Never hardcode secrets, API keys, or tokens in source files
-- Never commit `.env` files (`.gitignore` covers `.env` and `.env.*`)
-- K8s Secrets are created at deploy time by `make create-ghcr-secret` or via `kubectl create secret`
-- The file `k8s/secrets/ghcr-pull-secret.yaml` is a template with placeholder values only
-- Production Bicep parameter files (`infra/bicep/parameters/production*`) are denied by settings.json
-
-## Git conventions
-
-- Branch names: `phase-<N>/<short-description>` e.g. `phase-1/bicep-modules`
-- Commit messages: imperative mood, reference deliverable e.g. `Add NBI ingestion DAG`
-- Never force-push to `main`
-- PRs required for all changes to `main`; CI must be green before merge
+Use [Documentation approach](/infra-advisor-ai/agent-guides/documentation/) to select an appropriate content shape and to distinguish learner material from maintainer history.

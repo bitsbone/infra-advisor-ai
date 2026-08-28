@@ -1,84 +1,48 @@
 ---
 title: Development
-description: Local development guide for InfraAdvisor AI
+description: Find the right implementation boundary, local workflow, and verification path before changing InfraAdvisor
+docType: guide
+audience:
+  - application-developer
+  - maintainer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 6
 ---
 
-Everything needed to run InfraAdvisor AI locally, write and run tests, and follow the project's coding standards.
+InfraAdvisor is a multi-runtime repository. Begin by identifying the contract you are changing: client API, agent behavior, MCP tool, provider normalization, persistence, ingestion, deployment, or telemetry. Most features cross more than one directory but should still have one clear owner.
 
-## Repository layout
+## Repository map
 
-```
-infra-advisor-ai/
-  .github/workflows/       CI (ci.yml, build-push.yml, docs.yml)
-  datadog/
-    dashboards/            5 dashboard JSON files
-    monitors/              3 monitor JSON files
-    synthetics/            1 browser test
-    datadog-agent.yaml     DatadogAgent custom resource
-  docs/                    This documentation site
-  infra/bicep/             Azure Bicep IaC modules + parameters
-  k8s/                     Kubernetes manifests by service/system
-    airflow/               Helm values.yaml
-    agent-api/             Deployment, Service, HPA, ConfigMap
-    agent-api-dotnet/      Deployment, Service, HPA, ConfigMap (.NET)
-    auth-api/              Deployment, Service, ConfigMap
-    kafka/                 Strimzi KafkaCluster + KafkaTopics
-    mailpit/               Deployment, Service, ConfigMap (bcrypt auth via secret)
-    mcp-server/            Deployment, Service, ConfigMap
-    mcp-server-dotnet/     Deployment, Service, ConfigMap (.NET)
-    postgres/              StatefulSet, Service, PVC
-    redis/                 Deployment, Service
-    secrets/               Secret templates (not committed with values)
-    ui/                    Deployment, Service, Ingress
-  services/
-    agent-api/             Python FastAPI + LangChain
-    agent-api-dotnet/      ASP.NET Core 10 + OpenTelemetry
-    auth-api/              Python FastAPI + SQLAlchemy
-    ingestion/             Airflow DAGs + helpers
-    load-generator/        Python CronJob
-    mcp-server/            Python FastMCP
-    mcp-server-dotnet/     .NET ModelContextProtocol.AspNetCore
-    ui/                    React TypeScript
-  specs/                   Product Requirements Document
-  Makefile                 All deployment and build automation
-  .env.example             Environment variable template
-```
+| Path | Responsibility |
+|---|---|
+| `services/agent-api` | Python agent, streaming API, memory, evaluations, media |
+| `services/agent-api-dotnet` | .NET agent, streaming API, evaluators, media |
+| `services/mcp-server*` | Language-matched MCP tools and provider adapters |
+| `services/auth-api` | Users, authentication, reset and admin workflows |
+| `services/ui` | React web application and browser RUM |
+| `mobile` | Native iOS, native Android, and .NET MAUI clients |
+| `services/ingestion` | Airflow image, DAGs, helpers, and data contracts |
+| `contracts` | Versioned cross-service payload schemas and fixtures |
+| `infra/bicep` | Azure infrastructure source of truth |
+| `k8s` | Runtime configuration and workload manifests |
+| `datadog` | Agent, dashboard, monitor, and synthetic definitions |
+| `docs` | This learning site |
 
-## Python service layout (uniform across all 4 services)
+## Before changing code
 
-```
-services/<name>/
-  src/
-    main.py              Entrypoint (import ddtrace.auto is line 1)
-    <modules>.py
-    observability/
-      metrics.py         Custom Datadog metric helpers
-      tracing.py         Span ID / trace ID helpers
-      llm_obs.py         LLM Obs helpers (agent-api only)
-  tests/
-    test_<module>.py
-  pyproject.toml         uv project config, dependencies, ruff settings
-  Dockerfile
-```
+1. Read the nearest service README and tests.
+2. Find the public or cross-service contract affected by the change.
+3. Identify privacy and observability behavior alongside functional behavior.
+4. Update both language implementations only when parity is part of the feature.
+5. Choose the smallest verification that exercises the real boundary.
 
-## Key constraints
+Repository-level contributor instructions in `AGENTS.md` govern planning, verification, and documentation. The public [documentation approach](/infra-advisor-ai/agent-guides/documentation/) explains how feature changes should become learning content without forcing every page into one template.
 
-These constraints are enforced by CI and code review. Do not work around them.
+## Continue
 
-| Constraint | Why |
-|-----------|-----|
-| `import ddtrace.auto` must be the first import in every service entrypoint | ddtrace must patch libraries before they are imported; any earlier import bypasses instrumentation |
-| All K8s Deployments and CronJobs must include `imagePullSecrets: [{name: ghcr-pull-secret}]` | GHCR is private; pods without this secret will fail to pull images |
-| Never hardcode secrets — use `os.environ["VAR_NAME"]` | Secrets live in K8s Secrets, not in code |
-| Do not rename NBI field names | The FHWA schema uses exact uppercase names; renaming breaks the MCP tool's field mapping |
-| No top-level third-party imports in Airflow DAG files | The dag-processor runs with a minimal Python environment; top-level imports of pandas/openai/etc. crash it |
-| `schedule=` not `schedule_interval=` in DAG constructors | Airflow 3.x removed `schedule_interval` |
-
-## Sections in this chapter
-
-- [Local Setup](/infra-advisor-ai/development/local-setup/) — Running all services locally without AKS
-- [Testing](/infra-advisor-ai/development/testing/) — Test coverage, running tests, mock patterns, CI behavior
-- [Conventions](/infra-advisor-ai/development/conventions/) — Python, K8s, Datadog, Airflow, and Git conventions
-- [Project Map](/infra-advisor-ai/agent-guides/project-map/) — Complete service + namespace + dependency reference
-- [Core Conventions (Agent Guide)](/infra-advisor-ai/agent-guides/core-conventions/) — Detailed coding patterns for AI agent contributors
-- [Build, Test, Verify (Agent Guide)](/infra-advisor-ai/agent-guides/build-test-verify/) — Command-by-command build and verification reference
+- [Local setup](./local-setup/) runs the supported local subset and calls out missing dependencies honestly.
+- [Testing](./testing/) chooses checks by change surface rather than stale test counts.
+- [Conventions](./conventions/) records invariants that prevent common runtime and telemetry failures.
+- [.NET and Python parity](./dotnet-python-parity/) tracks deliberate differences and remaining gaps.

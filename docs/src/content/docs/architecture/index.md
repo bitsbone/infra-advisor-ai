@@ -1,33 +1,45 @@
 ---
 title: Architecture
-description: System architecture overview for InfraAdvisor AI
+description: Understand the boundaries that keep user experience, agent reasoning, external data, persistence, and telemetry independently inspectable
+docType: guide
+audience:
+  - application-developer
+  - platform-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 2
 ---
 
-InfraAdvisor AI is a cloud-native microservices platform deployed on Azure Kubernetes Service. Six purpose-built services work together to ingest government data, reason over it with a multi-agent LLM pipeline, and deliver cited answers through a consultant-facing web interface.
+InfraAdvisor is a learning system built from replaceable boundaries rather than one agent process. A web or mobile client talks to one of two agent backends; each agent uses a language-matched MCP server for external data. PostgreSQL, Redis, Kafka, Airflow, Azure services, and Datadog support durable state, synthetic work, ingestion, models, retrieval, and observation.
 
-## Service responsibilities
+## Read the architecture by responsibility
 
-| Service | Role | Language | Port |
-|---------|------|----------|------|
-| [MCP Server](/infra-advisor-ai/services/mcp-server/) | Data access layer — 11 tools over Model Context Protocol | Python 3.12 | 8000 |
-| [Agent API](/infra-advisor-ai/services/agent-api/) | Multi-agent reasoning, session memory, eval loop | Python 3.12 | 8001 |
-| [Auth API](/infra-advisor-ai/services/auth-api/) | User registration, JWT auth, password reset | Python 3.12 | 8002 |
-| [UI](/infra-advisor-ai/services/ui/) | React SPA — chat interface, RUM, session replay | TypeScript | 80 |
-| [Load Generator](/infra-advisor-ai/services/load-generator/) | Synthetic query traffic via Kafka | Python 3.12 | CronJob |
-| [Airflow DAGs](/infra-advisor-ai/data-pipeline/) | Data ingestion — 5 pipelines into Azure AI Search | Python 3.12 | StatefulSet |
+| Boundary | Owns | Does not own |
+|---|---|---|
+| Client | Interaction, streaming display, evidence presentation | Provider data normalization or agent reasoning |
+| Agent API | Routing, memory, model orchestration, evaluation scheduling | Direct knowledge of provider API shapes |
+| MCP server | Tool contracts, provider calls, normalized results | Conversation policy or UI state |
+| Auth API | Identity, credentials, token lifecycle | Agent memory |
+| Data pipeline | Source snapshots and search-index refresh | Request-time agent execution |
+| Observability | Evidence about behavior and quality | Application persistence or control flow |
+
+Python and .NET implement parallel agent and MCP paths. They aim for comparable product behavior while deliberately using different framework and instrumentation approaches.
 
 ## Design principles
 
-**Separation of data access from reasoning.** The MCP Server handles all external API calls and returns structured data. The Agent API handles all LLM reasoning. Neither trespasses into the other's domain.
+- Keep provider details behind MCP tool contracts.
+- Keep durable conversation data in PostgreSQL and replaceable hot memory in Redis.
+- Treat telemetry as evidence, not an application database.
+- Propagate trace context across every service boundary.
+- Degrade optional retrieval, evaluation, and observability work without hiding the failure.
+- Normalize sensitive external data before it reaches clients or broad telemetry.
 
-**Observability as a first-class concern.** Every layer emits Datadog telemetry — APM spans, LLM Observability traces, RUM events, DSM Kafka metrics, DJM pipeline runs. Traces link across services via distributed tracing, and RUM sessions link to backend LLM spans.
+## Choose a view
 
-**Stateless services, stateful infrastructure.** The MCP Server, Agent API, and Auth API are all horizontally scalable stateless pods. State lives in Redis (session memory), PostgreSQL (user accounts), Azure AI Search (knowledge base), and Azure Blob Storage (raw data).
+- [System overview](./overview/) maps the deployed services and protocols.
+- [Data flow](./data-flow/) follows interactive, synthetic, ingestion, and persistence paths.
+- [Azure infrastructure](./infrastructure/) maps Bicep modules to their responsibilities.
+- [OTel on Container Apps](./aca-otel-datadog/) compares two collector placements through a working experiment.
 
-**Fail informatively.** MCP tools return structured error dicts (never exceptions) with `retriable` flags so the LLM agent can reason about failures rather than crash.
-
-## Sections in this chapter
-
-- [System Overview](/infra-advisor-ai/architecture/overview/) — Service map, namespace layout, inter-service DNS, container images, nginx routing
-- [Data Flow](/infra-advisor-ai/architecture/data-flow/) — Complete query lifecycle, ingestion pipeline, eval loop, Redis key schema
-- [Azure Infrastructure](/infra-advisor-ai/architecture/infrastructure/) — Bicep modules, Azure resource specs, storage paths, deployment order
+For implementation details, continue to [Services](/infra-advisor-ai/services/). For operational evidence, continue to [Observability](/infra-advisor-ai/observability/).

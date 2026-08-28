@@ -1,117 +1,63 @@
 ---
-title: Metrics
-description: Business counters that ride alongside the trace pipeline — tool usage, conversation completion, feedback ratios, frustration composites.
+title: Choose metrics that traces cannot replace
+description: Separate aggregate product signals from per-request Agent Observability evidence and current platform metrics
+docType: concept
+audience:
+  - application-developer
+  - observability-engineer
+maturity: partial
+verifiedOn: 2026-08-27
 sidebar:
   order: 5
 ---
 
-import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
+import FeatureStatus from '@components/FeatureStatus.astro';
 
-Traces capture every detail of one request; metrics capture aggregate behavior across millions. Both pipelines hang off the same OTel/ddtrace SDK, so emitting a counter is a one-liner — but the question of **what** to count is the interesting part.
+<FeatureStatus status="partial" verifiedOn="2026-08-27" label="Business counters differ by backend" />
 
-## What to count
+Traces retain the details of one request. Metrics answer aggregate questions cheaply over time. Emit a custom metric only when the aggregation is valuable and the same signal is not already available from Agent Observability or APM.
 
-Three categories worth tracking from day one:
+## Start with the question
 
-| Counter | What it tells you | Tag dimensions |
-|---|---|---|
-| `infra_advisor.conversation.completed` | Per-domain conversation volume | `query.domain` |
-| `infra_advisor.tool.invoked` | Which tools the agent actually uses | `tool.name`, `query.domain` |
-| `infra_advisor.feedback.submitted` | User-perceived quality | `rating` (positive/negative) |
+| Question | Best signal |
+|---|---|
+| How many model spans failed? | Built-in Agent Observability or APM metric |
+| How are tokens, duration, and estimated cost trending? | Agent Observability operational metrics |
+| Which product domains receive the most completed conversations? | Custom counter |
+| Which tools does the application actually invoke? | Custom counter or span-derived analytics |
+| What feedback are users submitting? | Custom counter plus per-trace evaluation |
+| Was this particular response grounded? | Evaluation attached to the trace, not a metric alone |
 
-These are the **business** signals. Latency, token counts, error rate, and cost are already in your APM/LLMObs spans — don't duplicate them as metrics.
+Avoid emitting custom copies of latency, error, token, or cost fields that Datadog already derives from spans.
 
-## Emitting counters
+## Current InfraAdvisor coverage
 
-<Tabs syncKey="lang">
-  <TabItem label="Python (ddtrace)">
+The two backends are not yet symmetrical:
 
-The DD agent runs DogStatsD on UDP 8125. Send counters with `ddtrace.internal.dogstatsd`:
+- **.NET** emits `infra_advisor.conversation.completed`, `infra_advisor.tool.invoked`, `infra_advisor.feedback.submitted`, `infra_advisor.mcp.reconnect`, and a faithfulness histogram through an OpenTelemetry meter.
+- **Python** currently emits the faithfulness score through DogStatsD. Conversation, tool, feedback, and reconnect counter parity remains open work.
 
-```python
-# services/agent-api/src/observability/llm_obs.py (excerpt)
-from ddtrace.internal.dogstatsd import get_dogstatsd_client
+The partial status is intentional. Dashboards must not imply cross-backend comparisons until the same metric contract exists on both sides.
 
-statsd = get_dogstatsd_client(
-    f"{os.environ.get('DD_AGENT_HOST', 'localhost')}:"
-    f"{os.environ.get('DD_DOGSTATSD_PORT', '8125')}"
-)
+## Keep dimensions bounded
 
-# In the /query handler:
-statsd.increment(
-    "infra_advisor.conversation.completed",
-    tags=[f"query.domain:{domain}"],
-)
+Useful dimensions have small, controlled value sets:
 
-# Or as a gauge for the faithfulness eval score:
-statsd.gauge(
-    "eval.faithfulness_score",
-    score,
-    tags=[f"session_id:{session_id}", f"query.domain:{domain}"],
-)
-```
+- `query.domain`
+- `tool.name`
+- `rating`
+- `backend`
+- `reason`
 
-Counters are increment-only; gauges set a value. DD aggregates per-tag automatically.
+Do not tag metrics with user IDs, conversation IDs, trace IDs, prompts, URLs, or arbitrary error messages. Those values create high cardinality, may expose sensitive content, and belong in traces or logs when permitted.
 
-  </TabItem>
-  <TabItem label=".NET (OpenTelemetry)">
+## Compose frustration instead of inventing it
 
-All counters use `IMeterFactory.Create(...)` on the same `ActivitySource` name that emits traces — one OTel pipeline exports both:
+“Frustrated user” is an interpretation, not an event the application can observe directly. Build the interpretation from independent evidence such as negative feedback, sentiment evaluation, repeated retries, and session behavior. Keeping the inputs separate makes the rule explainable when signals disagree.
 
-```csharp
-// services/agent-api-dotnet/Services/AgentService.cs (excerpt)
-public class AgentService
-{
-    private readonly Counter<long> _conversationCounter;
-    private readonly Counter<long> _toolCounter;
-
-    public AgentService(IMeterFactory meterFactory, ...)
-    {
-        var meter = meterFactory.Create(TelemetrySetup.ActivitySourceName);
-        _conversationCounter = meter.CreateCounter<long>("infra_advisor.conversation.completed");
-        _toolCounter         = meter.CreateCounter<long>("infra_advisor.tool.invoked");
-    }
-
-    public async Task<string> RunAgentAsync(string query, string domain)
-    {
-        // ... run agent ...
-        _conversationCounter.Add(1, new KeyValuePair<string, object?>("query.domain", domain));
-        foreach (var tool in toolsCalled)
-            _toolCounter.Add(1,
-                new KeyValuePair<string, object?>("tool.name", tool),
-                new KeyValuePair<string, object?>("query.domain", domain));
-        return answer;
-    }
-}
-```
-
-The OTel `MeterProvider` (registered in `TelemetrySetup.cs`) exports to the collector. No further config.
-
-  </TabItem>
-</Tabs>
-
-## Frustration detection (composable)
-
-"Is this user frustrated?" is a question best answered by **composing** existing signals, not by adding a `frustrated:true` flag in code:
-
-- Sentiment from managed evals (`@evaluations.sentiment.value`).
-- Conversation continuity (`gen_ai.conversation.id`, which MAF and ddtrace's LangChain integration emit automatically).
-- Feedback counter (`infra_advisor.feedback.submitted{rating:negative}`).
-
-Build a DD monitor on the composition:
-
-```
-avg(@evaluations.sentiment.value) by @conversation.id < 0.3
-  AND sum(infra_advisor.feedback.submitted{rating:negative}) by @conversation.id >= 1
-```
-
-Keep the inputs orthogonal and let the alert rule do the joining. If two signals disagree, you can see why; with a hard-coded `frustrated:true` flag, the rationale is gone.
-
-<Aside type="tip">
-**Don't tag counters by user_id.** That's a high-cardinality field — DD bills on tag cardinality. Use `session.id` only when you specifically need per-session aggregation, and consider sampling.
+<Aside type="caution">
+A metric name in code does not prove the complete pipeline works. Verify that the meter is registered, the exporter or DogStatsD client can reach the Agent, the metric appears with expected tags, and dashboards distinguish backends with different coverage.
 </Aside>
 
-## What's next
-
-- [Operations](../operations/) — automation rules and cost management that lean on these counters.
-- [Evaluations → External](../../evaluations/external/) — attaching scores per-trace that feed back into the metrics.
+Continue to [Operations](../operations/) to turn stable aggregate signals into review and alerting workflows.

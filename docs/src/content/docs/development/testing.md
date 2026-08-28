@@ -1,141 +1,76 @@
 ---
-title: Testing
-description: Test coverage, running tests, mock patterns, and CI behavior
+title: Choose the right verification
+description: Run checks by affected contract instead of relying on test counts that become stale
+docType: guide
+audience:
+  - application-developer
+  - maintainer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 2
+  label: Testing
 ---
 
-## Test coverage
+Test counts and durations change continuously. Select verification from the behavior you changed, and use CI as a second execution—not the first time the relevant check runs.
 
-| Service | Framework | Tests | Command |
-|---------|-----------|-------|---------|
-| MCP Server | pytest + respx | 79 tests | `make test-mcp` |
-| Agent API | pytest + respx + pytest-asyncio | 23 tests | `make test-agent` |
-| Auth API | pytest + httpx | 11 tests | `uv run pytest services/auth-api/tests/` |
-| Load Generator | pytest | — | `make test-load-gen` |
-| UI | TypeScript compiler | 0 type errors | `npx tsc --noEmit` |
+## Change-to-check map
 
-Run all at once:
+| Change surface | Minimum focused check | Broader confidence |
+|---|---|---|
+| Python MCP tool/provider | tool test file with mocked HTTP | `make test-mcp` |
+| Python agent/API | focused pytest module | `make test-agent` |
+| .NET agent or MCP | matching test-project filter | full .NET Release build and tests |
+| Auth or persistence | API tests; PostgreSQL integration test when SQL changes | service suite |
+| UI | TypeScript check and production build | exercised browser workflow |
+| MAUI/native mobile | relevant unit/view-model tests | platform Debug/Release build and device acceptance |
+| Airflow DAG/helper | focused ingestion test | real DagBag plus built-image contract |
+| Kubernetes/AppSec | executable manifest contract test | rendered/apply validation in a disposable environment |
+| Documentation | docs build, internal links, content rules | visual review at narrow and wide widths |
+
+## Common commands
+
 ```bash
+make test-mcp
+make test-agent
+make test-load-gen
 make test-all
+make test-airflow
+make test-airflow-container
 ```
 
-## MCP Server tests (`services/mcp-server/tests/`)
+Run .NET tests from their explicit test projects so production and test directories do not get confused. Use `dotnet test ... --filter <expression>` for a focused case, then a Release build/test before changing deployment code.
 
-Each tool has a dedicated test file. All external HTTP calls are mocked with `respx`.
-
-```bash
-cd services/mcp-server
-uv run pytest tests/ -v
-```
-
-**Test structure for each tool:**
-- `test_successful_results` — happy path with realistic API mock response
-- `test_empty_results` — API returns no records (graceful empty list)
-- `test_api_error` — upstream returns 4xx/5xx (structured error dict returned)
-- `test_parameter_filtering` — verify query params passed correctly
-- Tool-specific edge cases (e.g., `test_date_range_clamped` for SAM.gov, `test_request_body_includes_web_search_tool` for the Azure OpenAI Responses-backed web search)
-
-**Mocking pattern:**
-```python
-import respx
-import httpx
-import pytest
-
-@pytest.mark.asyncio
-async def test_get_bridge_condition_success():
-    mock_response = {"features": [{"attributes": {...}}]}
-    with respx.mock:
-        respx.get("https://services.arcgis.com/...").mock(
-            return_value=httpx.Response(200, json=mock_response)
-        )
-        result = await get_bridge_condition(state="TX", county="Harris")
-    assert len(result) > 0
-    assert result[0]["state"] == "TX"
-```
-
-## Agent API tests (`services/agent-api/tests/`)
-
-Agent tests mock the MCP Server HTTP calls and Azure OpenAI responses. The full LangChain ReAct loop is tested end-to-end with mocked LLM responses.
-
-```bash
-cd services/agent-api
-uv run pytest tests/ -v --timeout=120
-```
-
-**Test runtime:** ~70–80 seconds (LangChain agent setup has overhead even with mocks).
-
-**Key test cases:**
-- Router domain classification (5 domains)
-- Specialist tool subset selection
-- Session memory persistence
-- Model selection (request → session → default precedence)
-- Feedback endpoint (valid/invalid ratings, 204/422 responses)
-- `/suggestions/initial` with and without pool
-- Error handling (MCP unavailable, Redis down)
-
-## Auth API tests (`services/auth-api/tests/`)
-
-```bash
-cd services/auth-api
-uv run pytest tests/ -v
-```
-
-**Password reset tests (`test_password_reset.py`):** 11 tests covering:
-- `forgot-password` with existing user, unknown email, email normalization
-- `reset-password` with valid token, invalid token, expired token, short password, hash verification
-- Auth helpers: token uniqueness, hash determinism, hash ≠ plaintext
-
-## TypeScript build
-
-The UI has no runtime tests — coverage comes from TypeScript strict type checking:
+For the web client:
 
 ```bash
 cd services/ui
-npm install
-npx tsc --noEmit     # type check
-npm run build        # Vite production build (catches import errors)
+npm ci
+npm run build
 ```
 
-## CI pipeline
+## Mock the external boundary, not your logic
 
-GitHub Actions runs on every PR and push to `main`:
+Provider tests should assert request mapping, pagination, normalization, empty results, bounded failures, and redaction. Mock the external HTTP response while executing the real tool or service logic. Fixtures must use invented identifiers and secrets.
 
-```yaml
-# .github/workflows/ci.yml
-matrix:
-  service: [mcp-server, agent-api]
+Agent tests should exercise routing, streaming event order, memory isolation, artifact extraction, attachment validation, and failure degradation without making paid model calls. Contract tests should feed the same sanitized payloads to both language implementations where parity matters.
 
-steps:
-  - uv sync
-  - uv run pytest tests/ --timeout=120
-```
+## Preserve the real runtime gate
 
-The CI job injects mock environment variables for Azure credentials so tests run without real API access.
+Lightweight unit tests cannot prove an Airflow image contains its packages or that a DAG parses under the deployed version. The ingestion CI job runs tests under the lock, builds the image, and executes its embedded verification script.
 
-## Running a specific test
+Likewise, a mocked repository cannot prove PostgreSQL JSONB round trips. CI includes a real PostgreSQL integration case for conversation artifacts.
 
-```bash
-# Run a single test file
-uv run pytest tests/test_bridge_condition.py -v
+## Test observability as behavior
 
-# Run a single test
-uv run pytest tests/test_bridge_condition.py::test_get_bridge_condition_success -v
+For telemetry changes, assert both presence and absence:
 
-# Run with stdout (see print statements)
-uv run pytest tests/ -s -v
+- the expected span, metric, action, or log exists with bounded fields;
+- sentinel prompts, tokens, signed URLs, filenames, and provider bodies do not appear;
+- one logical operation is not double-instrumented;
+- failure and cancellation close lifecycle records exactly once;
+- correlation IDs point to the intended request or span.
 
-# Stop on first failure
-uv run pytest tests/ -x
-```
+## Before handoff
 
-## Test environment variables
-
-Tests use `respx` to mock HTTP calls, so Azure API keys are not needed for unit tests. However, some env vars must be set (any non-empty value works):
-
-```bash
-AZURE_OPENAI_ENDPOINT=https://test.openai.azure.com/
-AZURE_OPENAI_API_KEY=test-key
-AZURE_SEARCH_ENDPOINT=https://test.search.windows.net/
-AZURE_SEARCH_API_KEY=test-key
-AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=test;AccountKey=dGVzdA==;EndpointSuffix=core.windows.net
-EIA_API_KEY=test-key
-```
+Run the focused check, the relevant service/build suite, `git diff --check`, and repository secret hygiene. If a live Datadog or mobile acceptance step cannot run locally, state that gap explicitly rather than marking it verified from code inspection alone.

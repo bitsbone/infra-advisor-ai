@@ -1,401 +1,83 @@
 ---
-title: Build, Test & Verify
-description: Command-by-command build and verification reference for AI agent contributors
+title: Build, Test, and Verify
+description: Choose the smallest trustworthy verification loop for a change
+docType: maintainer
+audience:
+  - contributor
+maturity: stable
+verifiedOn: 2026-08-27
 ---
 
-## Prerequisites
+Verification should answer one question: **what evidence would show that this change works without breaking its neighbors?** Start with the narrowest relevant check, then widen the loop when the change crosses a service or deployment boundary.
 
-- `uv` installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- `kubectl` configured (`az aks get-credentials --resource-group rg-tola-infra-advisor-ai --name aks-infra-advisor-dev`)
-- `helm` installed
-- `az` CLI installed and logged in
-- `.env` file populated (copy from `.env.example`)
+## Pick a verification scope
 
----
+| Change | First check | Widen when |
+|---|---|---|
+| Python service or ingestion code | Run the owning service's tests with `uv run pytest` | A contract, shared dependency, or deployment setting changed |
+| .NET service | Run the owning solution or project tests with `dotnet test` | Shared models, HTTP contracts, or telemetry changed |
+| React UI | Run its test and build scripts from `services/ui` | Routing, authentication, or an API contract changed |
+| Documentation | Run `npm run check` from `docs` | Navigation, components, or build configuration changed |
+| Bicep | Compile the affected module, then the main template | Resource parameters or cross-module outputs changed |
+| Kubernetes | Use a client-side dry run on the affected manifests | Secrets, ingress, streaming, or service discovery changed |
+| End-to-end behavior | Exercise one representative request and inspect its outputs | The change affects more than one runtime boundary |
 
-## Running the full stack locally (no AKS)
+The package manifest, project file, Makefile, or CI workflow is the source of truth for exact commands. Avoid copying a complete command catalog into documentation; it becomes stale as soon as a project or target changes.
 
-Use `docker-compose.yml` at the repo root to spin up Redis and Kafka, then run each service with local env overrides.
+## Use the local environment deliberately
 
-### 1. Start local infrastructure
+The root Compose file supplies Redis and a Redpanda-compatible Kafka broker. It does not reproduce PostgreSQL, Azure OpenAI, Azure AI Search, Blob Storage, Kubernetes networking, or the Datadog Agent.
 
-```bash
-docker compose up -d
-# Waits for Redis and Kafka to be healthy, then creates the two topics.
-docker compose ps   # confirm all containers are Up
-```
+That makes local development useful for focused service work, but not a claim of production parity. See [Local development](/infra-advisor-ai/development/local-setup/) for the supported topology and current UI proxy boundaries.
 
-### 2. Set local env overrides
+Before running a service:
 
-Create `.env.local` (not committed) to override the cluster DNS with localhost:
+1. Read its package manifest and sample environment file.
+2. Supply required credentials through ignored local configuration.
+3. Start only the dependencies the behavior needs.
+4. Confirm the health endpoint before testing a higher-level flow.
 
-```bash
-cat > .env.local << 'EOF'
-REDIS_HOST=localhost
-REDIS_PORT=6379
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-MCP_SERVER_URL=http://localhost:8000/mcp
-AGENT_API_URL=http://localhost:8001
-EOF
-```
+## Verify behavior at its observable boundary
 
-Load it alongside `.env` when starting services:
+A passing unit test is necessary evidence, but it may not prove an observability feature works. Match the check to the claim:
 
-```bash
-# One-liner to export both files
-set -a && source .env && source .env.local && set +a
-```
+| Claim | Evidence |
+|---|---|
+| An endpoint works | Response status and schema |
+| A tool is selected | Response metadata plus the agent trace |
+| A trace is correlated | Matching service, trace, and session attributes in Datadog |
+| A metric is emitted | A recent tagged point in Metrics Explorer |
+| A stream works through ingress | Incremental events from the public route, not only localhost |
+| A data refresh works | Successful DAG task output, manifest, and indexed sample |
+| A deployment is healthy | Rollout status, readiness, and one representative request |
 
-### 3. Run MCP server
+For the specific signals this project emits, use [Observability](/infra-advisor-ai/observability/) and [Agent Observability monitoring](/infra-advisor-ai/llm-engineering/monitoring/spans-and-traces/).
 
-```bash
-cd services/mcp-server
-uv sync
-uv run uvicorn src.main:app --reload --port 8000
-# http://localhost:8000/health → {"status":"ok","tools":[...]}
-```
+## Deployment checks
 
-### 4. Run Agent API
+Deployment commands change state. Inspect the current `Makefile` help before using them:
 
 ```bash
-cd services/agent-api
-uv sync
-uv run uvicorn src.main:app --reload --port 8001
-# http://localhost:8001/health → {"status":"ok","mcp_connected":true,"llm_connected":true}
+SKIP_DOTENV=1 make help
 ```
 
-### 5. Run UI dev server
+Important boundaries:
 
-```bash
-cd services/ui
-npm install
-npm run dev
-# http://localhost:5173 — /api/* proxied to localhost:8001
-```
+- `make deploy-k8s` applies the application's manifest groups but does not install the Datadog Operator configuration; use the dedicated Datadog target documented in [Kubernetes deployment](/infra-advisor-ai/deployment/kubernetes/).
+- Secret targets read local environment values and create Kubernetes Secrets. Never paste secret values into a command transcript, issue, or documentation page.
+- Bicep compilation and Kubernetes dry runs are validation steps; deployment targets are not.
+- Airflow recovery targets may be destructive. Follow the prerequisites and warnings in the Makefile rather than treating a copied command as permission to run it.
 
-### 6. Stop local infrastructure
+After a rollout, check the affected workload's rollout status, recent logs, and one representative user flow. A green pod alone does not prove its upstream dependencies or telemetry path work.
 
-```bash
-docker compose down
-```
+## When a check fails
 
----
+Localize the failure before changing code:
 
-## Top-level Makefile targets
+1. Re-run the narrowest failing check.
+2. Identify whether the boundary is code, configuration, dependency, network, or telemetry export.
+3. Inspect the owning service's logs or test failure—not every cluster log.
+4. Add a regression test when the failure exposes a durable invariant.
+5. Update learning content only when the behavior, limitation, or verification method changed.
 
-```bash
-make deploy-infra          # Deploy Azure Bicep IaC (AKS, AI Search, OpenAI, etc.)
-make create-ghcr-secret    # Create ghcr-pull-secret K8s Secret in infra-advisor namespace
-make deploy-k8s            # Apply all Kubernetes manifests (namespaces, DD, Kafka, Redis, Airflow, services)
-make run-dags              # Manually trigger all 9 Airflow DAGs via CLI
-```
-
----
-
-## Phase 1 — Infrastructure and Data Pipeline
-
-### Bicep IaC
-
-```bash
-# Validate individual Bicep module
-az bicep build --file infra/bicep/modules/aks.bicep
-az bicep build --file infra/bicep/modules/azure-ai-search.bicep
-az bicep build --file infra/bicep/modules/azure-openai.bicep
-az bicep build --file infra/bicep/modules/kafka.bicep
-az bicep build --file infra/bicep/modules/redis.bicep
-az bicep build --file infra/bicep/modules/monitoring.bicep
-
-# Validate main template
-az bicep build --file infra/bicep/main.bicep
-
-# Deploy (what-if first)
-az deployment group what-if \
-  --resource-group rg-tola-infra-advisor-ai \
-  --template-file infra/bicep/main.bicep \
-  --parameters infra/bicep/parameters/dev.bicepparam
-
-# Deploy for real
-make deploy-infra
-```
-
-### Kubernetes
-
-```bash
-# Dry-run validate a manifest
-kubectl apply --dry-run=client -f k8s/namespace.yaml
-kubectl apply --dry-run=client -f k8s/datadog/daemonset.yaml
-
-# Apply all manifests
-make deploy-k8s
-
-# Check cluster state
-kubectl get nodes
-kubectl get pods -A
-kubectl get pods -n infra-advisor
-kubectl get pods -n kafka
-kubectl get pods -n airflow
-kubectl get pods -n datadog
-```
-
-### GHCR pull secret
-
-```bash
-# Requires GHCR_PAT and GITHUB_EMAIL env vars set
-make create-ghcr-secret
-
-# Verify
-kubectl get secret ghcr-pull-secret -n infra-advisor
-```
-
-### Airflow DAGs
-
-```bash
-# Port-forward Airflow UI
-kubectl port-forward -n airflow svc/airflow-webserver 8080:8080
-
-# Trigger DAGs manually via CLI
-kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger knowledge_base_init
-kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger nbi_refresh
-kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger fema_refresh
-kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger eia_refresh
-kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger twdb_water_plan_refresh
-
-# Check DAG run status
-kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags list-runs -d knowledge_base_init
-```
-
-### DAG tests (mock external APIs)
-
-```bash
-cd services/ingestion
-uv run pytest -x tests/
-```
-
----
-
-## Phase 2 — MCP Server
-
-### Install dependencies
-
-```bash
-cd services/mcp-server
-uv sync
-```
-
-### Run locally
-
-```bash
-cd services/mcp-server
-uv run uvicorn src.main:app --reload --port 8000
-```
-
-### Test
-
-```bash
-# Run all MCP server tests
-uv run pytest -x services/mcp-server/tests/
-
-# Run individual test files
-uv run pytest -x services/mcp-server/tests/test_bridge_condition.py
-uv run pytest -x services/mcp-server/tests/test_disaster_history.py
-uv run pytest -x services/mcp-server/tests/test_water_infrastructure.py
-uv run pytest -x services/mcp-server/tests/test_project_knowledge.py
-uv run pytest -x services/mcp-server/tests/test_draft_document.py
-
-# Health check (after deployment or local run)
-curl http://localhost:8000/health
-# Expected: {"status": "ok", "tools": ["get_bridge_condition", "get_disaster_history", ...]}
-```
-
-### Deploy to K8s
-
-```bash
-kubectl apply -f k8s/mcp-server/
-kubectl rollout status deploy/mcp-server -n infra-advisor --timeout=5m
-
-# Verify
-kubectl get pods -n infra-advisor -l app=mcp-server
-kubectl logs -n infra-advisor deploy/mcp-server --tail=50
-```
-
----
-
-## Phase 3 — Agent API
-
-### Install dependencies
-
-```bash
-cd services/agent-api
-uv sync
-```
-
-### Run locally
-
-```bash
-cd services/agent-api
-uv run uvicorn src.main:app --reload --port 8001
-```
-
-### Test
-
-```bash
-uv run pytest -x services/agent-api/tests/
-
-# Health check
-curl http://localhost:8001/health
-# Expected: {"status": "ok", "mcp_connected": true, "llm_connected": true}
-
-# Test a query
-curl -X POST http://localhost:8001/query \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Pull structurally deficient bridges in Texas with ADT over 10000"}'
-```
-
-### Deploy to K8s
-
-```bash
-kubectl apply -f k8s/agent-api/
-kubectl rollout status deploy/agent-api -n infra-advisor --timeout=5m
-
-kubectl get pods -n infra-advisor -l app=agent-api
-kubectl logs -n infra-advisor deploy/agent-api --tail=50
-```
-
----
-
-## Phase 4 — Load Generator and Dashboards
-
-### Install dependencies
-
-```bash
-cd services/load-generator
-uv sync
-```
-
-### Test
-
-```bash
-uv run pytest -x services/load-generator/tests/
-```
-
-### Deploy CronJob
-
-```bash
-kubectl apply -f k8s/load-generator/
-kubectl get cronjobs -n infra-advisor
-
-# Check that it fires (manual trigger)
-kubectl create job --from=cronjob/load-generator load-generator-manual-001 -n infra-advisor
-kubectl logs -n infra-advisor job/load-generator-manual-001
-```
-
----
-
-## Phase 5 — React UI
-
-### Install dependencies
-
-```bash
-cd services/ui
-npm install
-```
-
-### Run locally
-
-```bash
-cd services/ui
-npm run dev
-# Open http://localhost:5173
-```
-
-### Build
-
-```bash
-cd services/ui
-npm run build
-# Output in services/ui/dist/
-```
-
-### Deploy to K8s
-
-```bash
-kubectl apply -f k8s/ui/
-kubectl rollout status deploy/ui -n infra-advisor --timeout=5m
-kubectl get pods -n infra-advisor -l app=ui
-```
-
----
-
-## Docker image builds
-
-```bash
-# Build individual image
-docker build -t ghcr.io/kyletaylored/infra-advisor-ai/mcp-server:local services/mcp-server/
-docker build -t ghcr.io/kyletaylored/infra-advisor-ai/agent-api:local services/agent-api/
-docker build -t ghcr.io/kyletaylored/infra-advisor-ai/load-generator:local services/load-generator/
-docker build -t ghcr.io/kyletaylored/infra-advisor-ai/ui:local services/ui/
-
-# Push (CI handles this automatically on merge to main)
-docker push ghcr.io/kyletaylored/infra-advisor-ai/mcp-server:local
-```
-
----
-
-## CI/CD
-
-```bash
-# Trigger CI locally (act — optional)
-act push
-
-# Check GitHub Actions in repo
-gh run list
-gh run view <run-id>
-```
-
----
-
-## Verify Datadog instrumentation
-
-```bash
-# Check APM traces are flowing
-# (requires DD_API_KEY — query via API or check DD UI)
-
-# Check custom metrics
-# Search in DD Metrics Explorer: mcp.tool.calls, mcp.tool.latency_ms
-
-# Check LLM Observability
-# DD UI → LLM Observability → Applications → infra-advisor-ai
-
-# Check DSM topology
-# DD UI → Data Streams Monitoring
-
-# Check DJM
-# DD UI → Data Jobs Monitoring → Pipelines
-```
-
----
-
-## Common troubleshooting
-
-```bash
-# Pod not starting — check events
-kubectl describe pod <pod-name> -n infra-advisor
-
-# Image pull error — check secret
-kubectl get secret ghcr-pull-secret -n infra-advisor
-make create-ghcr-secret  # recreate if missing
-
-# Airflow DAG import error
-kubectl logs -n airflow airflow-scheduler-0 -c scheduler | grep ERROR
-
-# Redis connectivity
-kubectl exec -n infra-advisor deploy/agent-api -- redis-cli -h redis ping
-
-# Kafka connectivity
-kubectl exec -n kafka deploy/kafka-cluster-entity-operator -- \
-  kafka-topics.sh --bootstrap-server localhost:9092 --list
-
-# MCP server not responding
-kubectl port-forward -n infra-advisor svc/mcp-server 8000:8000
-curl http://localhost:8000/health
-```
+See [Testing strategy](/infra-advisor-ai/development/testing/) for test layers and [Deployment](/infra-advisor-ai/deployment/) for environment-specific workflows.

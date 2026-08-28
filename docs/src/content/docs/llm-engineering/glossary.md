@@ -1,118 +1,131 @@
 ---
-title: Glossary
-description: LLM Observability vocabulary, defined as concretely as possible. Reference page — not meant to be read top-to-bottom.
+title: Agent Observability glossary
+description: A concise reference for the terms used throughout the InfraAdvisor learning lab
+docType: reference
+audience:
+  - application-developer
+  - observability-engineer
+maturity: stable
+verifiedOn: 2026-08-27
 sidebar:
-  order: 7
+  order: 10
+  label: Glossary
 ---
 
-When DD docs (or this guide) say something like *"the eval-metric API joins by trace_id + span_id on the agent kind span"*, that sentence assumes you know what every noun means. This page is the lookup table. Definitions are kept concrete — what DD does with the thing, not the platonic ideal.
+Use this page as a lookup table. Definitions describe how a term affects implementation or investigation in this project.
 
-## ml_app
+## Application and service identity
 
-The grouping key for everything in LLM Observability. Traces, evals, prompts, datasets, dashboards — all keyed by `ml_app`. Set as a resource attribute on every span. We use one `ml_app` per service backend:
+**ML application (`ml_app`)**
 
-- `infra-advisor-ai` (Python)
-- `infra-advisor-agent-api-dotnet` (.NET)
+The Agent Observability grouping for related spans and evaluations. InfraAdvisor uses `infra-advisor-ai` for Python and `infra-advisor-agent-api-dotnet` for .NET. A service name identifies a runtime service; an ML application identifies the AI experience shown in Agent Observability.
 
-If `ml_app` is missing or wrong on a span, the span doesn't appear in LLMObs at all. Most "my traces aren't showing up" reports trace to this.
+**Environment and version**
 
-## Span kind
+Deployment attributes used to separate telemetry and compare releases. A useful trace has service, environment, and version identity before project-specific tags are considered.
 
-How DD classifies an LLMObs span into the agent decision tree. Standard kinds:
+## Trace structure
 
-| Kind | Means |
+**Trace**
+
+A set of operations sharing a trace ID. In InfraAdvisor, one request can cross the UI-facing API, an agent backend, MCP services, external providers, and PostgreSQL.
+
+**Span**
+
+One timed operation within a trace. Its span ID and parent identify where it belongs in the tree.
+
+**Span kind**
+
+The Agent Observability role of an operation:
+
+| Kind | Role in the trace |
 |---|---|
-| `workflow` | The top-level wrapper for a logical request |
-| `agent` | A decision-making unit (router, planner, specialist) |
-| `llm` | A raw LLM call (chat completion, embedding) |
-| `tool` | A tool / function invocation |
-| `task` | A deterministic step (parsing, lookup, formatting) |
-| `embedding` | An embedding model call |
-| `retrieval` | A vector store / knowledge base lookup |
+| `workflow` | Coordinates a complete logical flow |
+| `agent` | Makes a routing, planning, or delegated decision |
+| `llm` | Calls a language model |
+| `tool` | Invokes a tool or function |
+| `task` | Performs a named non-agent step |
+| `embedding` | Creates a vector embedding |
+| `retrieval` | Finds contextual data |
 
-DD auto-classifies some kinds from OTel GenAI semconv operation names (`chat → llm`, `invoke_agent → agent`, etc.). Custom kinds need the `dd.llmobs.span.kind` attribute set explicitly.
+**Context propagation**
 
-## Trace, span, parent span
+The mechanism that carries trace identity across process and protocol boundaries. InfraAdvisor uses W3C trace context for distributed tracing. Evaluation submission separately preserves the target trace and span IDs so a score can join to an existing span.
 
-Standard distributed-tracing vocabulary, but DD-specific behavior worth noting:
+## Instrumentation
 
-- **Trace** — all spans sharing a `trace_id`. One logical request.
-- **Span** — one operation, identified by `(trace_id, span_id)`. Has a `parent_span_id` (root spans have null parent).
-- **Parent span** — the span this one is nested under. DD's UI renders this as a tree, so picking a sensible parent matters for readability.
+**Automatic instrumentation**
 
-W3C `traceparent` header propagates trace context across services. As long as both ends use the same SDK (or two SDKs that respect W3C), the trace stays unified across hops.
+Library-aware instrumentation that creates spans around supported framework calls. It reduces code but can describe only behavior the integration understands.
 
-## Join — join_on.span vs join_on.tag
+**Explicit instrumentation**
 
-When attaching an evaluation to a span via the eval-metric API, you choose how to address the target span:
+Application-created `LLMObs` spans or OpenTelemetry activities. InfraAdvisor uses it to represent routing, retrieval, privacy-safe media steps, and other orchestration with product meaning.
 
-- **`join_on.span`** — by `(trace_id, span_id)`. Exact target, requires you captured those IDs when emitting the span.
-- **`join_on.tag`** — by an arbitrary tag like `session.id`. Matches every span with that tag value within the configurable window.
+**OpenTelemetry (OTel)**
 
-The `.span` form is what our `IResponseEvaluator` pipeline uses; the `.tag` form is useful for retroactive scoring (e.g., "score every span from session X").
+Vendor-neutral APIs, conventions, and protocols used by the .NET backend. Its activities and metrics travel through OTLP and the Datadog Agent.
 
-## Source attribute
+**Datadog SDK path**
 
-A resource attribute that tells DD how the span was emitted:
+The Python backend's `ddtrace` and `LLMObs` integrations. The SDK models Datadog concepts directly and combines automatic library coverage with explicit orchestration spans.
 
-- `source = otel` — the OTel SDK emitted it. DD's OTLP ingest path classifies these into LLMObs kinds.
-- `source = ddtrace` (implicit) — the DD tracer emitted it.
-- `source = undefined` — something is misconfigured.
+## Conversation identity
 
-Why it matters: the external-evaluations API tags evals with `source:otel` to match against OTel-emitted spans. If the span side and eval side disagree, the join fails silently — no error, just no score visible in the UI.
+**Client session ID**
 
-## Auto-instrumentation vs explicit spans
+An application identifier returned by the query API and used as a routing or memory hint. It is not automatically the same as an Agent Observability session.
 
-- **Auto-instrumentation** — the SDK patches a library's call sites and emits spans without code changes. ddtrace covers LangChain, OpenAI, MCP, etc. OTel libraries opt in via `.UseOpenTelemetry()` decorators.
-- **Explicit span** — code wraps a region in a context manager (`with LLMObs.workflow():`) or an Activity (`using var a = source.StartActivity()`) so it becomes a visible step.
+**Conversation ID**
 
-Both produce spans of the same shape. Use auto where it exists; explicit for orchestration steps the libraries don't cover.
+The durable chat-thread identity. InfraAdvisor derives a tenant-scoped agent-memory key from the authenticated user and conversation or session input so client-provided IDs cannot cross tenant boundaries.
 
-## Managed eval, LLM-judge, external eval
+**RUM session ID**
 
-The three flavors of evaluator in DD:
+Browser Real User Monitoring context propagated into the request trace. It supports RUM-to-APM investigation; it should not be copied into custom LLM span tags merely to imitate session grouping.
 
-- **Managed eval** — DD-built, runs in DD's pipeline. UI toggle. Example: Language Mismatch.
-- **LLM-judge (DD UI)** — Custom prompt + model, configured in DD UI. Runs in DD's pipeline. Example: "rate helpfulness 1-5".
-- **External eval** — Code-driven, runs in your app, POSTs scores to DD's eval-metric API. Example: `CitationPresentEvaluator`.
+## Evaluations
 
-All three end up on the span in the same shape (`@evaluations.<label>.value`). Choose by where the logic should live.
+**Managed evaluation**
 
-## Dataset, experiment run
+A Datadog-provided check configured in the product. It runs after eligible telemetry is ingested.
 
-Offline regression-testing primitives (see [Experiments](./experiments/)):
+**Custom LLM-as-a-judge evaluation**
 
-- **Dataset** — frozen set of `(input, expected)` rows. Curated from production traces.
-- **Experiment run** — one pass over a dataset using a specific app version + prompt. Each row gets an LLM call + evaluator scores.
+A natural-language rubric managed in Datadog. Use it when the captured trace contains the necessary evidence and the criterion benefits from rapid prompt iteration.
 
-## Prompt tracking
+**External evaluation**
 
-Versioning system prompts by content hash so DD can group spans by prompt version. Stored on each LLM span as a JSON blob under the `_dd.ml_obs.prompt_tracking` attribute. See [Monitoring → Prompt tracking](./monitoring/prompt-tracking/).
+A result calculated outside Datadog and submitted against an existing span. InfraAdvisor's .NET deterministic and M.E.AI judges use this path.
 
-## Session
+**Relevance**
 
-A series of LLMObs traces sharing a `session.id` tag. Typically one browser tab or one phone session. We set `session.id` from the RUM session header so LLMObs sessions click through to RUM session replay.
+Whether the response addresses the request.
 
-Distinct from `gen_ai.conversation.id`, which is one chat thread (potentially across sessions). Both can coexist.
+**Groundedness or faithfulness**
 
-## Annotation queue
+Whether claims are supported by supplied evidence. Implementations and scoring scales differ, so compare evaluator definitions before comparing values.
 
-DD UI feature for humans to score traces. Pulls from a filter you define, presents the trace to a reviewer, captures answers to a schema. Output: evals on the span, just like programmatic evaluators. See [Evaluations → Annotation queues](./evaluations/annotation-queues/).
+**Annotation queue**
 
-## Faithfulness, groundedness, relevance
+A structured human-review workflow for traces or other supported interactions. The labels can reveal failure modes, calibrate judges, and seed regression data.
 
-The three most-cited "is the answer good?" evaluator concepts. Slightly different things:
+**Dataset and experiment run**
 
-- **Relevance** — does the answer address the question?
-- **Groundedness** — is the answer supported by the retrieved/tool context?
-- **Faithfulness** — does the answer avoid hallucinating beyond the provided context?
+A dataset is a versioned collection of test examples. An experiment run applies one application configuration to those examples so its output and evaluations can be compared with another run.
 
-In our app, MAF's `RelevanceEvaluator` covers Relevance, `GroundednessEvaluator` covers Groundedness, and Python's faithfulness eval is a custom variant of Groundedness with our specific context shape.
+## Project-specific terms
 
-## DD eval-metric API
+**Prompt version**
 
-`POST /api/intake/llm-obs/v2/eval-metric`. The wire format for submitting external evaluations. See [Evaluations → External](./evaluations/external/#the-wire-format).
+An identifier used to group behavior by prompt content or release. The .NET backend currently attaches a content-derived `prompt.version`; Python parity and consistent evaluator tagging remain unfinished. The full template is not exported by this implementation.
 
-## What's next
+**Chat artifact**
 
-The rest of the guide. If a term came up that isn't here, [open an issue](https://github.com/kyletaylored/infra-advisor-ai/issues) and we'll add it.
+A bounded, versioned, presentation-safe object extracted from an MCP result and carried beside assistant prose. Artifacts give clients a stable evidence contract without exposing raw provider responses.
+
+**Join**
+
+The association between an evaluation and the telemetry it scores. InfraAdvisor's .NET client joins external evaluations to a specific trace ID and span ID. Incorrect or lost IDs produce an unattached result even when scoring logic succeeded.
+
+Return to the [Agent Observability Lab](./) or begin with the [Quickstart](./quickstart/).

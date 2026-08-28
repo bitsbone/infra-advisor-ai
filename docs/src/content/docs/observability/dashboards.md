@@ -1,163 +1,54 @@
 ---
-title: Dashboards & Monitors
-description: All 5 dashboards, 3 monitors, and 1 Synthetics test — purpose, widgets, and import instructions
+title: Validate dashboards and monitors
+description: Understand the checked-in Datadog assets, their evidence sources, and the difference between repository intent and deployed state
+docType: guide
+audience:
+  - observability-engineer
+  - platform-engineer
+maturity: partial
+verifiedOn: 2026-08-27
+sidebar:
+  order: 4
+  label: Dashboards & monitors
 ---
 
-All Datadog dashboards and monitors are defined as JSON in the `datadog/` directory and can be imported via the Datadog API or UI.
+The `datadog` directory stores JSON definitions for observability assets. A checked-in definition documents intent and supports repeatable import; it does not prove the asset is deployed, receiving data, or owned by an on-call workflow.
 
-## Dashboards
+## Asset map
 
-### Infrastructure Overview (`datadog/dashboards/infra-overview.json`)
+| Asset | Question it should answer | Primary evidence |
+|---|---|---|
+| Infrastructure Overview dashboard | Are cluster and shared data services healthy? | Kubernetes, Kafka, Redis, and host metrics |
+| LLM Observability dashboard | How are agent volume, latency, tools, feedback, and quality trending? | Agent spans, evaluations, and custom metrics |
+| MCP Server dashboard | Which tools or providers are slow or failing? | MCP spans, logs, and metrics |
+| Pipeline Health dashboard | Did scheduled ingestion complete and publish data? | Airflow/Data Jobs and custom task spans |
+| Blob Storage dashboard | Are source snapshots uploading successfully? | `azure.blob.upload` spans |
+| Faithfulness monitor | Has the Python faithfulness gauge degraded? | `eval.faithfulness_score` |
+| Kafka lag monitor | Is the synthetic consumer falling behind? | consumer lag |
+| MCP provider-error monitor | Are provider failures elevated? | MCP error metric |
+| Consultant Query synthetic | Can a user complete the core browser journey? | browser test |
 
-**Purpose:** Cluster-level health at a glance.
+## Validate an asset before trusting it
 
-**Widgets:**
-- Ready nodes / total nodes
-- Pod count by namespace
-- Container restart rate (rolling 1h)
-- Kafka broker messages/sec (in and out)
-- Kafka consumer lag by consumer group
-- Redis operations/sec
-- Redis memory utilization %
-- Network I/O per node (ingress/egress bytes)
+1. Open the JSON and identify every metric, span, tag, service, and environment it expects.
+2. Find a recent source event and confirm its exact field names and units.
+3. Import or update the asset through an authorized Datadog workflow.
+4. Exercise a known healthy and known failing case.
+5. Confirm the dashboard distinguishes Python and .NET where their signal contracts differ.
+6. Assign an owner and record the deployed asset ID or URL outside secrets.
 
-**Primary audience:** Platform/infra team, on-call engineer
+The LLM dashboard deserves special care: Python and .NET do not emit identical business metrics or evaluation types. A combined widget must filter or group by backend rather than imply parity.
 
----
+## Monitor design
 
-### LLM Observability (`datadog/dashboards/llm-observability.json`)
+A monitor should state what decision follows the alert. Validate its query over representative history before accepting a threshold. Confirm no-data behavior, evaluation delay, recovery window, notification route, and a safe test method.
 
-**Purpose:** Agent quality and usage metrics.
+For faithfulness specifically, the current Python score is a gauge emitted by an asynchronous judge. Missing points can mean no sampled/evaluable work, judge failure, DogStatsD failure, or no traffic. Treat absence separately from a low score.
 
-**Widgets:**
-- Query volume (requests/min over 24h)
-- P50 / P95 / P99 query latency by specialist (engineering, water_energy, business_dev, document, general)
-- Total prompt + completion tokens per hour
-- Estimated cost per hour (by model)
-- Faithfulness score distribution (histogram)
-- User feedback breakdown (positive/negative/reported)
-- Tool call distribution (which tools get called most)
-- Session count (unique session IDs per hour)
+## Import boundary
 
-**Primary audience:** Product/AI team, demo presenter
+Dashboard and monitor APIs require an application key with write access. Keep that key in a deployment or administrative workload, not an agent pod or browser. Prefer a reviewed synchronization workflow over copying credentials into local shell history.
 
----
+After import, compare the deployed JSON with the repository definition. Datadog UI edits can create drift even when the checked-in file still builds successfully.
 
-### MCP Server (`datadog/dashboards/mcp-server.json`)
-
-**Purpose:** Tool-level metrics and external API health.
-
-**Widgets:**
-- Tool call count by tool name (timeseries)
-- Tool success rate by tool name
-- Tool latency p95 by tool name
-- External API latency by source (ArcGIS NBI, OpenFEMA, EIA, EPA SDWIS, SAM.gov, Azure OpenAI)
-- External API error rate by source
-- Error count by tool + error type (toplist)
-
-**Primary audience:** Engineering team debugging tool failures
-
----
-
-### Pipeline Health (`datadog/dashboards/pipeline-health.json`)
-
-**Purpose:** Airflow data ingestion pipeline status.
-
-**Widgets:**
-- DAG run duration by DAG name (timeseries)
-- Task success rate by DAG
-- Records fetched per DAG per run (from custom metric)
-- Azure Blob Storage upload latency by DAG
-- Upload size by DAG
-- Azure AI Search document count by domain
-- DJM: recent DAG runs table (via Datadog DJM widget)
-
-**Primary audience:** Data engineering team, demo of DJM
-
----
-
-### Blob Storage (`datadog/dashboards/blob-storage.json`)
-
-**Purpose:** Azure Blob Storage upload tracking from Airflow DAGs.
-
-**Widgets:**
-- Upload throughput (span count/min) by `dag_id` tag
-- Upload p95 latency by `dag_id`
-- Error rate by `dag_id`
-- Average upload size (bytes) by `dag_id`
-- 24h total uploads (query value)
-- 24h error count (query value)
-- Top upload paths (toplist, last 1h)
-- Uploads by container (timeseries)
-
-**Data source:** APM spans with operation `azure.blob.upload` from `_dd_blob.py`
-
----
-
-## Monitors
-
-### Faithfulness Score Alert (`datadog/monitors/faithfulness-score.json`)
-
-**Condition:** Mean `eval.faithfulness_score` < 0.75 over 1 hour  
-**Priority:** P2  
-**Notify:** On-call channel  
-**Interpretation:** Agent answers are not well-grounded in retrieved sources. Common causes: Azure AI Search index is empty (run `knowledge_base_init`), model prompt drift, or retrieval quality degradation.
-
----
-
-### Kafka Consumer Lag (`datadog/monitors/kafka-consumer-lag.json`)
-
-**Condition:** Consumer lag on `infra.query.events` > 10,000 messages  
-**Priority:** P2  
-**Notify:** On-call channel  
-**Interpretation:** The Agent API Kafka consumer has fallen behind the load generator. May indicate: Agent API pod crash, Redis connection failure, or MCP Server unresponsive.
-
----
-
-### MCP External API Error Rate (`datadog/monitors/mcp-external-api-error.json`)
-
-**Condition:** Error rate on `mcp.external_api.errors` > 5% over 5 minutes  
-**Priority:** P3  
-**Notify:** Engineering channel  
-**Interpretation:** One or more external government APIs (ArcGIS, FEMA, EIA, etc.) are returning errors. Check the MCP Server dashboard for which source is failing.
-
----
-
-## Synthetics
-
-### Consultant Query Flow (`datadog/synthetics/consultant-query-flow.json`)
-
-**Type:** Browser test  
-**Frequency:** Every 5 minutes  
-**Location:** AWS us-east-1 (Datadog managed)
-
-**Steps:**
-1. Navigate to `https://infra-advisor-ai.kyletaylor.dev`
-2. Log in with test credentials
-3. Submit query: "Show structurally deficient bridges in Harris County TX"
-4. Assert: Response appears within 30 seconds
-5. Assert: Citation panel shows at least one source
-6. Click thumbs up feedback button
-7. Assert: No JavaScript errors
-
-**Alerts:** Notifies on-call if synthetic test fails for 2 consecutive runs.
-
----
-
-## Importing dashboards and monitors
-
-```bash
-# Import a dashboard via Datadog API
-curl -X POST "https://api.us3.datadoghq.com/api/v1/dashboard" \
-  -H "DD-API-KEY: ${DD_API_KEY}" \
-  -H "DD-APPLICATION-KEY: ${DD_APP_KEY}" \
-  -H "Content-Type: application/json" \
-  -d @datadog/dashboards/llm-observability.json
-
-# Import a monitor
-curl -X POST "https://api.us3.datadoghq.com/api/v1/monitor" \
-  -H "DD-API-KEY: ${DD_API_KEY}" \
-  -H "DD-APPLICATION-KEY: ${DD_APP_KEY}" \
-  -H "Content-Type: application/json" \
-  -d @datadog/monitors/faithfulness-score.json
-```
+Continue to [Metrics](/infra-advisor-ai/llm-engineering/monitoring/metrics/) for signal selection and [Operations](/infra-advisor-ai/llm-engineering/monitoring/operations/) for alert maturity.

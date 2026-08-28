@@ -1,167 +1,79 @@
 ---
-title: Azure Infrastructure
-description: Bicep modules, Azure resource specs, storage paths, and deployment order
+title: Understand the Azure infrastructure
+description: Map each provisioned resource to the application behavior it supports and locate its Bicep source of truth
+docType: reference
+audience:
+  - platform-engineer
+  - application-developer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  label: Azure infrastructure
 ---
 
-All Azure resources are defined as Infrastructure as Code using Azure Bicep in `infra/bicep/`. A single subscription-scoped deployment creates everything in the `rg-tola-infra-advisor-ai` resource group in `eastus`.
+Azure resources are defined in `infra/bicep` and deployed from the subscription-scoped `main.bicep`. This page explains responsibilities and important boundaries; the Bicep modules remain authoritative for regions, SKUs, capacities, and model versions that change over time.
 
-## Azure resources
+## Resource map
 
-### AKS Cluster (`aks.bicep`)
+| Resource | Responsibility | Source |
+|---|---|---|
+| AKS | Runs application, data, Kafka, Airflow, and Datadog workloads | `modules/aks.bicep` |
+| Azure OpenAI | Chat, embedding, evaluation, and transcription models | `modules/azure-openai.bicep` |
+| Azure AI Search | Hybrid retrieval over the project knowledge index | `modules/azure-ai-search.bicep` |
+| Blob Storage | Raw/processed pipeline data, knowledge documents, and private chat media | `modules/azure-storage.bicep` |
+| Log Analytics | Azure platform logging and ACA environment dependency | `modules/monitoring.bicep` |
+| ACA proof of concept | Optional comparison of two OTLP-to-Datadog paths | `modules/aca-agentic-poc.bicep` |
 
-| Property | Value |
-|----------|-------|
-| Node count | 3 |
-| VM size | Standard_D2s_v3 (2 vCPU, 8 GB RAM each) |
-| Total cluster RAM | 24 GB |
-| Kubernetes version | 1.30+ |
-| Node OS | Ubuntu 22.04 LTS |
-| Networking | Azure CNI |
-| Identity | System-assigned managed identity |
+## AKS application boundary
 
-The 24 GB total RAM supports all workloads with the LocalExecutor Airflow setup. PySpark jobs (future roadmap) would require larger nodes.
+The development cluster uses three fixed `Standard_D2s_v3` system nodes, Azure CNI, Azure RBAC, OIDC, and Workload Identity. Kubernetes version and node settings are pinned in Bicep rather than repeated as an operational promise here.
 
-### Azure OpenAI (`azure-openai.bicep`)
+Redis and the application PostgreSQL database run in the cluster. Redis is intentionally ephemeral because it holds replaceable session memory. PostgreSQL uses a persistent volume for users, conversations, and messages. Airflow has a separate metadata database managed with its deployment.
 
-| Deployment | Model | Version | SKU | Capacity | Use |
-|------------|-------|---------|-----|----------|-----|
-| `gpt-4.1-mini` | gpt-4.1-mini | 2025-04-14 | GlobalStandard | 250K TPM | Agent reasoning (router, suggestions, faithfulness eval) |
-| `gpt-4.1` | gpt-4.1 | latest | GlobalStandard | 10K TPM | Specialist deep synthesis queries |
-| `text-embedding-3-small` | text-embedding-3-small | 1 | Standard | 350K TPM | Vector embeddings for AI Search |
+This topology is appropriate for a learning environment, not a general production recommendation. Availability, backups, autoscaling, and managed data services require a separate design decision.
 
-Deployments are chained sequentially (each `dependsOn` the previous) to avoid Azure provisioning conflicts.
+## Model deployments
 
-**Whisper account (`eastus2`, separate from the above).** `whisper-001`'s `Standard` deployment SKU is not offered in every region — `eastus` (where the main account above lives) has no deployable SKU for it at all. Since a deployment's region is fixed to its parent Cognitive Services account, transcription for voice chat attachments runs through a second, dedicated account:
+The main Azure OpenAI account hosts the currently selected chat and embedding deployments. A second account hosts Whisper in a region where its deployment SKU is available. The split exists because a model deployment cannot use a different region from its parent account.
 
-| Property | Value |
-|----------|-------|
-| Account name | `oai-infra-advisor-whisper-<env>` |
-| Region | `eastus2` |
-| Deployment | `whisper` (model `whisper`, version `001`), SKU `Standard`, capacity 3 |
-| Consumed by | `agent-api`'s `media.py` (`AZURE_OPENAI_WHISPER_ENDPOINT`/`_API_KEY`) and `agent-api-dotnet`'s `AgentService` (keyed `AzureOpenAIClient` singleton, same env var names) |
+Application configuration selects deployments by name. When adding or replacing a model, verify all three layers:
 
-See [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for the full cascade design (audio → transcript → text pipeline; images → vision content parts).
+1. Bicep provisions the deployment in a supported region and SKU.
+2. Kubernetes secrets or configuration expose the expected endpoint and deployment name.
+3. traces identify the model/version actually used by the request.
 
-### Azure AI Search (`azure-ai-search.bicep`)
+## Search index
 
-| Property | Value |
-|----------|-------|
-| SKU | Standard |
-| Partitions | 1 |
-| Replicas | 1 |
-| Index name | `infra-advisor-knowledge` |
-| Search mode | Hybrid (vector + BM25 keyword) |
-| Vector dimensions | 1536 (text-embedding-3-small) |
+Azure AI Search provides hybrid vector and keyword retrieval. The `infra-advisor-knowledge` index stores chunk content, a 1,536-dimension embedding, source, domain, document type, state, county, and source-specific metadata.
 
-The single index stores all domain knowledge. Documents are tagged with `domain`, `source`, and `document_type` fields to enable filtered search by knowledge area.
+The index is a derived serving layer. Airflow or initialization jobs rebuild it from governed source data; application services should not treat it as the system of record.
 
-**Index schema:**
+## Storage boundaries
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `id` | String (key) | Unique document ID |
-| `content` | String (searchable) | Text chunk (500–512 tokens) |
-| `content_vector` | Collection(Single) | 1536-dim embedding |
-| `source` | String (filterable) | Origin system (FHWA_NBI, OpenFEMA, EIA, etc.) |
-| `domain` | String (filterable) | Knowledge area (transportation, water, energy, environmental, business_development) |
-| `document_type` | String (filterable) | Record type (asset_record, disaster_declaration, water_plan_project, etc.) |
-| `state` | String (filterable) | US state (where applicable) |
-| `county` | String (filterable) | County name (where applicable) |
-| `metadata` | String | JSON blob of source-specific fields |
+All containers are private:
 
-### Azure Blob Storage (`azure-storage.bicep`)
+| Container | Purpose |
+|---|---|
+| `raw-data` | Pipeline source snapshots and normalized raw outputs |
+| `processed-data` | Chunked or embedding-ready pipeline output |
+| `knowledge-docs` | Documents used to build the search index |
+| `chat-media` | Current-turn image and audio uploads |
 
-| Property | Value |
-|----------|-------|
-| Redundancy | Standard LRS |
-| Tier | Hot |
-| Access | Private (SAS / connection string) |
+Chat media uses generated `<kind>/<UUID>` blob names and expiring, blob-scoped read-only SAS URLs. It does not use filenames or session IDs in object paths. This keeps storage identity independent of user-provided metadata and supports the validation boundary described in [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/).
 
-**Container paths:**
+## Optional ACA experiment
 
-| Path | Contents |
-|------|----------|
-| `raw-data/nbi/texas/` | NBI bridge parquet files (weekly) |
-| `raw-data/fema/` | FEMA declaration parquet files (daily) |
-| `raw-data/eia/` | EIA energy parquet files (weekly) |
-| `raw-data/twdb/` | TWDB water plan Excel files (monthly) |
-| `raw-data/epa_sdwis/` | EPA SDWIS water system parquet files (monthly) |
-| `raw-data/knowledge-docs/` | Synthetic knowledge base parquet (on-demand) |
-| `raw-data/awards/` | USASpending contract award parquet (weekly) |
-| `chat-media/{session_id}/{uuid}-{filename}` | User-uploaded chat attachments (images, audio) — `publicAccess: 'None'`, addressed to callers via a read-only SAS URL minted at upload time (`agent-api`'s `POST /media/upload`), not a public container path like the rows above |
+The ACA module is disabled by default. When enabled, it deploys one minimal .NET application twice: once through ACA's managed OpenTelemetry collector and once with a Datadog sidecar. Secrets enter the deployment as parameters and are not committed to a parameter file. See [Compare OTel export paths](../aca-otel-datadog/) for the findings.
 
-### Redis (Kubernetes, not Azure PaaS)
-
-Redis runs as a single-pod Kubernetes Deployment in the `infra-advisor` namespace. It is not Azure Cache for Redis — intentionally kept in-cluster to eliminate external latency on the hot session-read path.
-
-| Property | Value |
-|----------|-------|
-| Image | `redis:7.4-alpine` |
-| Persistence | None (in-memory only — session loss on restart is acceptable) |
-| Port | 6379 (ClusterIP only) |
-
-### PostgreSQL (Kubernetes Deployment)
-
-Auth API user accounts are stored in a PostgreSQL 16 Deployment in the `infra-advisor` namespace. Airflow has its own separate PostgreSQL sidecar (managed by the Helm chart) in the `airflow` namespace.
-
-| Property | Value |
-|----------|-------|
-| Image | `postgres:16-alpine` |
-| Storage | PVC, ReadWriteOnce, 5Gi (cluster default storage class) |
-| Port | 5432 (ClusterIP only) |
-
-### ACA Agentic POC (`aca-agentic-poc.bicep`)
-
-A separate, opt-in proof-of-concept — not part of the main InfraAdvisor product — built for a customer conversation about running a .NET agentic AI app on Azure Container Apps (ACA) with Datadog observability via OpenTelemetry. It reuses this resource group and the existing Azure OpenAI account (`azure-openai.bicep`'s `gpt-4.1-mini` deployment) rather than provisioning a new Azure OpenAI resource, and reuses the existing Log Analytics workspace (`monitoring.bicep`) for the Container Apps Environment's required `appLogsConfiguration`.
-
-The **same** minimal .NET 9 agentic app (`services/aca-agentic-poc-dotnet/` — one `/run` endpoint, one Azure OpenAI chat call, one trivial tool) is deployed **twice**, as two separate Container Apps sharing one Container Apps Environment, to directly compare two different OTel-to-Datadog integration paths:
-
-| Property | `aca-agentic-poc-managed` | `aca-agentic-poc-sidecar` |
-|----------|---------------------------|---------------------------|
-| OTel path | ACA's built-in managed OpenTelemetry agent (environment-level) | Datadog `serverless-init` sidecar container, in-revision |
-| Containers per revision | 1 (`app`) | 2 (`app` + `datadog-sidecar`) |
-| Export protocol | gRPC only (platform requirement) | HTTP/protobuf to `localhost:4318` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Auto-injected by the platform (not set in Bicep) | Explicitly set to `http://localhost:4318`, overriding the platform default |
-| Where Datadog config lives | Environment's `openTelemetryConfiguration.destinationsConfiguration.dataDogConfiguration` | `datadog-sidecar` container's `DD_API_KEY`/`DD_SITE`/`DD_OTLP_CONFIG_*` env vars |
-
-Both apps' Container Apps Environment secrets (Azure OpenAI key, Datadog API key, Basic Auth credentials, Datadog RUM Application ID/Client Token) are passed via CLI `--parameters` at deploy time — no GHCR registry credentials needed, since the `aca-agentic-poc-dotnet` package is public (verified via an anonymous pull test), independent of the source repo's own visibility — **never** committed to a `.bicepparam` file (unlike every other Azure resource in this repo, this module's secrets flow through Bicep at all, since ACA has no equivalent to a K8s `secretKeyRef` sourced from an out-of-band resource). The module is gated behind `deployAcaAgenticPoc` (default `false`) in `main.bicep` so a routine `make deploy-infra` run doesn't require these secrets.
-
-Each app also serves a minimal browser UI at `/` (a single static `wwwroot/index.html`, no build tooling) gated by HTTP Basic Auth — a shared username/password from `POC_UI_USERNAME`/`POC_UI_PASSWORD` env vars, checked by a small custom middleware in `Program.cs` that exempts only `/health` (so ACA's platform probes keep passing). The page loads Datadog Browser RUM via the CDN async snippet, reusing the **same** RUM Application as `infra-advisor-ui` (same `applicationId`/`clientToken`/`site`) but with a distinct `service` — `<OTEL_SERVICE_NAME>-ui`, so `aca-agentic-poc-managed-ui` and `aca-agentic-poc-sidecar-ui` are separable in RUM the same way their backend traces already are. Config values reach the browser via a small unauthenticated `GET /rum-config.js` endpoint (the RUM client token is designed to be public/embedded in browser JS) rather than being baked in at build time, since one image serves both deployments with different values.
-
-**Status**: Deployed live to `eastus2` — **both paths confirmed producing full trace trees in Datadog** (`http.server.request (POST /run) → invoke_agent → chat → execute_tool → chat`, correct `gen_ai.*` attributes, ACA-specific tags). Getting there required finding and fixing a real bug on each path (a gRPC path-doubling issue on the managed agent, an HTTP path-suffix issue on the sidecar) — both were completely silent everywhere except the OTel SDK's own internal diagnostics, which aren't visible by default in ACA's minimal containers.
-
-The full writeup — exact bugs, exact fixes, the debugging technique that found them, and the shared code pattern for supporting both paths from one binary — is its own reference: **[OTel on ACA: Managed vs. Sidecar](/architecture/aca-otel-datadog/)**.
-
-**Customer-facing takeaway**: the sidecar path is the more debuggable and better-documented integration — its bugs were unusual but findable and fixable. The managed-agent path required reverse-engineering undocumented Azure-specific env var names and a subtler gRPC-URI bug on top; both are now fixed and verified, but the sidecar remains the path to reach for first when demo-readiness matters more than avoiding an extra container.
-
-## Deploying infrastructure
+## Deployment order
 
 ```bash
-# Prerequisites: az CLI logged in, subscription set
 make deploy-infra
+make get-credentials
+make create-secrets
+make deploy-k8s
 ```
 
-This runs:
-```bash
-az deployment sub create \
-  --location eastus \
-  --template-file infra/bicep/main.bicep \
-  --parameters @infra/bicep/parameters/dev.bicepparam
-```
+The first command provisions Azure resources. The remaining commands connect to AKS, create out-of-band Kubernetes secrets from the local environment, and apply workloads. Review the [deployment quickstart](/infra-advisor-ai/deployment/quickstart/) before running them.
 
-**First-time deployment order:**
-
-1. `make deploy-infra` — provision Azure resources
-2. `make get-credentials` — fetch kubeconfig for AKS
-3. `make create-secrets` — push all K8s secrets from `.env`
-4. `make deploy-k8s` — apply all manifests and Helm releases
-
-## Resource tags
-
-All Azure resources are tagged:
-
-| Tag | Value |
-|-----|-------|
-| `environment` | `dev` |
-| `project` | `infra-advisor-ai` |
-| `managed-by` | `bicep` |
+All provisioned resources carry environment and project tags; module-specific tags identify management or experiment purpose. Inspect the deployed state and Bicep diff before treating this reference as proof of what is live.

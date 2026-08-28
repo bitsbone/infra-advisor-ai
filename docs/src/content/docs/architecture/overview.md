@@ -1,122 +1,71 @@
 ---
-title: System Overview
-description: Service map, namespace layout, and inter-service communication for InfraAdvisor AI
+title: System overview
+description: Map InfraAdvisor's request-serving, data, and observability services without relying on a brittle inventory count
+docType: reference
+audience:
+  - application-developer
+  - platform-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 1
 ---
 
-## Service map
+## Request-serving path
 
-Seven microservices work together to serve infrastructure advisory queries. Each runs as a containerized workload on AKS, with images published to GitHub Container Registry.
-
-The platform provides **parallel Python and .NET reasoning stacks** (Agent API + MCP Server). The UI backend switcher routes a user's requests to one stack or the other.
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Browser                                                            │
-│  React 18 + Chakra UI + Datadog RUM                                 │
-│  https://infra-advisor-ai.kyletaylor.dev                            │
-└──────┬─────────────────────┬─────────────────────────┬──────────────┘
-       │ /auth/*             │ /api/*                  │ /api-dotnet/*
-       ▼                     ▼                         ▼
-┌────────────────┐  ┌─────────────────────┐  ┌──────────────────────────┐
-│   Auth API     │  │   Agent API         │  │   Agent API (.NET)       │
-│   :8002        │  │   :8001             │  │   :8001                  │
-│   FastAPI      │  │  FastAPI + LangChain│  │   ASP.NET Core 10        │
-│   PostgreSQL   │  │   LangGraph ReAct   │  │   OTel/OpenInference.NET │
-│   JWT + bcrypt │  │   Redis + Kafka     │  │   Redis + Kafka          │
-└───────┬────────┘  └──────────┬──────────┘  └───────────┬──────────────┘
-        │                      │ MCP HTTP                │ MCP HTTP
-        │                      ▼                         ▼
-        │           ┌──────────────────┐       ┌──────────────────────┐
-        │           │   MCP Server     │       │   MCP Server (.NET)  │
-        │           │   :8000 FastMCP  │       │   :8000 ModelContextP│
-        │           │   11 data tools  │       │   11 data tools      │
-        │           └────────┬─────────┘       └───────────┬──────────┘
-        │                    └─────────────────────────────┘
-        │                              │
-        ▼                   ┌──────────┴─────────┐
-┌──────────────────┐        │  External APIs     │
-│  PostgreSQL      │        │  FHWA NBI ArcGIS   │
-│  :5432           │        │  OpenFEMA REST     │
-│  User accounts   │        │  EIA API v2        │
-│  Conversations   │        │  EPA SDWIS         │
-│  Messages        │        │  ERCOT public API  │
-└──────────────────┘        │  TxDOT Open Data   │
-                            │  SAM.gov           │
-                            │  USASpending.gov   │
-                            │  Azure OpenAI web  │
-                            └────────────────────┘
-
-┌───────────────────────────────────────────────────────────────────┐
-│  Data Pipeline (Airflow)                                          │
-│  Scheduler StatefulSet — LocalExecutor — 9 DAGs                   │
-│  NBI → FEMA → EIA → TWDB/EPA → Knowledge Base → ...               │
-│  Azure Blob Storage (raw parquet) → Azure AI Search (vectors)     │
-└───────────────────────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────────────────────┐
-│  Eval Loop                                                        │
-│  Load Generator CronJob → Kafka infra.query.events                │
-│  → Agent API consumer → Kafka infra.eval.results                  │
-│  → Datadog LLM Observability faithfulness metric                  │
-└───────────────────────────────────────────────────────────────────┘
+```text
+Web / mobile client
+        │
+        ├── auth ───────────────▶ Auth API ─────▶ PostgreSQL
+        │
+        ├── Python query ───────▶ Agent API ────▶ Python MCP server
+        │                            │                  │
+        │                            ├─ Redis           └─ external data APIs
+        │                            └─ PostgreSQL
+        │
+        └── .NET query ─────────▶ .NET Agent API ─▶ .NET MCP server
+                                     │                   │
+                                     ├─ Redis            └─ external data APIs
+                                     └─ PostgreSQL
 ```
 
-## Namespaces
+The UI reverse proxy routes `/api/*` to Python, `/api-dotnet/*` to .NET, and `/auth/*` to the authentication service. Both agent paths share user-visible contracts while preserving different internal framework and telemetry choices.
 
-All workloads are organized into four Kubernetes namespaces:
+## Supporting systems
 
-| Namespace       | Contents                                                                                                           |
-| --------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `infra-advisor` | mcp-server, mcp-server-dotnet, agent-api, agent-api-dotnet, auth-api, ui, redis, postgres, mailpit, load-generator |
-| `airflow`       | Airflow scheduler, API server, dag-processor, triggerer, PostgreSQL                                                |
-| `kafka`         | Strimzi Operator, Kafka cluster, topics                                                                            |
-| `datadog`       | Datadog Agent DaemonSet, Cluster Agent                                                                             |
+| System | Role |
+|---|---|
+| Azure OpenAI | Chat, embeddings, judges, transcription, and vision-capable inference |
+| Azure AI Search | Hybrid retrieval over the knowledge index |
+| Blob Storage | Pipeline data, source documents, and private current-turn media |
+| Redis | Ephemeral agent memory, model selection, and suggestion pools |
+| PostgreSQL | Users, conversations, messages, attachments, and artifacts |
+| Kafka | Synthetic query and result streams with Data Streams Monitoring |
+| Airflow | Scheduled source refresh and search indexing |
+| Datadog Agent | APM, logs, metrics, OTLP ingestion, RUM correlation, and infrastructure telemetry |
 
-## Inter-service communication
+## Kubernetes namespaces
 
-All service-to-service traffic uses Kubernetes DNS names (`<service>.<namespace>.svc.cluster.local`):
+| Namespace | Primary contents |
+|---|---|
+| `infra-advisor` | Product services, UI, Redis, PostgreSQL, mail testing, and synthetic load |
+| `airflow` | Scheduler and Airflow support workloads |
+| `kafka` | Strimzi and Kafka resources |
+| `datadog` | Datadog Agent and Cluster Agent |
 
-| From               | To                   | Protocol       | DNS Name                                                     |
-| ------------------ | -------------------- | -------------- | ------------------------------------------------------------ |
-| nginx (UI)         | Agent API (Python)   | HTTP           | `agent-api.infra-advisor.svc.cluster.local:8001`             |
-| nginx (UI)         | Agent API (.NET)     | HTTP           | `agent-api-dotnet.infra-advisor.svc.cluster.local:8001`      |
-| nginx (UI)         | Auth API             | HTTP           | `auth-api.infra-advisor.svc.cluster.local:8002`              |
-| Agent API (Python) | MCP Server (Python)  | HTTP (MCP)     | `mcp-server.infra-advisor.svc.cluster.local:8000`            |
-| Agent API (.NET)   | MCP Server (.NET)    | HTTP (MCP)     | `mcp-server-dotnet.infra-advisor.svc.cluster.local:8000`     |
-| Agent API (both)   | Redis                | Redis protocol | `redis.infra-advisor.svc.cluster.local:6379`                 |
-| Agent API (both)   | Kafka                | Kafka protocol | `kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092` |
-| Agent API (both)   | PostgreSQL           | PostgreSQL     | `postgres.infra-advisor.svc.cluster.local:5432`              |
-| Load Generator     | Kafka                | Kafka protocol | `kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092` |
-| Airflow            | Azure OpenAI         | HTTPS          | `*.openai.azure.com`                                         |
-| Airflow            | Azure AI Search      | HTTPS          | `*.search.windows.net`                                       |
-| Airflow            | Azure Blob Storage   | HTTPS          | `*.blob.core.windows.net`                                    |
-| Python services    | Datadog Agent        | UDP/TCP        | `datadog-agent.datadog.svc.cluster.local:8125/8126`          |
-| .NET services      | Datadog Agent (OTLP) | HTTP           | `datadog-agent.datadog.svc.cluster.local:4318`               |
+Services use Kubernetes DNS and ClusterIP networking internally. Only the UI entrypoint is intended for public client traffic.
 
-## Container images
+## Important protocols
 
-All images are hosted at `ghcr.io/kyletaylored/infra-advisor-ai/<service>:latest` and built by GitHub Actions on every merge to `main`.
+| Boundary | Protocol |
+|---|---|
+| Client to APIs | HTTPS, JSON, and server-sent events |
+| Agent to MCP | Streamable HTTP using Model Context Protocol |
+| Services to Redis/PostgreSQL/Kafka | Native client protocols |
+| Python telemetry to Agent | Datadog tracing, DogStatsD, and logs |
+| .NET telemetry to Agent | OTLP HTTP/protobuf plus structured logs |
+| Browser to Datadog | RUM client intake and distributed trace headers |
 
-| Service           | Image               | Language         | Base                                   |
-| ----------------- | ------------------- | ---------------- | -------------------------------------- |
-| MCP Server        | `mcp-server`        | Python 3.12      | `python:3.12-slim`                     |
-| MCP Server (.NET) | `mcp-server-dotnet` | .NET 10          | `mcr.microsoft.com/dotnet/aspnet:10.0` |
-| Agent API         | `agent-api`         | Python 3.12      | `python:3.12-slim`                     |
-| Agent API (.NET)  | `agent-api-dotnet`  | .NET 10          | `mcr.microsoft.com/dotnet/aspnet:10.0` |
-| Auth API          | `auth-api`          | Python 3.12      | `python:3.12-slim`                     |
-| Load Generator    | `load-generator`    | Python 3.12      | `python:3.12-slim`                     |
-| UI                | `ui`                | TypeScript/nginx | `node:24-alpine` → `nginx:alpine`      |
+The exact container images, ports, and deployment configuration live in Dockerfiles and Kubernetes manifests. Prefer those sources when diagnosing live connectivity; this page supplies the stable mental model.
 
-## Ingress
-
-A single nginx Deployment (in the `ui` pod) acts as the ingress reverse proxy for the entire application:
-
-| Path prefix     | Proxied to                 | Notes                        |
-| --------------- | -------------------------- | ---------------------------- |
-| `/`             | nginx static files         | React SPA (`/assets/`)       |
-| `/api/*`        | Agent API (Python) `:8001` | Strips `/api/` prefix        |
-| `/api-dotnet/*` | Agent API (.NET) `:8001`   | Strips `/api-dotnet/` prefix |
-| `/auth/*`       | Auth API `:8002`           | Strips `/auth/` prefix       |
-| `/airflow/*`    | Airflow API Server `:8080` | Preserves `/airflow/` prefix; admin auth required |
-
-The UI service is exposed via a Kubernetes LoadBalancer with an Azure public IP. TLS termination and custom domain (`infra-advisor-ai.kyletaylor.dev`) are configured at the DNS/ingress level.
+Continue to [Data flow](../data-flow/) to follow one request through these boundaries.

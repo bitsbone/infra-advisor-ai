@@ -1,147 +1,82 @@
 ---
-title: .NET ↔ Python feature parity
-description: What .NET has that Python doesn't (yet) — a checklist for catching the Python stack back up.
+title: Compare .NET and Python feature coverage
+description: Track user-visible parity separately from deliberate framework differences and remaining observability gaps
 docType: maintainer
+audience:
+  - maintainer
+  - application-developer
 maturity: partial
-verifiedOn: 2026-07-31
+verifiedOn: 2026-08-27
+sidebar:
+  label: .NET and Python parity
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import FeatureStatus from '@components/FeatureStatus.astro';
 
-The .NET stack (`agent-api-dotnet`, `mcp-server-dotnet`) has accumulated significantly more functionality than the Python stack (`agent-api`, `mcp-server`) since the MAF migration. This page enumerates every difference so the Python catch-up work has a single checklist.
+<FeatureStatus status="partial" verifiedOn="2026-08-27" label="Core experience aligned; quality and operational signals still differ" />
 
-*Last audited against code: 2026-07-16.* A prior audit (2026-05-16) marked several items ❌ that are now done — tool-description enrichment and the suggestion pool mechanism, specifically. This revision corrects those and adds AI Guard, which shipped on both stacks in the same round as this audit.
+Parity means a user can complete the same job and an investigator can answer equivalent questions. It does not require identical code, trace names, or agent topology.
+
+## Deliberate architecture differences
+
+| Layer | .NET | Python |
+|---|---|---|
+| Web framework | ASP.NET Core | FastAPI |
+| Agent | Microsoft Agent Framework single-agent path | LangGraph router plus specialists |
+| Model abstraction | Microsoft.Extensions.AI | LangChain Azure OpenAI |
+| MCP client | ModelContextProtocol.Client with cached holder | LangChain MCP adapter refreshed per request |
+| AI telemetry | OpenTelemetry, Microsoft AI decorators, OTLP | `ddtrace.auto` plus explicit `LLMObs` spans |
+| Hot memory | MAF session serialization in Redis | Project message serialization in Redis |
+
+The memory formats are intentionally not interchangeable. Both derive a tenant-scoped key from authenticated identity so a raw client session or conversation ID is not the isolation boundary.
+
+## User-visible coverage
+
+| Capability | .NET | Python | Notes |
+|---|---:|---:|---|
+| Authenticated query and conversation history | ✓ | ✓ | Shared client contract, separate agent memory format |
+| Non-streaming response | ✓ | ✓ | Answer, sources, steps, attachments, artifacts |
+| SSE streaming and live tool steps | ✓ | ✓ | Same event family, different framework adapters |
+| Curated and generated suggestions | ✓ | ✓ | Both have a seed pool and tool-grounded generation |
+| Image and audio attachments | ✓ | ✓ | Same upload/reference validation contract |
+| Procurement evidence artifacts | ✓ | ✓ | Same artifact schema, separate extractors |
+| Tool catalog and normalized provider behavior | ✓ | ✓ | Keep language implementations contract-tested |
+
+## Observability and operations
+
+| Capability | .NET | Python | Interpretation |
+|---|---:|---:|---|
+| End-to-end agent and MCP traces | ✓ | ✓ | Trees differ by framework; investigate equivalent boundaries |
+| Log and RUM-to-APM correlation | ✓ | ✓ | OpenTelemetry/Serilog versus ddtrace injection |
+| PostgreSQL and DBM evidence | ✓ | ✓ | Attribute/collector path versus ddtrace propagation |
+| Explicit AI Guard pre-flight | ✓ | ✓ | .NET HTTP client; Python Datadog SDK client |
+| Downstream automatic AI Guard coverage | — | framework-dependent | Verify supported Python integrations at runtime |
+| Prompt version | content hash | missing | .NET evaluator config can still use a separate env version |
+| Response evaluator framework | five evaluators | missing | Largest quality-layer gap |
+| User feedback submission | ✓ | ✓ | Both attach categorical feedback to a span |
+| Faithfulness signal | histogram plus external groundedness judge | task annotation plus gauge | Not the same metric or delivery contract |
+| Business counters | conversation, tool, feedback, reconnect | missing except faithfulness gauge | Dashboards must split by backend |
+| Evaluation diagnostics endpoint | ✓ | missing | Python has no equivalent dispatcher to diagnose |
+| MCP reconnect recovery | cached-client retry | fresh per-request client | Different lifecycle; do not copy the .NET holder without evidence |
+
+## Current evaluator catalog
+
+The .NET response pipeline registers three deterministic checks—citation presence, business-development tool order, and routing accuracy—and two Microsoft.Extensions.AI judges for relevance and groundedness. Python has a background faithfulness task and user-feedback submission, not equivalent evaluator modules.
+
+See [External evaluations](/infra-advisor-ai/llm-engineering/evaluations/external/) for the exact contracts. Do not document hypothetical Python files before they exist.
+
+## Prioritized gaps
+
+1. **Standardize prompt identity.** Apply the same content-derived version algorithm to Python and to .NET evaluation tags without exporting templates or user content.
+2. **Design Python evaluation delivery.** Decide how background work preserves target span identity, failure diagnostics, and shutdown behavior before porting individual checks.
+3. **Add bounded business metrics.** Match names and dimension contracts only where the aggregate question is useful on both backends.
+4. **Calibrate quality signals.** Define whether Python faithfulness and .NET groundedness are comparable; rename or separate them if they are not.
 
 <Aside type="note">
-**Different paths to the same outcome.** Where .NET uses **Microsoft Agents Framework + Microsoft.Extensions.AI + pure OpenTelemetry**, Python uses **LangGraph + LangChain + `ddtrace.auto`**. The DD Python `ddtrace` library bundles an LLM Observability SDK (`ddtrace.llmobs.LLMObs`); the .NET tracer does not. So some .NET features (prompt tracking, external evals) were built by hand against DD's APIs; the Python equivalents can lean on the DD SDK. The parity goal is **feature coverage**, not implementation symmetry.
+Implementation symmetry is not automatically an improvement. Python's per-request MCP client avoids the stale cached-session failure that motivated the .NET reconnect holder, while the .NET evaluator abstraction provides capabilities Python genuinely lacks.
 </Aside>
 
-## Architecture summary
+## Maintainer rule
 
-| Layer               | .NET                                                              | Python                                                                 |
-| ------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Web framework       | ASP.NET Core minimal API                                          | FastAPI                                                                |
-| LLM client          | `Microsoft.Extensions.AI` `IChatClient`                           | `langchain_openai.AzureChatOpenAI`                                     |
-| Agent loop          | `Microsoft.Agents.AI` `ChatClientAgent` (single agent, all tools) | LangGraph `create_react_agent` (router + 5 specialists)                |
-| MCP client          | `ModelContextProtocol.Client` 1.3.0                               | `langchain_mcp_adapters.MultiServerMCPClient`                          |
-| Tracer              | Pure OpenTelemetry SDK (OTLP → collector)                         | `ddtrace.auto` (DD-native protocol → local socket)                     |
-| LLM Obs path        | OTel `gen_ai.*` attrs → collector `transform/llmobs` processor    | `ddtrace.llmobs.LLMObs` SDK (direct)                                   |
-| Conversation memory | MAF `AgentSession` (Redis JSON)                                   | Hand-rolled Redis list of `ConversationMessage`                        |
-| Streaming           | `IAsyncEnumerable<AgentResponseUpdate>` over SSE                  | LangGraph `astream` — but only `/query` non-streaming endpoint exposed |
-
-## Feature matrix
-
-Legend: ✅ at parity · ◐ partial · ❌ missing · 🔵 .NET-only by design
-
-| Capability                                                                                            | .NET                                                                                     | Python                                                                                           | Notes                                                                                                                          |
-| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| **Agent core**                                                                                        |
-| Multi-tool agent loop                                                                                 | ✅                                                                                       | ✅                                                                                               | Different architectures (single MAF agent vs LangGraph router+specialists)                                                     |
-| Conversation history persistence                                                                      | ✅ MAF `AgentSession` round-trip in Redis                                                | ✅ Custom Redis list                                                                             | Different serialization formats — sessions don't cross-migrate                                                                 |
-| MCP tool integration                                                                                  | ✅ via SDK                                                                               | ✅ via LangChain adapter                                                                         |                                                                                                                                |
-| MCP client resilient reconnect (handles mcp-server restart without restarting agent-api)              | ✅ `McpClientHolder` + retry-once on session-expired                                     | ❌                                                                                               | LangChain `MultiServerMCPClient` would need a similar wrapper                                                                  |
-| Multi-turn conversation memory                                                                        | ✅ MAF session key remains application-only                                               | ✅ Redis session key remains application-only                                                    | Raw chat/RUM session identifiers are deliberately excluded from logs and telemetry on both stacks                            |
-| **Streaming UX**                                                                                      |
-| Server-Sent Events `/query/stream` endpoint                                                           | ✅                                                                                       | ❌                                                                                               | `IAsyncEnumerable<AgentResponseUpdate>` → SSE blocks                                                                           |
-| Live tool-call chips in UI                                                                            | ✅ for `dotnet` backend                                                                  | ❌ for `python` backend                                                                          | Frontend toggle currently hides streaming chips when `backend=python`                                                          |
-| Token-by-token answer streaming                                                                       | ✅                                                                                       | ❌                                                                                               | LangGraph supports `astream`; would need wiring into a streaming FastAPI endpoint                                              |
-| **Observability**                                                                                     |
-| OTel `gen_ai.*` spans (chat / agent / tool / embedding)                                               | ✅ M.E.AI + MAF emit natively                                                            | ◐ ddtrace LangChain integration emits, but DD-native format not OTel                             |                                                                                                                                |
-| LLM Observability span kinds (llm / agent / tool / embedding / retrieval / task)                      | ✅ all 7 via auto-classification + `dd.llmobs.span.kind` tags                            | ◐ via `ddtrace.llmobs.LLMObs` decorators                                                         | Python could add the `task` / `retrieval` kinds via `LLMObs.workflow()`                                                        |
-| `source:otel` resource attribute                                                                      | ✅                                                                                       | ❌                                                                                               | Python uses `source:apm` because spans go through DD tracer                                                                    |
-| Distributed tracing across services via W3C `traceparent`                                             | ✅                                                                                       | ◐ DD propagation format by default; W3C optional                                                 |                                                                                                                                |
-| Log → trace correlation                                                                               | ✅ Serilog `@tr`/`@sp`                                                                   | ✅ ddtrace `DD_LOGS_INJECTION` injects `dd.trace_id`/`dd.span_id`                                | Different injection mechanisms, same end-result                                                                                |
-| RUM → backend trace linkage                                                                           | ✅ via W3C `traceparent`                                                                 | ✅ via `x-datadog-trace-id` header                                                               | RUM sends both; each side reads what its tracer prefers                                                                        |
-| `Npgsql.OpenTelemetry` / `pg8000` instrumentation for DB spans                                        | ✅ `.AddNpgsql()`                                                                        | ✅ `ddtrace.psycopg` auto-instrumentation                                                        |                                                                                                                                |
-| DBM ↔ APM trace correlation                                                                           | ✅ via OTel attribute path (`attributes/dbm` collector processor sets `span.type=sql`)   | ✅ via `DD_DBM_PROPAGATION_MODE=full` SQL-comment injection                                      |                                                                                                                                |
-| **LLM Observability — quality layer**                                                                 |
-| External evaluations submitted to DD `/api/intake/llm-obs/v2/eval-metric`                             | ✅ `DatadogEvalsClient` + `IResponseEvaluator` framework with 5 evaluators (3 deterministic + 2 M.E.AI Quality LLM-judge) | ❌ Only a `faithfulness_score: None` placeholder relying on ddtrace LLMObs auto-annotation — not an actual scored/submitted evaluation | `ddtrace.llmobs.LLMObs.submit_evaluation()` would be the Python-side equivalent. **This is the largest remaining gap.**        |
-| `IResponseEvaluator` catalog                                                                          | ✅ `CitationPresentEvaluator`, `BdToolOrderingEvaluator`, `ToolRoutingAccuracyEvaluator`, `MeaiRelevanceEvaluator`, `MeaiGroundednessEvaluator` | ❌                                                                                               |                                                                                                                                |
-| Eval pipeline admin diagnostics (`GET /eval/status` + `EvalDiagnostics.tsx`)                          | ✅                                                                                       | ❌ No Python equivalent endpoint exists                                                          | Blocked on the external-evals port above — nothing to show a diagnostic panel for yet                                          |
-| **AI Guard (prompt/tool-call safety)**                                                                |
-| AI Guard evaluation on every query                                                                    | ✅ HTTP API (`DatadogAiGuardClient`) — no LangChain-equivalent auto-integration exists for MAF | ✅ Automatic LangChain integration (`DD_AI_GUARD_ENABLED=true`, `ddtrace>=3.14`, `langchain>=0.1.20` — no code changes) | Rare case where Python's path is *simpler*: DD's LangChain auto-integration patches `BaseTool`/chat-model calls with zero code |
-| Native Datadog trace visibility for AI Guard decisions                                                | ❌ DD's HTTP API sends no traces — hard platform limitation, not a config gap            | ✅ Full native trace visibility via the LangChain auto-integration                               | .NET compensates with a manual `ai_guard.*` APM span + `AiGuardDiagnostics.tsx` admin panel, not a native DD AI Guard trace   |
-| Privacy-safe prompt version correlation                                                               | ✅ content-derived `prompt.version` hash                                                  | ◐ static deployment/prompt version tag                                                           | Neither stack exports the prompt template or user prompt as a custom attribute                                               |
-| Per-trace eval sample rate via `EVAL_SAMPLE_RATE` env                                                 | ✅                                                                                       | ❌                                                                                               |                                                                                                                                |
-| Few-shot examples in agent system prompt                                                              | ✅ 5 worked Q → tool patterns                                                            | ❌                                                                                               | LangChain prompt templates can carry them — easy port                                                                          |
-| Tool-routing accuracy evaluator                                                                       | ✅ regex rule list                                                                       | ❌                                                                                               |                                                                                                                                |
-| **Multimodal input (image + audio attachments)**                                                     |
-| `POST /media/upload` — image/audio → Blob Storage, returns a read-SAS URL                             | ✅ `MediaService.cs` + `Program.cs`; served through `/api-dotnet/media/upload`            | ✅ `services/agent-api/src/media.py` + `main.py`; served through `/api/media/upload`              | Both use the same allowlist, 10 MB cap, private container, naming convention, and read-SAS contract; clients route uploads with the selected backend |
-| Audio cascade (Whisper transcript folded into query before the agent runs)                            | ✅ `TranscribeAudioIfPresentAsync`, keyed `AzureOpenAIClient` DI singleton               | ✅ `_transcribe_and_annotate`, `LLMObs.llm("transcribe-audio")`                                   | Same Whisper deployment (separate account/region — see [Azure Infrastructure](/infra-advisor-ai/architecture/infrastructure/)) consumed by both |
-| Image processing                                                                                       | ✅ provider receives `UriContent`; sensitive GenAI capture is disabled                   | ✅ dedicated `_describe_image_and_annotate` pre-step                                             | Provider functionality is preserved without exporting the image URL, bytes, prompt, or description                           |
-| Privacy-safe multimodal telemetry                                                                      | ✅ manual/auto spans retain modality, MIME type, size, model, duration, and status        | ✅ LLMObs spans retain the same bounded operational metadata                                      | Inline media, SAS URLs, raw bytes, prompts, transcripts, descriptions, responses, filenames, and session IDs are not exported |
-| **Business metrics**                                                                                  |
-| `infra_advisor.conversation.completed` counter (per `/query`, tagged with domain)                     | ✅ OTel `Meter`                                                                          | ❌ Python emits some via `emit_tool_call` / `emit_external_api` but not these top-level counters |                                                                                                                                |
-| `infra_advisor.tool.invoked` counter (per MCP tool call, tagged with tool name + domain)              | ✅                                                                                       | ❌                                                                                               |                                                                                                                                |
-| `infra_advisor.feedback.submitted` counter (per `/feedback`, tagged with rating)                      | ✅                                                                                       | ❌                                                                                               |                                                                                                                                |
-| `infra_advisor.mcp.reconnect` counter (per MCP session-expired recovery)                              | ✅                                                                                       | ❌                                                                                               |                                                                                                                                |
-| **MCP tool descriptions**                                                                             |
-| Enriched tool descriptions with When-to-use / When-NOT-to-use / FIPS state codes / NAICS examples     | ✅ all 11 tools, `[Description]` attrs                                                   | ✅ all 11 tools, Pydantic `Field(..., description=...)` — verified equally detailed (FIPS caveats, ordering hints, unit clarifications) | **Done on both sides** — this row was stale ❌ as of the 2026-05-16 audit                                                       |
-| `ToolCatalog`-equivalent referenced by suggestion-pool prompts                                        | ✅ structured `ToolCatalog` constant in `SuggestionService`                              | ◐ Python has `_ALL_TOOLS`, a flat string — grounds the prompts, but less structured than .NET's constant | Small effort to bring to full parity                                                                                          |
-| Curated golden-path seed pool for cold-start suggestions                                              | ✅ 12 hand-verified queries in `SeedPool`                                                | ◐ Redis-backed pool mechanism matches (max 80 both sides), but only 4 hardcoded `_FALLBACK_SUGGESTIONS` vs .NET's 12 | Cold-start/fallback quality is thinner on Python even though the live pool works the same way                                 |
-| Web search via Azure OpenAI `web_search_preview`                             | ✅                                                                                       | ✅                                                                                               | Both already migrated                                                                                                          |
-| **MCP server side**                                                                                   |
-| `Experimental.ModelContextProtocol` ActivitySource captured via OTel                                  | ✅ via `AddSource(...)`                                                                  | ◐ `ddtrace` auto-instruments the Python MCP server's `mcp` package                               |                                                                                                                                |
-| `sessionAffinity: ClientIP` on K8s Service                                                            | ✅ (required by MCP 1.3.0 stateful HTTP transport)                                       | ✅ (same Service config applies; Python MCP server uses same affinity)                           |                                                                                                                                |
-| Server-side OTel `.WithTracing(...)` block                                                            | ✅                                                                                       | N/A — Python uses ddtrace                                                                        |                                                                                                                                |
-| **UI**                                                                                                |
-| Streaming consumption with inline tool chips                                                          | ✅ when `backend=dotnet`                                                                 | ❌ when `backend=python`                                                                         | UI toggle in admin tab                                                                                                         |
-| `ToolStepChip` component                                                                              | ✅ used by streaming endpoint                                                            | N/A                                                                                              |                                                                                                                                |
-| CitationPanel                                                                                         | ❌ removed (tool chips carry the info)                                                   | ❌ removed (parity already achieved)                                                             |                                                                                                                                |
-
-## Shipped this round (2026-07-16)
-
-- **AI Guard on both stacks.** Python via DD's automatic LangChain integration (config-only). .NET via a new `DatadogAiGuardClient.cs` + `AiGuardSubmissionLog.cs` + `GET /ai-guard/status` + `AiGuardDiagnostics.tsx` admin panel, since the HTTP API path has no native DD trace support.
-
-## Shipped this round (2026-07-31)
-
-- **Multimodal input on both stacks.** Image + voice chat attachments use backend-local `/media/upload` implementations that share the same Blob Storage contract; the client routes `/api/media/upload` or `/api-dotnet/media/upload` with the selected chat backend. Provider functionality remains intact, while generated Blob keys and Datadog telemetry exclude original filenames, session IDs, SAS URLs, prompts, transcripts, descriptions, answers, and raw media. Safe spans retain modality, normalized MIME type, size, model, duration, status, and trace correlation. Full writeup: [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/).
-
-## Backlog — not planned this round
-
-The items below are accurate gaps, but bringing Python fully to parity on the evals pipeline and streaming is a substantial rewrite, not a quick catch-up. Documented here as a roadmap — same convention as [Experiments](/infra-advisor-ai/llm-engineering/experiments/), which documents DD Experiments adoption without pretending it's in progress.
-
-### Quick wins (small effort, do opportunistically)
-
-1. **Curated seed pool + structured tool catalog** in `services/agent-api/src/main.py` — 12-entry `SEED_POOL` + a `TOOL_CATALOG` constant, mirroring `.NET's SuggestionService.SeedPool`/`ToolCatalog`. Closes the thin-fallback gap noted above.
-2. **Few-shot examples** in the LangChain prompts in `services/agent-api/src/agent.py`, mirroring the 5 examples in `Program.cs`'s `AgentSystemPrompt`.
-
-### Observability surface (medium-large effort)
-
-3. **External evaluations** via `ddtrace.llmobs.LLMObs.submit_evaluation()` — the Python equivalent of `DatadogEvalsClient`. Port the 3 deterministic evaluators (`citation_present`, `bd_tool_ordering`, `tool_routing_accuracy`) as plain Python functions; the 2 LLM-judge evaluators (`meai_relevance`, `meai_groundedness`) would need a Python-side LLM-as-judge equivalent, not a direct M.E.AI Quality port.
-4. **Business metrics counters** — three counters via `datadog.dogstatsd` or `ddtrace.tracer.metrics` matching the .NET names (`infra_advisor.conversation.completed` etc.).
-5. **Prompt version parity without content capture** — standardize a content-derived `prompt.version` hash across Python and .NET. Do not export the prompt template or user content.
-
-### UX (medium effort)
-
-6. **Streaming `/query/stream` endpoint** using LangGraph's `astream` → SSE event blocks. Same event types (`step`, `tool_call_start`, `tool_call_end`, `text_chunk`, `done`, `error`) so the .NET-side UI consumer works against either backend.
-7. **MCP resilient reconnect** — wrap `MultiServerMCPClient` in a holder that recreates on session-expired errors. Lower priority because Python's MCP adapter has different lifecycle semantics; may not be a problem in practice.
-
-### Bigger lifts (large effort, needs its own plan)
-
-8. **Consider migrating from LangGraph router/specialist → single-agent pattern.** The .NET migration revealed that modern models handle the full 11-tool catalog cleanly without router-level partitioning. Net: ~500 lines deleted, fewer LLM hops, lower latency. Requires careful migration of the conversation-memory format though.
-
-## Implementation references
-
-For each capability, the canonical .NET implementation to port from:
-
-| Feature                      | .NET file                                                                                 | Pattern to mirror                                         |
-| ---------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Tool catalog                 | `services/agent-api-dotnet/Services/SuggestionService.cs` `ToolCatalog`                   | Single multi-line string                                  |
-| Seed pool                    | same file, `SeedPool`                                                                     | List of `(label, query)` pairs                            |
-| Few-shot examples            | `services/agent-api-dotnet/Program.cs` `AgentSystemPrompt`                                | Appended to system message                                |
-| AI Guard (HTTP API, .NET only — Python's is config-only, no port needed) | `services/agent-api-dotnet/Services/DatadogAiGuardClient.cs`               | POST to `/api/v2/ai-guard/evaluate`, fails open            |
-| External evals client        | `services/agent-api-dotnet/Services/DatadogEvalsClient.cs`                                | POST to `/api/intake/llm-obs/v2/eval-metric`              |
-| Evaluator framework          | `services/agent-api-dotnet/Services/Evaluators/IResponseEvaluator.cs` + 5 implementations | One class per evaluator, deterministic or LLM-judge logic |
-| Routing-accuracy evaluator   | `services/agent-api-dotnet/Services/Evaluators/ToolRoutingAccuracyEvaluator.cs`           | Regex → tool-name rule list                               |
-| Business metrics             | `services/agent-api-dotnet/Services/AgentService.cs` counter creation + emission          | OTel `Meter.CreateCounter<long>`                          |
-| SSE streaming endpoint       | `services/agent-api-dotnet/Program.cs` `/query/stream` handler                            | Async iterator → SSE blocks                               |
-| Stream events shape          | `services/agent-api-dotnet/Models/StreamEvent.cs`                                         | Discriminated union                                       |
-| Tool-call streaming dispatch | `services/agent-api-dotnet/Services/AgentService.cs` `RunAgentStreamingAsync`             | `IAsyncEnumerable<StreamEvent>`                           |
-| MCP client holder            | `services/agent-api-dotnet/Services/McpClientHolder.cs`                                   | Lazy connect + `RefreshAsync` + generation counter        |
-
----
-
-<Aside type="tip">
-**Keep this page in sync.** When you ship a Python catch-up, flip the relevant row from ❌ to ✅ here as part of the same PR. When you ship a new .NET feature, add a new row marked ❌ for Python so the gap stays visible.
-</Aside>
+Update this page in the same change that adds or removes a cross-backend capability. Verify against source and tests, record intentional differences, and avoid historical “shipped this round” logs—the commit history already preserves chronology.

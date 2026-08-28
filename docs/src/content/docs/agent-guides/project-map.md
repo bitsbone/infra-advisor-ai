@@ -1,115 +1,63 @@
 ---
 title: Project Map
-description: Complete service, namespace, dependency, and external API reference for AI agent contributors
+description: Find the code and source of truth for each part of the learning lab
+docType: maintainer
+audience:
+  - contributor
+maturity: stable
+verifiedOn: 2026-08-27
 ---
 
-## Services
+Use this map to find an owner, then read that directory's code and configuration. It intentionally avoids copying ports, image tags, resource sizes, API URLs, and dependency versions that already have a more reliable source of truth.
 
-| Service               | Directory                  | Language              | Port                         | K8s Namespace   | Image                                                  |
-| --------------------- | -------------------------- | --------------------- | ---------------------------- | --------------- | ------------------------------------------------------ |
-| InfraTools MCP Server | `services/mcp-server/`     | Python 3.12           | 8000                         | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/mcp-server`     |
-| MCP Server (.NET)     | `services/mcp-server-dotnet/` | .NET 9             | 8001                         | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/mcp-server-dotnet` |
-| Agent API             | `services/agent-api/`      | Python 3.12           | 8001                         | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/agent-api`      |
-| Agent API (.NET)      | `services/agent-api-dotnet/` | .NET 9              | 8080                         | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/agent-api-dotnet` |
-| Load Generator        | `services/load-generator/` | Python 3.12           | — (batch)                    | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/load-generator` |
-| React UI              | `services/ui/`             | TypeScript / React 18 | 5173 (dev) / 80 (K8s)        | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/ui`             |
-| Airflow (Helm)        | `services/ingestion/dags/` | —                     | 8080 (UI)                    | `airflow`       | apache/airflow (Helm chart)                            |
-| Kafka (Strimzi)       | `k8s/kafka/`               | —                     | 9092                         | `kafka`         | strimzi/kafka                                          |
-| Redis                 | `k8s/redis/`               | —                     | 6379                         | `infra-advisor` | redis:7                                                |
-| PostgreSQL            | `k8s/postgres/`            | —                     | 5432                         | `infra-advisor` | postgres:16-alpine                                     |
-| Mailpit               | `k8s/mailpit/`             | —                     | 1025 (SMTP), 8025 (HTTP)     | `infra-advisor` | axllent/mailpit                                        |
-| Datadog Agent         | `k8s/datadog/`             | —                     | 8126 (APM), 8125 (DogStatsD) | `datadog`       | datadog/agent                                          |
+## Runtime surfaces
 
-## Kubernetes Namespaces
+| Area | Primary location | What to inspect first |
+|---|---|---|
+| Python agent | `services/agent-api` | Route handlers, agent graph, instrumentation, project manifest |
+| .NET agent | `services/agent-api-dotnet` | Endpoints, agent orchestration, diagnostics, project files |
+| Python MCP server | `services/mcp-server` | Tool registration, schemas, data clients, instrumentation |
+| .NET MCP server | `services/mcp-server-dotnet` | Tool classes, server lifetime, diagnostics, project files |
+| Authentication | `services/auth-api` | Routes, persistence, JWT and bootstrap behavior |
+| Web application | `services/ui` | React source, Vite development proxy, nginx production routing |
+| Mobile clients | `mobile` | Platform README files, app configuration, RUM setup |
+| Synthetic traffic | `services/load-generator` | Kafka producer/consumer flow and payload contracts |
 
-| Namespace       | Contents                                         |
-| --------------- | ------------------------------------------------ |
-| `infra-advisor` | mcp-server, mcp-server-dotnet, agent-api, agent-api-dotnet, auth-api, load-generator, ui, redis, postgres, mailpit |
-| `kafka`         | Strimzi operator, KafkaCluster CR, Kafka broker  |
-| `airflow`       | Airflow scheduler, webserver, Postgres sidecar   |
-| `datadog`       | DD Agent DaemonSet, ClusterAgent                 |
+The [Services](/infra-advisor-ai/services/) section explains each runtime's purpose and its important behavioral boundaries.
 
-## Inter-Service Dependencies
+## Data and infrastructure
 
-```
-React UI (port 5173 dev / 80 K8s)
-  └─► Agent API (port 8001)  [HTTP POST /query]
-        ├─► MCP Server (port 8000)  [MCP streamable HTTP]
-        │     ├─► FHWA NBI ArcGIS REST API  [external]
-        │     ├─► OpenFEMA REST API  [external]
-        │     ├─► EIA API v2  [external]
-        │     ├─► EPA Envirofacts SDWIS  [external]
-        │     └─► Azure AI Search  [managed Azure service]
-        ├─► Azure OpenAI GPT-4o  [managed Azure service]
-        ├─► Redis (port 6379)  [session memory]
-        └─► Kafka (port 9092)  [infra.query.events consumer]
+| Area | Primary location | Source of truth |
+|---|---|---|
+| Data ingestion | `services/ingestion/dags` | DAG definitions, task code, schedules, and dataset scope |
+| Kubernetes | `k8s` | Namespaces, Services, Deployments, configuration, operators |
+| Azure resources | `infra/bicep` | Resource definitions, parameters, and module outputs |
+| Local dependencies | `docker-compose.yml` | Services and host mappings available during local development |
+| Deployment workflows | `Makefile` | Current targets, prerequisites, and warnings |
+| CI | `.github/workflows` | Build, test, image, and deployment automation |
+| Datadog assets | `datadog` and `k8s/datadog` | Checked-in dashboards and cluster configuration |
 
-Load Generator (CronJob)
-  └─► Kafka (port 9092)  [infra.query.events producer]
+Use [Architecture](/infra-advisor-ai/architecture/) for the system model, [Data pipeline](/infra-advisor-ai/data-pipeline/) for dataset flow, and [Deployment](/infra-advisor-ai/deployment/) before changing a live environment.
 
-Agent API
-  └─► Kafka (port 9092)  [infra.eval.results producer]
+## Learning content
 
-Airflow DAGs
-  ├─► FHWA NBI ArcGIS REST API  [external, weekly]
-  ├─► OpenFEMA REST API  [external, daily]
-  ├─► EIA API v2  [external, weekly]
-  ├─► TWDB water plan workbook  [external, monthly]
-  ├─► EPA Envirofacts SDWIS  [external, monthly]
-  ├─► Azure OpenAI  [synthetic doc generation]
-  ├─► Azure AI Search  [index upserts]
-  └─► Azure Blob Storage  [raw parquet writes]
+| Concern | Location |
+|---|---|
+| Public course content | `docs/src/content/docs` |
+| Reusable learning components | `docs/src/components` |
+| Navigation and site configuration | `docs/astro.config.mjs` |
+| Content quality checks | `docs/scripts/check-content.mjs` |
+| Contributor documentation policy | `AGENTS.md` and [Documentation approach](/infra-advisor-ai/agent-guides/documentation/) |
 
-Datadog Agent DaemonSet
-  └─► All pods (APM, logs, DogStatsD, JMX)
-```
+The documentation should interpret the implementation, not replace it. When a precise inventory matters, derive it from the current schemas, manifests, or project files.
 
-## Azure Resources (resource group: `rg-tola-infra-advisor-ai`)
+## Trace a change across boundaries
 
-| Resource             | Type               | Notes                                                                                |
-| -------------------- | ------------------ | ------------------------------------------------------------------------------------ |
-| `aks-infra-advisor-dev`  | AKS                | 3 nodes, Standard_D2s_v3, K8s 1.30+                                                  |
-| Azure OpenAI         | Cognitive Services | Deployments: `gpt-4.1-mini` (agent/router), `gpt-4.1` (specialist), `text-embedding-3-small` (embeddings) |
-| Azure AI Search      | Search service     | Index: `infra-advisor-knowledge`                                                     |
-| Azure Blob Storage   | Storage account    | Container: `infra-advisor-raw` (raw parquet)                                         |
+Changes often have more than one owner:
 
-## Kafka Topics
+- A new MCP tool can affect the tool schema, both agent clients, tests, observability, and the tool-selection lesson.
+- A new public route can affect the upstream service, nginx, authentication, streaming behavior, and deployment checks.
+- A telemetry change can affect runtime instrumentation, Datadog configuration, privacy behavior, dashboards, and the verification instructions.
+- A dataset change can affect a DAG, storage or search schemas, MCP behavior, examples, and claims about geographic or temporal scope.
 
-| Topic                | Producer       | Consumer            | Purpose                     |
-| -------------------- | -------------- | ------------------- | --------------------------- |
-| `infra.query.events` | Load Generator | Agent API           | Synthetic query delivery    |
-| `infra.eval.results` | Agent API      | (DD DSM monitoring) | Evaluation scores + latency |
-
-## Azure AI Search Index
-
-**Index name:** `infra-advisor-knowledge`
-
-**Document sources loaded by Airflow DAGs:**
-
-- `domain: "transportation"`, `document_type: "asset_record"` — FHWA NBI bridge records (Texas)
-- `domain: "environmental"`, `document_type: "disaster_declaration"` — OpenFEMA disaster declarations
-- `domain: "energy"`, `document_type: "energy_record"` — EIA state electricity data
-- `domain: "water"`, `document_type: "water_plan_project"` — TWDB 2027 State Water Plan projects
-- `domain: "water"`, `document_type: "water_system_record"` — EPA SDWIS Texas water systems
-- `source: "synthetic"` — 80 synthetic firm knowledge base documents
-
-## External API Endpoints
-
-| Source                | Base URL                                                                                                            | Auth                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| FHWA NBI (BTS NTAD)   | `https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/services/National_Bridge_Inventory/FeatureServer/0/query` | None                  |
-| OpenFEMA              | `https://www.fema.gov/api/open/v2/`                                                                                 | None                  |
-| EIA API v2            | `https://api.eia.gov/v2/electricity/electric-power-operational-data/data/`                                          | `EIA_API_KEY` env var |
-| EPA Envirofacts SDWIS | `https://enviro.epa.gov/enviro/efservice/`                                                                          | None                  |
-| TWDB Water Plan       | `https://www.twdb.texas.gov/waterplanning/data/rwp-database/index.asp`                                              | None (batch download) |
-
-## Internal K8s DNS Names
-
-| Service           | DNS Name                                                                  |
-| ----------------- | ------------------------------------------------------------------------- |
-| MCP Server        | `mcp-server.infra-advisor.svc.cluster.local:8000`                         |
-| Agent API         | `agent-api.infra-advisor.svc.cluster.local:8001`                          |
-| Redis             | `redis.infra-advisor.svc.cluster.local:6379`                              |
-| Kafka             | `kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092`              |
-| Datadog Agent     | `datadog-agent.datadog.svc.cluster.local:8126` (APM), `:8125` (DogStatsD) |
-| Airflow Webserver | `airflow-webserver.airflow.svc.cluster.local:8080`                        |
+Start at the user-visible behavior, follow its call path, and update only the sources whose contracts or learning outcomes actually changed.

@@ -1,80 +1,37 @@
 ---
-title: FEMA Disaster Refresh
-description: OpenFEMA daily disaster declarations ingestion DAG
+title: Refresh disaster declarations
+description: Follow daily OpenFEMA declaration ingestion and preserve the distinction between historical declarations and current hazards
+docType: reference
+audience:
+  - data-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  label: FEMA disaster refresh
 ---
 
-**DAG ID:** `fema_refresh`  
-**Schedule:** Daily, 02:00 UTC  
-**Data source:** [OpenFEMA REST API v2](https://www.fema.gov/about/reports-and-data/openfema) — DisasterDeclarationsSummaries  
-**Coverage:** All US states and territories, 2010 to present
+**DAG:** `fema_refresh` · **Schedule:** daily 02:00 UTC · **Source:** OpenFEMA `DisasterDeclarationsSummaries`
 
-## Purpose
+The DAG retrieves declarations dated from 2010 onward across US states and territories. It stages verified JSON Lines, writes a Parquet snapshot, then creates environmental-domain Search documents.
 
-Federal disaster declarations provide a historical record of major weather events, infrastructure emergencies, and community recovery needs. This DAG enables queries like:
-- "Which Texas counties have had the most repeat hurricane declarations since 2010?"
-- "Show me FEMA major disaster declarations for flood events in Louisiana"
-- "What communities had both DR and EM declarations in the same year?"
+## Flow
 
-Daily refresh ensures new declarations (which can be issued within days of a disaster) appear in the knowledge base promptly.
+1. Page the OpenFEMA API with `$skip`/`$top`, ordered by declaration date.
+2. Write the complete normalized collection through the shared manifest helper.
+3. Verify the manifest before Parquet conversion and indexing.
+4. Build narratives from declaration number/type, incident, area, dates, and program flags.
+5. Token-chunk, embed, and upsert stable documents.
 
-## Task structure
+## Interpretation boundary
 
-```
-fetch_fema_declarations
-  └── Paginate OpenFEMA REST API
-      URL: https://www.fema.gov/api/open/v2/DisasterDeclarationsSummaries
-      Filter: declarationDate >= 2010-01-01
-      Pagination: $skip / $top (1,000 per page)
-  └── XCom push: list of declaration dicts
+A federal declaration is historical administrative evidence. It does not prove current conditions, parcel-level risk, damage totals, or local declarations outside FEMA's dataset. Preserve null incident-end or closeout dates rather than interpreting them as a current emergency.
 
-store_raw_parquet
-  └── XCom pull declarations
-  └── Serialize to Parquet
-  └── Upload: raw-data/fema/fema_declarations_YYYYMMDD.parquet
+## Verify a run
 
-index_to_search
-  └── XCom pull declarations
-  └── For each declaration:
-        - Generate narrative text
-        - Token-chunk: 512-token windows, 64-token overlap (tiktoken)
-        - Embed each chunk via text-embedding-3-small
-        - Upsert chunks to Azure AI Search
-```
+- All records satisfy the configured date boundary.
+- Pagination does not duplicate or skip the page transition.
+- Declaration identity and designated area survive normalization.
+- Search content distinguishes declaration type from incident type.
+- Task logs retain counts and run identity without serializing declaration payloads.
 
-## Data fields
-
-| Field | Description |
-|-------|-------------|
-| `disasterNumber` | FEMA disaster number (e.g., DR-4611) |
-| `declarationTitle` | Descriptive title (e.g., "HURRICANE IDA") |
-| `state` | Two-letter state code |
-| `designatedArea` | County or area name |
-| `incidentType` | Flood, Hurricane, Tornado, Wildfire, Earthquake, Winter Storm, etc. |
-| `declarationType` | DR (major disaster), EM (emergency), FM (fire management) |
-| `declarationDate` | Date FEMA issued the declaration |
-| `incidentBeginDate` | When the incident began |
-| `incidentEndDate` | When the incident ended (null if ongoing) |
-| `closeoutDate` | When the disaster program period closed |
-| `ihProgramDeclared` | Individual Household Program declared |
-| `iaProgramDeclared` | Individual Assistance declared |
-| `paProgramDeclared` | Public Assistance declared |
-| `hmProgramDeclared` | Hazard Mitigation declared |
-
-## AI Search document structure
-
-```json
-{
-  "id": "fema_DR4611_harris_tx_chunk_0",
-  "content": "Major Disaster Declaration DR-4611 in Harris County, TX. Hurricane Ida. Declared 2021-08-29. Individual Assistance and Public Assistance declared. Incident period: 2021-08-26 to 2021-09-15.",
-  "content_vector": [0.021, -0.043, ...],
-  "source": "OpenFEMA",
-  "domain": "environmental",
-  "document_type": "disaster_declaration",
-  "state": "TX",
-  "county": "Harris"
-}
-```
-
-## Volume
-
-OpenFEMA maintains approximately 80,000+ disaster declaration records from 2010 onward. With 512-token chunking and 64-token overlap, the typical daily increment is small (a handful of new declarations). Full re-index runs in under 5 minutes.
+For request-time use, see `get_disaster_history` in the [MCP tool guide](/infra-advisor-ai/services/mcp-tools/).

@@ -1,90 +1,57 @@
 ---
-title: Observability
-description: Datadog instrumentation across every layer of InfraAdvisor AI
+title: Observe the whole system
+description: Choose the Datadog signal that answers the question, then follow correlation across product boundaries
+docType: guide
+audience:
+  - application-developer
+  - observability-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 3
+  label: Observability
 ---
 
-InfraAdvisor AI is instrumented end-to-end with Datadog. Every layer — browser interactions, HTTP requests, LLM reasoning, tool calls, database queries, data pipelines, and Kafka streams — produces correlated telemetry.
+InfraAdvisor uses several Datadog products because no single signal can explain the browser experience, agent decisions, application work, data stores, streaming systems, and infrastructure at once.
 
-The design goal: from any Datadog surface, you can navigate to any other correlated signal in one click.
+## Start from the question
 
-## Signal correlation map
+| Question | Begin with | Correlate to |
+|---|---|---|
+| What did the user experience? | Browser or mobile RUM | APM request and agent trace |
+| Why did the agent answer this way? | Agent Observability | tool, model, retrieval, and application spans |
+| Which service made the request slow? | APM | logs, DBM, infrastructure |
+| Is Kafka work backing up? | Data Streams Monitoring | producer/consumer traces and logs |
+| Did an ingestion run refresh data? | Data Jobs Monitoring | task logs, Blob and Search spans |
+| Is an endpoint under attack? | App and API Protection | request trace and service logs |
 
-```
-Browser action (RUM)
-  │  RUM session ID → X-DD-RUM-Session-ID header
-  ▼
-HTTP request (APM)
-  │  Distributed trace headers (X-Datadog-Trace-Id)
-  ▼
-Agent API span (APM + LLM Obs)
-  │  session.id = RUM session ID
-  │  LLM Obs workflow span contains:
-  │    → router agent span
-  │    → planner agent span
-  │    → specialist agent span
-  │         → tool call spans (MCP)
-  │              → outbound HTTP spans (government APIs)
-  │    → faithfulness eval task span
-  ▼
-Kafka produce (DSM)
-  │  infra.eval.results topic
-  ▼
-Database query (APM + DBM)
-  │  SQL comment contains trace context
-  ▼
-Airflow task log (structured JSON)
-  │  dd.trace_id / dd.span_id in every log line
-  ▼
-Azure Blob upload (APM custom span)
+## Correlation contracts
+
+```text
+RUM action → traced HTTP request → agent-specific spans → MCP/provider spans
+                               ├─ structured logs with trace IDs
+                               ├─ PostgreSQL / DBM context
+                               └─ pod and infrastructure identity
+
+Kafka producer → topic → consumer → agent execution → result topic
+Airflow run → task process → provider request → Blob/Search operation
 ```
 
-## Datadog features in use
+These joins depend on consistent service, environment, version, and trace context. A nearby timestamp is not correlation evidence.
 
-| Feature | What it monitors | Navigate to |
-|---------|-----------------|------------|
-| **APM** | HTTP traces, SQL queries, outbound API calls, Redis ops | APM → Traces |
-| **LLM Observability** | Agent span trees, token usage, cost, session grouping, user feedback evals, faithfulness scores | LLM Observability |
-| **RUM** | Browser performance, session replay, custom events, JS errors | RUM → Sessions |
-| **Data Jobs Monitoring** | Airflow DAG run duration, task status, dataset lineage | Data Observability → Data Jobs |
-| **Data Streams Monitoring** | Kafka topic throughput, consumer lag, producer/consumer topology | Data Streams |
-| **Database Monitoring** | PostgreSQL slow queries, EXPLAIN plans correlated to APM traces | Databases |
-| **Infrastructure** | Node/pod CPU/RAM, container restarts, network I/O | Infrastructure |
-| **CSPM** | Azure posture compliance baseline | Security → CSPM |
-| **CWS** | Runtime threat detection on AKS nodes | Security → CWS |
-| **ASM** | Application security threats, SCA, IAST | Security → ASM |
-| **SBOM** | Container + host software bill of materials | Security → SBOM |
+## Instrumentation paths
 
-## Unified Service Tagging
+Python services start with `ddtrace.auto` and add explicit spans or metrics where framework coverage lacks application meaning. The .NET services create OpenTelemetry activities and metrics, exporting OTLP through the Datadog Agent. The .NET Agent API separately loads the Datadog security runtime while disabling its ordinary APM trace production.
 
-All pods use the standard Datadog UST labels for consistent filtering across every surface:
+Both paths use Unified Service Tagging. Values should come from deployment configuration and immutable release identity rather than a hand-maintained table in this guide.
 
-```yaml
-# K8s pod labels (on all Deployments)
-tags.datadoghq.com/env: dev
-tags.datadoghq.com/service: agent-api    # varies per service
-tags.datadoghq.com/version: latest
+## Choose a lesson
 
-# Environment variables
-DD_ENV: dev
-DD_SERVICE: agent-api
-DD_VERSION: latest
-```
+- [APM and tracing](./apm/) explains coverage, joins, and health-check noise control.
+- [Browser RUM](./rum/) follows safe user actions into backend traces.
+- [Mobile RUM](./mobile-rum/) compares native and MAUI client boundaries.
+- [Dashboards and monitors](./dashboards/) explains the checked-in assets and how to validate them.
+- [App and API Protection](./app-api-protection/) documents the selected in-process security architecture.
+- [Agent Observability Lab](/infra-advisor-ai/llm-engineering/) teaches AI-specific spans, evaluations, prompts, and experiments.
 
-| Service | `DD_SERVICE` |
-|---------|-------------|
-| MCP Server | `mcp-server` |
-| Agent API | `agent-api` |
-| Auth API | `auth-api` |
-| Load Generator | `load-generator` |
-| Airflow Scheduler | `airflow-scheduler` |
-| Airflow Triggerer | `airflow-triggerer` |
-| Airflow DAG Processor | `airflow-dag-processor` |
-
-## Sections in this chapter
-
-- [APM & Tracing](/infra-advisor-ai/observability/apm/) — Span coverage by service, log-trace correlation, DBM, code origin, error trace linking
-- [RUM & Session Replay](/infra-advisor-ai/observability/rum/) — SDK initialization, custom events, RUM→LLM Obs linking, distributed tracing, sourcemaps
-- [Native Mobile RUM](/infra-advisor-ai/observability/mobile-rum/) — SwiftUI and Java/Volley reference clients, authenticated user identity, mobile resource monitoring, and traces continued into the AI backend
-- [Dashboards & Monitors](/infra-advisor-ai/observability/dashboards/) — All 5 dashboards, 3 monitors, 1 Synthetics test — purpose, widgets, and import instructions
-
-For LLM-specific observability — instrumentation, evaluations, prompt tracking, sessions, experiments — see the dedicated **[LLM Engineering Guide](/infra-advisor-ai/llm-engineering/)** section in the left sidebar.
+The target is navigable evidence, not maximum telemetry volume. Add a signal only when it answers a question that the existing set cannot.

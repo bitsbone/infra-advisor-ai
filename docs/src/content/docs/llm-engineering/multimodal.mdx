@@ -1,107 +1,78 @@
 ---
-title: Multimodal input
-description: Image and voice attachments in chat, the text-cascade architecture, and privacy-safe Datadog telemetry for both agent backends.
+title: Observe multimodal input safely
+description: Follow image and audio attachments through storage, validation, model processing, and metadata-only telemetry
+docType: concept
+audience:
+  - application-developer
+  - security-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 9
 ---
 
-import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
+import FeatureStatus from '@components/FeatureStatus.astro';
+import ObservationChecklist from '@components/ObservationChecklist.astro';
 
-InfraAdvisor accepts image and voice attachments on either backend. Media is processed by Azure OpenAI and contributes to the same routed infrastructure-advisor workflow as a typed question, while Datadog records operational signals without copying user content or storage credentials into telemetry.
+<FeatureStatus status="stable" verifiedOn="2026-08-27" label="Image and audio paths implemented in Python and .NET" />
 
-## Architecture at a glance
+InfraAdvisor accepts image and audio attachments without placing media bytes in the query JSON or conversation history. Azure OpenAI processes the media; Datadog retains operational metadata rather than filenames, signed URLs, transcripts, descriptions, or bytes.
 
+## The cascade
+
+```text
+authenticated upload → private Blob container → read-only attachment reference
+                                                  │
+query + reference ──validate───────────────────────┤
+                                                  ├─ audio → Whisper → effective text query
+                                                  └─ image → vision-capable model input
+                                                               │
+                                                     normal agent workflow
 ```
-UI
-  └─► POST /api/media/upload or /api-dotnet/media/upload
-        └─► Azure Blob Storage `chat-media` container
-              └─► returns { url, kind, mime_type, size_bytes } with a read-only SAS URL
 
-/query or /query/stream body: { query, attachments: [Attachment] }
-  ├─ audio attachment → Whisper transcript → effective text query
-  └─ image attachment → vision description or provider vision content
+Audio becomes text before routing, retrieval, and tool selection. An image is supplied to the model path for the current turn. Stored conversation history does not re-download or reprocess earlier attachments.
 
-Datadog spans retain modality, allowlisted MIME type, byte count, duration, status, model, domain, and trace/span correlation. They do not retain filenames, chat or RUM session IDs, SAS URLs/query strings, prompts, transcripts, descriptions, responses, or media bytes.
-```
+## Upload contract
 
-Four decisions shape the implementation:
+Both backends expose an authenticated, rate-limited media upload endpoint. It accepts an allowlist of JPEG, PNG, WebP, WebM, WAV, MPEG audio, and Ogg media, with a 10 MiB maximum.
 
-1. **Audio cascades to text.** Whisper runs before routing, and its transcript is folded into the effective query so classification, retrieval, and tools understand the voice turn.
-2. **Attachments live in Blob Storage, not request bodies.** Clients upload first and pass an expiring read-only reference to the selected backend. Raw bytes are not placed in the query JSON or Redis text history.
-3. **Storage identifiers are generated and unlinkable.** Blob keys use `<kind>/<random UUID>` and never include the original filename or raw chat session ID.
-4. **Telemetry is metadata-only.** Provider calls still receive the content they need, but custom spans and logs expose only bounded operational representations.
-5. **Attachment references are untrusted input.** Both query modes reject a reference before agent invocation unless it uses HTTPS, the configured public Blob host and media container, the generated `<kind>/<UUID>` path, an allowlisted matching kind/MIME pair, a bounded positive size, and a blob-scoped read-only SAS.
+Blob names contain only the media kind and a random UUID. Original filenames and chat session IDs are deliberately excluded. The returned reference contains the kind, MIME type, byte count, and an expiring read-only Blob URL.
 
-<Aside type="caution">
-Attachments only apply to the turn where they are submitted. Replayed conversation history does not re-transcribe or re-analyze prior media, which bounds provider cost and reduces sensitive-data lifetime.
+## Treat every reference as untrusted
+
+Before restoring memory or calling a model, each backend validates that the reference:
+
+- uses HTTPS and the configured Blob host and container;
+- follows the generated `<kind>/<UUID>` path shape;
+- has matching kind and allowlisted MIME type;
+- declares a bounded positive size;
+- has a blob-scoped, read-only SAS contract;
+- does not target loopback, link-local, private, metadata, or foreign hosts.
+
+Audio downloads disable redirects, cap the response at 10 MiB, and require the bytes read to match the validated reference. These controls turn a user-supplied URL from a general server-side fetch into one narrow storage capability.
+
+## Telemetry boundary
+
+Custom spans can retain modality, allowlisted MIME type, byte count, duration, status, model, routed domain, and trace correlation. They must not retain the signed URL, filename, media, prompt, transcript, vision description, response, or session identifier.
+
+Python annotates explicit transcription and vision steps with bounded metadata. .NET disables sensitive content in its Microsoft.Extensions.AI and agent-framework telemetry decorators. Its automatic HTTP instrumentation excludes Blob media downloads so signed query parameters cannot appear on client spans; a parent manual activity preserves duration and status.
+
+<Aside type="note">
+This boundary intentionally gives up inline media and transcript inspection in Datadog. The remaining signals still answer whether upload, validation, transcription, routing, tools, or the model caused a failure.
 </Aside>
 
-## Uploading an attachment
+## Investigate one attachment
 
-Both `agent-api` and `agent-api-dotnet` implement `POST /media/upload` against the same storage contract. The endpoint is authenticated, rate-limited, restricted to an allowlist (`image/jpeg`, `image/png`, `image/webp`, `audio/webm`, `audio/wav`, `audio/mpeg`, `audio/ogg`), and capped at 10 MB.
+<ObservationChecklist>
 
-```python
-# services/agent-api/src/media.py (excerpt)
-kind = _ALLOWED_CONTENT_TYPES[bare_content_type]
-blob_name = f"{kind}/{uuid.uuid4().hex}"
-blob_client = container_client.upload_blob(name=blob_name, data=file_bytes, ...)
-return MediaAttachment(url=f"{blob_client.url}?{sas_token}", kind=kind, mime_type=bare_content_type, size_bytes=len(file_bytes))
-```
+- Upload an allowed test file and confirm its generated object name contains no original filename or session ID.
+- Submit the returned reference and locate the end-to-end trace.
+- For audio, confirm transcription precedes routing; for images, confirm the vision path appears in the expected model step.
+- Verify size, MIME type, duration, and status metadata are present.
+- Search telemetry for sentinel filename, SAS signature, transcript, and media marker values; each must be absent.
+- Try a foreign host, writable SAS, wrong MIME/kind pair, and redirect in tests; each must fail before model invocation.
 
-The `filename` and `session_id` arguments remain part of the endpoint workflow for compatibility, but object naming deliberately ignores them. Upload spans record `media.kind`, `blob.size_bytes`, and the normalized allowlisted content type; they do not record the object name or returned URL.
+</ObservationChecklist>
 
-Clients cannot turn the returned URL field into a general-purpose server fetch. `validate_attachment_reference` in Python and `AttachmentReferenceValidator` in .NET fail closed for loopback, link-local, private IP, foreign host, wrong container, path-kind mismatch, MIME-kind mismatch, invalid size, writable SAS permission, or an incomplete SAS contract. Both audio downloaders disable automatic redirects, bound reads to 10 MB, and require the returned byte count to match the validated reference. These checks happen before memory restoration and model invocation, and the tests use loopback and cloud metadata addresses as explicit SSRF regressions.
-
-## Privacy-safe provider boundary
-
-The SAS URL, raw media, typed prompt, and generated transcript or description exist in application memory only where provider functionality requires them. They are not duplicated into custom logs, span tags, LLMObs input/output annotations, metric tags, or object names.
-
-<Tabs syncKey="lang">
-  <TabItem label="Python">
-
-Python wraps Whisper and vision pre-steps in named LLMObs spans, but annotates them only with bounded metadata:
-
-```python
-LLMObs.annotate(
-    span=stt_span,
-    tags={
-        "input.modality": "audio",
-        "output.modality": "text",
-        "audio.mime_type": mime_type,
-        "audio.size_bytes": str(size_bytes),
-        "audio.duration_s": f"{duration_s:.2f}",
-        "transcript.characters": str(len(transcript)),
-    },
-)
-```
-
-The workflow, router, specialist, retrieval, and evaluation helpers follow the same rule: domain, counts, tool names, model, status, and latency are observable; prompt/answer content and session identifiers are not custom attributes. Error logs emit an operation and exception type rather than exception text that could contain a URL or provider payload.
-
-  </TabItem>
-  <TabItem label=".NET">
-
-The .NET pipeline sets `TelemetryPrivacy.EnableSensitiveData = false` for the Microsoft.Extensions.AI chat and embedding decorators and the Microsoft Agents Framework decorator. This prevents their generated GenAI spans from serializing message content or attachment URIs. The manual Whisper activity uses the same metadata-only contract as Python:
-
-```csharp
-activity?.SetTag("input.modality", "audio");
-activity?.SetTag("audio.mime_type", audioAttachment.MimeType);
-activity?.SetTag("audio.size_bytes", audioAttachment.SizeBytes);
-activity?.SetTag("output.modality", "text");
-activity?.SetTag("transcript.characters", result.Value.Text.Length);
-activity?.SetTag("audio.duration_s", elapsedSeconds);
-```
-
-OpenTelemetry HTTP instrumentation excludes `*.blob.core.windows.net` media downloads so SAS query strings cannot be captured by an automatically generated client span. The parent manual activity still provides latency, status, model, type, and size visibility.
-
-  </TabItem>
-</Tabs>
-
-## What remains observable
-
-The privacy boundary intentionally trades inline media playback and raw prompt inspection in Datadog for safer educational defaults. Demonstrations can still compare backend/model latency, failure rate, modality mix, upload sizes, transcription duration, routed domain, selected specialist, tool calls, source counts, token usage emitted by provider integrations, and end-to-end trace structure.
-
-Regression tests use sentinel filenames, session IDs, SAS signatures, prompts, transcripts, and binary markers to prove those values do not appear in custom annotations or generated object names.
-
-## What's next
-
-- [Instrumentation](../instrumentation/python/) — the base ddtrace and OpenTelemetry setup.
-- [.NET ↔ Python feature parity](/infra-advisor-ai/development/dotnet-python-parity/) — multimodal behavior across both stacks.
-- [Azure Infrastructure](/infra-advisor-ai/architecture/infrastructure/) — the Whisper account and `chat-media` container.
+Continue to [Data security and access](../security-rbac/) for account-side controls or [.NET and Python parity](/infra-advisor-ai/development/dotnet-python-parity/) for the cross-backend comparison.

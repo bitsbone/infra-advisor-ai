@@ -1,106 +1,72 @@
 ---
-title: Prerequisites
-description: Required tools, Azure and Datadog setup, API keys, and .env file reference
+title: Prepare a deployment environment
+description: Establish local tools, cloud access, registry access, Datadog prerequisites, and secret inputs before mutating Azure or AKS
+docType: reference
+audience:
+  - platform-engineer
+  - maintainer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 1
+  label: Prerequisites
 ---
 
-## Required tools
+## Local tools
 
-| Tool | Version | Install |
-|------|---------|---------|
-| `az` CLI | 2.60+ | `brew install azure-cli` |
-| `kubelogin` | Latest | `brew install Azure/kubelogin/kubelogin` |
-| `kubectl` | 1.30+ | `brew install kubectl` |
-| `helm` | 3.14+ | `brew install helm` |
-| `uv` | 0.5+ | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| `node` | 20+ | `brew install node@20` |
-| `docker` | 24+ | Docker Desktop or Colima |
+Install Azure CLI, `kubelogin`, `kubectl`, Helm, Docker, `uv`, Node.js, the .NET SDK used by the projects, and GNU Make-compatible tooling. Use project files, lockfiles, workflows, and Bicep API versions to select compatible releases; version numbers copied into prose age quickly.
 
-## Azure prerequisites
+Confirm each command resolves before beginning:
 
-1. **Azure subscription** with Contributor role
-2. **Service principal** with Contributor role on the subscription (for CI):
-   ```bash
-   az ad sp create-for-rbac --name "infra-advisor-ci" \
-     --role Contributor \
-     --scopes /subscriptions/<subscription-id> \
-     --sdk-auth
-   ```
-   Store the output JSON as `AZURE_CREDENTIALS` in GitHub repository secrets.
+```bash
+az version
+kubectl version --client
+helm version
+docker version
+uv --version
+node --version
+dotnet --info
+```
 
-3. **Azure OpenAI access** — request at [aka.ms/oai/access](https://aka.ms/oai/access) if not already approved
+## Access boundaries
 
-## Datadog prerequisites
+You need:
 
-1. **Datadog account** on `us3.datadoghq.com`
-2. **API key** (`DD_API_KEY`) — from Datadog → Organization Settings → API Keys
-3. **Application key** (`DD_APP_KEY`) — for dashboard/monitor provisioning (optional)
-4. **RUM application** — create a Browser RUM app to get `VITE_DD_RUM_APP_ID` and `VITE_DD_RUM_CLIENT_TOKEN`
-5. **LLM Observability** — enabled by default on all plans that include APM
+- an Azure subscription and an identity authorized to deploy the Bicep resources;
+- Azure OpenAI model access in the selected regions;
+- a Datadog organization and API key for the Agent;
+- a GHCR identity that can pull the repository's private images;
+- authorized external-provider keys used by the current `check-env` contract;
+- permission to install or manage the required Kubernetes operators.
 
-## External API keys
+CI authentication should use the repository's configured Azure identity workflow and least privilege. Do not create a new broad service-principal credential merely because an older guide used one.
 
-| Key | Required for | Obtain from |
-|-----|-------------|------------|
-| `EIA_API_KEY` | EIA energy data DAG | [eia.gov/opendata/register.php](https://www.eia.gov/opendata/register.php) (free) |
-| `SAMGOV_API_KEY` | Procurement opportunities tool | [SAM.gov API](https://open.gsa.gov/api/opportunities-api/) (free government API key) |
+## Datadog setup
 
-Both are optional — the tools return structured errors if the keys are missing, and the agent handles gracefully.
+Prepare the Datadog Operator/Agent prerequisites, target site, API key, browser RUM application, and any account-side Agent Observability or security configuration. Application keys are required only for workflows that call privileged read/write APIs, such as .NET AI Guard or administrative asset synchronization; do not distribute them to unrelated services.
 
-The `search_web_procurement` tool runs on Azure OpenAI's `web_search_preview` tool, so it uses the same `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_ENDPOINT` as the rest of the AI stack — no separate vendor key.
+## Environment contract
 
-## GitHub Container Registry (GHCR)
-
-Images are pushed to GHCR by GitHub Actions using `GITHUB_TOKEN` (automatic for Actions runs). For manual pulls in AKS, create a PAT:
-
-1. Go to GitHub → Settings → Developer Settings → Personal Access Tokens (Classic)
-2. Scopes: `read:packages`
-3. Store as `GHCR_PAT` in `.env`
-
-Run `make create-ghcr-secret` and `make create-airflow-ghcr-secret` to create `ghcr-pull-secret` independently in the `infra-advisor` and `airflow` namespaces before a manual deployment. Kubernetes secrets are namespace-scoped, so creating only the application copy does not authorize the Airflow chart's scheduler, DAG processor, migration jobs, or hooks to pull the private image. Both targets read `GHCR_PAT` from the ignored local environment and apply a `kubernetes.io/dockerconfigjson` secret without writing the credential to the repository.
-
-Authenticate the local Docker client to `ghcr.io` as well before `make install-airflow` or `make upgrade-airflow`. Those targets pull the exact requested image and run its embedded contract before Helm can change the cluster, so a missing local registry login fails safely before deployment.
-
-## Environment file
-
-Copy `.env.example` to `.env` and fill in all values:
+Copy the template and fill it from approved secret sources:
 
 ```bash
 cp .env.example .env
+set -a
+source .env
+set +a
+make check-env
 ```
 
-Required variables for `make check-env` (the preflight before `make deploy-k8s`):
+`make check-env` is authoritative for the baseline cluster deployment. It currently validates Azure OpenAI/Search/Storage, provider keys, Datadog, registry identity, PostgreSQL, authentication, Airflow admin, and Mailpit credentials.
 
-```bash
-# Azure OpenAI
-AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/
-AZURE_OPENAI_API_KEY=<key>
+Some feature inputs are optional at the individual secret-target level—for example Whisper or an application key—and produce an explicit warning when absent. Optional means the service degrades or disables that capability; it does not mean the feature remains fully operational.
 
-# Azure AI Search
-AZURE_SEARCH_ENDPOINT=https://<your-resource>.search.windows.net/
-AZURE_SEARCH_API_KEY=<key>
+## Secret handling
 
-# Azure Storage
-AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;...
+- Keep `.env` ignored and never attach it to issues, logs, or prompts.
+- Create GHCR pull secrets independently in `infra-advisor` and `airflow`; Kubernetes secrets are namespace-scoped.
+- Authenticate the local Docker client before Airflow image verification, which pulls the exact image before Helm changes the cluster.
+- Store CI keys and signing material in the platform secret store.
+- Rotate any value that appears in shell output, a committed file, or an exported artifact unexpectedly.
 
-# Database (Auth API)
-POSTGRES_USER=authuser
-POSTGRES_PASSWORD=<choose-a-password>
-POSTGRES_DB=authdb
-DATABASE_URL=postgresql://authuser:<password>@postgres.infra-advisor.svc.cluster.local:5432/authdb
-DD_POSTGRES_PASSWORD=<choose-for-datadog-monitoring-user>
-
-# Auth
-JWT_SECRET=<output of: openssl rand -hex 32>
-
-# Datadog
-DD_API_KEY=<key>
-
-# GitHub
-GHCR_PAT=<pat>
-```
-
-Optional (tools degrade gracefully without them):
-```bash
-EIA_API_KEY=<key>
-SAMGOV_API_KEY=<key>
-```
+When `make check-env` passes, continue to the [Deployment quickstart](../quickstart/).

@@ -141,3 +141,40 @@
 @media (max-width: 30rem) {
     .home-learning-loop, .home-reference-links { grid-template-columns: 1fr; }
 }
+
+/* Keep document actions from competing with long lesson titles on phones. */
+@media (max-width: 40rem) {
+    html body .hero .actions {
+        flex-wrap: wrap;
+    }
+
+    html body [data-slot='doc-title-header'] {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        align-items: start;
+    }
+
+    html body [data-slot='doc-title-actions'] {
+        justify-content: flex-start;
+        width: 100%;
+        max-width: 100%;
+    }
+
+    html body .pagination-links {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+    }
+
+    html body .pagination-links > a {
+        box-sizing: border-box;
+        width: 100%;
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    html body .pagination-links > .next {
+        justify-content: flex-end;
+        margin-left: 0;
+    }
+}

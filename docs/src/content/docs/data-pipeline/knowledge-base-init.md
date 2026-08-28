@@ -1,82 +1,41 @@
 ---
-title: Knowledge Base Init
-description: LLM-generated synthetic firm knowledge base initialization DAG
+title: Initialize the synthetic knowledge corpus
+description: Seed the learning environment with clearly labeled fictional firm documents
+docType: guide
+audience:
+  - data-engineer
+  - maintainer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  label: Knowledge base init
 ---
 
-**DAG ID:** `knowledge_base_init`  
-**Schedule:** On-demand (manual trigger only)  
-**Data source:** LLM-generated synthetic documents (Azure OpenAI gpt-4.1-mini)  
-**Purpose:** Bootstrap the Azure AI Search index with firm-specific project knowledge
+**DAG:** `knowledge_base_init` · **Schedule:** manual only
 
-## Purpose
+This DAG runs one image-bundled generation script that creates a synthetic firm knowledge corpus and indexes it into Azure AI Search. It exists to demonstrate retrieval over internal-style knowledge without publishing real consulting documents.
 
-The other eight DAGs populate the index with public government data. This DAG generates synthetic internal firm documents — project proposals, lessons learned, cost benchmarks, and risk frameworks — to simulate the type of institutional knowledge a consulting firm would have accumulated over years of project delivery.
+## What it creates
 
-This enables queries like:
-- "What similar bridge rehabilitation projects has the firm delivered?"
-- "What are our standard risk mitigation strategies for flood-prone bridge sites?"
-- "Summarize lessons learned from previous FEMA grant applications"
+The generator produces fictional examples such as proposals, lessons learned, cost benchmarks, risk frameworks, and funding guides. Every downstream explanation should identify this material as synthetic; it is not evidence of actual project experience, costs, or policy.
 
-Run this DAG once on initial deployment to seed the knowledge base before going live.
+The script is idempotent at its current threshold: when the expected synthetic corpus already exists, it can skip paid generation work. Re-running is a corpus refresh decision, not a routine scheduled ingestion.
 
-## Task structure
-
-```
-generate_firm_documents
-  └── For each document type (proposal, lessons_learned, cost_guide, risk_framework):
-        - Call gpt-4.1-mini with generation prompt
-        - Produce 5–10 synthetic documents per type
-  └── XCom push: list of document dicts
-
-store_raw_parquet
-  └── Serialize documents to Parquet
-  └── Upload: raw-data/knowledge-docs/kb_YYYYMMDD.parquet
-
-index_to_search
-  └── For each document:
-        - Chunk text (512-token windows, 64-token overlap)
-        - Embed via text-embedding-3-small
-        - Upsert to Azure AI Search
-       document_type: varies, domain: synthetic (mixed)
-```
-
-## Document types generated
-
-| Type | Description | Example content |
-|------|-------------|-----------------|
-| `project_proposal` | Fictional past project proposal | Scope, schedule, cost estimate, technical approach for a bridge rehab project |
-| `lessons_learned` | Post-project reflection document | What went well, challenges, recommendations for similar projects |
-| `cost_benchmark` | Historical cost data by project type | Unit costs for bridge deck replacement, water main replacement, etc. |
-| `risk_framework` | Standard risk register templates | Risk categories, likelihood/impact matrices, standard mitigations for infrastructure projects |
-| `funding_guide` | Federal funding program summaries | RAISE, INFRA, Bridge Formula Program, CDBG-DR eligibility and match requirements |
-
-## Triggering the init DAG
+## Trigger and verify
 
 ```bash
-# Via Makefile
-make run-dags
-
-# Via kubectl
 kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- \
   airflow dags trigger knowledge_base_init
-
-# Via Airflow REST API (with auth token)
-curl -X POST https://infra-advisor-ai.kyletaylor.dev/airflow/api/v2/dags/knowledge_base_init/dagRuns \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"logical_date": "2026-04-23T00:00:00Z"}'
 ```
 
-## Azure AI Search dependency
+`make run-dags` also triggers this DAG alongside selected source canaries. Use the direct command when only synthetic initialization is intended.
 
-The `search_project_knowledge` MCP tool depends on this index being populated. If the index doesn't exist, the tool returns a structured error:
+Verify that:
 
-```json
-{
-  "error": "Azure AI Search index 'infra-advisor-knowledge' not found",
-  "action": "Run knowledge_base_init Airflow DAG (make run-dags) to initialize the index",
-  "retriable": false
-}
-```
+- the immutable Airflow image contains `generate_synthetic_docs` and its dependencies;
+- generated documents carry the synthetic source/domain label;
+- the Search index contains the intended corpus without duplicate expansion;
+- `search_project_knowledge` can retrieve a known synthetic example;
+- prompts and generated document bodies are not copied into operational logs.
 
-**Important:** Run `knowledge_base_init` before going live, or before demonstrating the knowledge search capability.
+If the Search index or schema is missing, fix infrastructure/index initialization before retrying generation. Do not turn a non-retriable schema error into an uncontrolled model loop.

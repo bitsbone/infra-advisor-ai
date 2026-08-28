@@ -1,215 +1,58 @@
 ---
-title: UI
-description: React 18 SPA with Datadog RUM, backend switcher, and conversation history
+title: Web UI
+description: Understand the browser client's state, streaming, backend routing, evidence presentation, and RUM privacy boundary
+docType: concept
+audience:
+  - frontend-developer
+  - product-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 7
 ---
 
-**Framework:** React 18 + TypeScript 5.6 + Chakra UI v3 | **Build:** Vite | **Served by:** nginx
+The React UI is a client of shared service contracts, not an agent runtime. It owns authentication state, conversation navigation, streaming presentation, evidence cards, model/backend choice, the direct-tool sandbox, administration, and browser observability.
 
-The UI is a single-page application (SPA) that provides the consultant-facing chat interface. It handles authentication, query submission, response rendering, citation browsing, backend switching, model selection, conversation history, feedback collection, admin user management, and session management.
+## Core interaction loop
 
-## Features
+1. Authenticate and hold the bearer token in browser storage.
+2. Create or restore a durable conversation.
+3. Lock that conversation to its saved backend/model metadata.
+4. Upload current-turn attachments to the selected backend.
+5. consume SSE steps, tool events, artifacts, text, and completion metadata.
+6. persist/restore the conversation through the selected backend.
+7. submit feedback against the response's trace and span identity.
 
-### Chat interface
+The client accepts differences in Python and .NET conversation response envelopes through a small compatibility layer. Unknown artifact versions or malformed evidence must not interrupt answer rendering.
 
-The core workflow:
-1. User submits a natural-language query
-2. `POST /api/query` (Python) or `POST /api-dotnet/query` (.NET) with `Authorization`, `X-Session-ID`, `X-Conversation-ID`, and `X-User-ID` headers
-3. Response streams back with answer, citations, trace ID, and model used
-4. Follow-up suggestions appear below the answer
-5. Citation panel expands on the right with tool sources and external links
+## Backend routing
 
-### Backend switcher (Python / .NET)
+The deployed nginx proxy maps `/api` to Python, `/api-dotnet` to .NET, and `/auth` to the Auth API. The selected backend also controls media upload, tools, suggestions, and conversation requests so one workflow does not silently cross implementations.
 
-The query toolbar shows a toggle to select which backend processes the query:
+The current Vite development server reproduces only the Python `/api` proxy. See [Local setup](/infra-advisor-ai/development/local-setup/) before expecting full local auth or .NET routing.
 
-```
-[ Python ]  [ .NET ]
-```
+## Streaming and recovery
 
-The selection is persisted to `localStorage` under `infra_advisor_backend` and survives page reloads. Switching takes effect on the next query — no page reload required.
+The SSE parser handles fragmented frames and typed event variants. It records tool progress and artifacts before final text completion. Cancellation or failure must finish UI and telemetry state exactly once.
 
-- **Python** routes requests to `/api/*` → `agent-api` (FastAPI + LangChain, ddtrace LLM Obs)
-- **.NET** routes requests to `/api-dotnet/*` → `agent-api-dotnet` (ASP.NET Core, OTel/OpenInference)
+If the .NET MCP session expires before any unsafe streamed output, the backend can reconnect and restart. Once output has reached the client, the service returns a stable retry instruction instead of replaying work and duplicating content.
 
-Both backends talk to their own MCP Server instance (`mcp-server` vs `mcp-server-dotnet`) and share the same PostgreSQL conversation store.
+## Evidence and sandbox
 
-### Session persistence
+Assistant citations and structured artifacts provide safe source links. Evidence cards render known contract versions; source URLs are sanitized before opening. Tool steps can prefill the authenticated Sandbox for inspection, but direct invocation remains external-data handling and must not expose credentials.
 
-Session IDs are stored in `localStorage` under the key `infra_advisor_session_id`. Page reloads resume the same conversation — same Redis memory key, same LLM Obs session grouping.
+## Administration
 
-The **New Conversation** button (pencil icon in conversation sidebar header) clears the active conversation and starts a fresh session.
+The admin view manages users and displays read-only .NET evaluator and AI Guard diagnostics. Diagnostic panels intentionally query the .NET routes regardless of the currently selected chat backend because those pipelines are backend-specific.
 
-### Conversation history sidebar
+## Browser telemetry
 
-A 220px left rail shows all past conversations for the logged-in user, sorted by most recently updated. Conversations are stored in PostgreSQL (requires `DATABASE_URL` to be configured on the backend).
+RUM captures views, resources, replays, errors, and bounded workflow actions. Query actions retain length and domain—not prompt content. Feedback, evidence, copy/report, and media actions use controlled metadata. Session Replay masks input.
 
-**Interactions:**
-- **Click a conversation** — loads the full message history, restores the model and backend that were active when the conversation was created
-- **New conversation button** (top of sidebar) — clears state and starts fresh
-- **Delete button** (trash icon, revealed on hover) — permanently removes the conversation and all its messages
+The UI sends RUM session metadata and distributed trace headers, but client comments or headers do not themselves guarantee an Agent Observability session tag. Verify the actual backend trace fields.
 
-The sidebar is hidden on screens narrower than the `md` breakpoint (768 px).
+## Verify a change
 
-**How it works:**
-1. On the first message of a new session, the UI calls `POST /conversations` (via the active backend) to create a conversation record
-2. Every subsequent `/query` call includes `X-Conversation-ID` and `X-User-ID` headers
-3. The backend saves the user/assistant exchange to PostgreSQL after each response
-4. On page load the sidebar calls `GET /conversations` to populate the list
+Run the TypeScript/build checks, then exercise narrow and wide layouts, keyboard/focus behavior, streaming fragmentation, cancellation, restored conversations, backend locking, unknown artifacts, unsafe links, authentication expiry, and RUM privacy sentinels.
 
-### Model picker
-
-The query input bar shows pill buttons for each available model:
-
-```
-[ gpt-4.1-mini ]  [ gpt-4.1 ]
-```
-
-The selected model is persisted to `localStorage` under `infra_advisor_model`. On page load, the stored model is pre-selected if it appears in the list returned by `GET /models`.
-
-The model is also saved with each conversation — loading a past conversation restores the model that was active during that session.
-
-### Citation panel
-
-Each AI response includes a `sources` list. The sidebar shows source cards with:
-- Tool name and icon (color-coded by domain)
-- Expandable detail panel with data notes
-- "View data source →" link to the external dataset (FHWA, OpenFEMA, EIA, etc.)
-
-### Feedback
-
-Every AI message shows three action icons:
-- Thumbs up → `POST /api/feedback {rating: "positive"}`
-- Thumbs down → `POST /api/feedback {rating: "negative"}`
-- Flag → `POST /api/feedback {rating: "reported"}`
-- Trace link → opens the Datadog APM trace for this specific response in a new tab
-
-Feedback is submitted as a Datadog LLM Observability evaluation and appears under the **Evaluations** tab on each trace.
-
-### Domain tiles
-
-The empty state shows four clickable domain tiles:
-
-| Icon | Domain | Starter query |
-|------|--------|--------------|
-| Gauge | Engineering | Bridge condition + ADT query |
-| HardHat | Construction | Infrastructure procurement query |
-| ShieldCheck | Resilience | Disaster history + repeat county query |
-| Briefcase | Advisory | Contract awards query |
-
-Clicking a tile auto-submits its starter query without requiring the user to type.
-
-### Suggestion pool
-
-On page load, the UI calls `GET /api/suggestions/initial` to populate 4 opening suggestion cards. These are drawn from a Redis pool of up to 80 infrastructure-focused suggestions. After each response, `POST /api/suggestions` generates 4 follow-up suggestions based on the conversation context.
-
-### Sandbox playground
-
-The **Sandbox** tab lets users invoke MCP tools directly without going through the agent. It includes a JSON parameter editor and response viewer. For `POST /query` and `search_project_knowledge`, a **Suggest** button calls `/api/suggestions` to auto-populate a sample query.
-
-### Admin panel
-
-Visible only to admin users. Supports:
-- View all registered users
-- Create user accounts (any email domain)
-- Set a replacement password for any account, including the current administrator, without storing the password in browser storage or telemetry
-- Delete users (cannot delete own account)
-- Toggle admin / service account flags
-
-The password dialog requires confirmation and explains that outstanding email reset links are invalidated while existing JWT sessions remain active until expiry. A successful operation produces a safe browser resource and corresponding Auth API trace; Datadog RUM and Session Replay retain the interaction context while password inputs remain masked and no password value is added as a custom attribute.
-
-### Guided tour
-
-On first login, a 7-step Driver.js tour walks through:
-1. Welcome overlay
-2. Domain tiles
-3. Chat input
-4. Suggestion pills
-5. Citation sidebar
-6. Sandbox tab
-7. Tour restart button
-
-The tour can be re-triggered any time via the Compass icon in the header. Completion state is stored in `localStorage`.
-
-## Component structure
-
-```
-src/
-  App.tsx                        Root component, auth state, routing
-  components/
-    LoginPage.tsx                Login, register, forgot/reset password flows
-    Chat.tsx                     Main conversation UI, query submission, suggestions,
-                                   backend/model toggles, conversation state
-    ConversationSidebar.tsx      Left rail: conversation list, new/delete/select actions
-    CitationPanel.tsx            Right sidebar: tool sources with expand/link
-    AdminTab.tsx                 User management table and password controls (admin only)
-    Sandbox.tsx                  Direct MCP tool invocation playground
-  lib/
-    api.ts                       HTTP client: sendQuery, fetchModels, submitFeedback,
-                                   getBackend/setBackend, getModel/setModel,
-                                   createConversation, listConversations,
-                                   getConversation, deleteConversation
-    auth.ts                      Auth API wrappers (login, register, forgotPassword, etc.)
-    datadog-rum.ts               RUM initialization, getRumSessionId()
-    tour.ts                      Driver.js tour definition, localStorage helpers
-```
-
-### localStorage keys
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `infra_advisor_session_id` | UUID string | Active Redis session for memory continuity |
-| `infra_advisor_backend` | `"python"` \| `"dotnet"` | Selected backend; used by `getApiBase()` |
-| `infra_advisor_model` | model name string | Last selected model; pre-selects on page load |
-
-## Datadog RUM
-
-The browser SDK (`@datadog/browser-rum`) is initialized in `datadog-rum.ts` with session replay enabled.
-
-**Custom events tracked:**
-
-| Event | When | Attributes |
-|-------|------|-----------|
-| `query_submitted` | User submits a query | `query` text, `domain` |
-| `citation_expanded` | User expands a source card | `tool_name` |
-| `suggestion_clicked` | User clicks a suggestion | `label` text |
-
-**Session→trace linking:**
-
-`getRumSessionId()` reads `datadogRum.getInternalContext()?.session_id`. This ID is sent as `X-DD-RUM-Session-ID` on every query request. The Agent API sets it as `session.id` on all LLM Obs spans, enabling:
-- Jump from LLM Obs trace → RUM session replay
-- Filter LLM Obs by RUM session ID
-- See which queries were triggered during a specific browser session
-
-**Sourcemaps:** After each build, sourcemaps are uploaded to Datadog via `@datadog/datadog-ci` so error stack traces in RUM show original TypeScript source lines.
-
-## Build
-
-```bash
-cd services/ui
-npm install
-npm run build      # outputs to dist/
-npm run dev        # local dev server (Vite, hot reload)
-```
-
-**Environment variables** (set at build time via Vite):
-
-| Variable | Description |
-|----------|-------------|
-| `VITE_DD_RUM_APP_ID` | Datadog RUM Application ID |
-| `VITE_DD_RUM_CLIENT_TOKEN` | Datadog RUM client token |
-| `VITE_DD_RUM_SITE` | Datadog site (us3.datadoghq.com) |
-
-These are injected by GitHub Actions from repository secrets during the Docker image build.
-
-## nginx reverse proxy
-
-The production Docker image uses nginx to:
-1. Serve the built React SPA (`dist/`) as static files
-2. Proxy `/api/*` to `agent-api.infra-advisor.svc.cluster.local:8001` (Python backend)
-3. Proxy `/api-dotnet/*` to `agent-api-dotnet.infra-advisor.svc.cluster.local:8001` (.NET backend)
-4. Proxy `/auth/*` to `auth-api.infra-advisor.svc.cluster.local:8002`
-5. Proxy `/airflow/*` to `airflow-api-server.airflow.svc.cluster.local:8080`
-6. Proxy `/mailpit/*` to `mailpit.infra-advisor.svc.cluster.local:8025` (bcrypt basic auth via `MP_UI_AUTH`)
-7. Serve the SPA for all unknown paths (`try_files $uri $uri/ /index.html`)
-
-Static assets (`/assets/`) are cached with `Cache-Control: public, immutable` and a 1-year `Expires` header.
+See [Browser RUM](/infra-advisor-ai/observability/rum/) for the investigation workflow.

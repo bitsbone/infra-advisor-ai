@@ -1,91 +1,56 @@
 ---
-title: Export API
-description: Programmatic access to LLM Observability data — pull spans, scores, and annotations for offline analysis or to feed external evaluators.
+title: Export spans for offline analysis
+description: Retrieve Agent Observability spans without placing privileged read credentials in the agent service
+docType: reference
+audience:
+  - application-developer
+  - observability-engineer
+maturity: planned
+verifiedOn: 2026-08-27
 sidebar:
   order: 5
   label: Export API
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import FeatureStatus from '@components/FeatureStatus.astro';
 
-DD's [Spans Export API](https://docs.datadoghq.com/llm_observability/instrumentation/api/?tab=model#search-spans) lets you query LLMObs data the same way the UI does, and stream the results back as JSON. It's how you bridge "DD has the data" to "I want to do something with it offline" — feed external evaluators, build a labeled dataset, run cohort analysis in a notebook, archive for compliance.
+<FeatureStatus status="planned" verifiedOn="2026-08-27" label="Datadog capability; InfraAdvisor does not ship an export job" />
 
-## When you need it
+The Agent Observability Export API retrieves span data for offline evaluation, dataset construction, or analysis. InfraAdvisor does not currently call it; this page defines the boundary for a future consumer.
 
-The three places this API earns its keep:
+## Use a separate workload
 
-1. **External evaluators that don't live in the agent service.** Pull last-hour traces matching a filter, run an external scoring pipeline, POST the scores back via the eval-metric API (see [External](../external/)).
-2. **Dataset construction.** Pull traces with `@evaluations.quality.value:good` from the annotation queue, dedupe, write to your dataset pipeline.
-3. **Offline analytics.** Pull a week's worth of traces, group by `query.domain` and `prompt.version`, do cohort math your DD dashboard can't.
+Run exports from a scheduled job, analysis environment, or dataset pipeline—not from the request-serving agent. Reading data requires an application key in addition to an API key, and that read credential should not be added to the agent container merely for convenience.
 
-## The shape
-
-```http
-POST https://api.datadoghq.com/api/v2/spans/events/search
-DD-API-KEY: <key>
-DD-APPLICATION-KEY: <key>
-Content-Type: application/json
-
-{
-  "filter": {
-    "query": "@ml_app:infra-advisor-agent-api-dotnet @meta.span.kind:agent",
-    "from":  "now-1h",
-    "to":    "now"
-  },
-  "options": {
-    "timezone": "UTC"
-  },
-  "page": { "limit": 1000 },
-  "sort": "-timestamp"
-}
+```text
+Agent services ──write telemetry──▶ Datadog
+                                      │
+Offline export job ◀──read spans──────┘
+         │
+         └──▶ evaluation, dataset, or analysis output
 ```
 
-The response includes full span content (prompt, completion, tool calls), attached evals, parent/child IDs for reconstructing trace trees, and pagination cursors for follow-on requests.
+## Design the consumer around pagination
 
-## Common patterns
+The current API supports filtering by fields such as trace ID, span ID, span kind, span name, ML application, tags, and time range. Results are paginated with a cursor and subject to response-size limits. Use the official [Export API reference](https://docs.datadoghq.com/llm_observability/investigate/export_api/) for the current endpoint and parameters.
 
-**Pull all evaluator misses for one prompt version:**
+A robust consumer should:
 
-```python
-import requests
+1. request a bounded time range;
+2. filter to the smallest useful cohort;
+3. persist the next cursor only after a page is processed;
+4. deduplicate by stable span identity;
+5. retry rate limits and transient failures with backoff;
+6. record an export watermark and audit metadata;
+7. apply the same retention and redaction rules as the source telemetry.
 
-resp = requests.post(
-    "https://api.datadoghq.com/api/v2/spans/events/search",
-    headers={
-        "DD-API-KEY": os.environ["DD_API_KEY"],
-        "DD-APPLICATION-KEY": os.environ["DD_APP_KEY"],
-    },
-    json={
-        "filter": {
-            "query": (
-                "@ml_app:infra-advisor-agent-api-dotnet "
-                "@meta.prompt.version:v2-a2c4f1d8 "
-                "@evaluations.meai_groundedness.value:<2"
-            ),
-            "from": "now-7d",
-            "to":   "now",
-        },
-        "page": {"limit": 1000},
-    },
-)
-for trace in resp.json()["data"]:
-    # Pipe into your dataset builder...
-    ...
-```
+## Preserve meaning outside Datadog
 
-**Sync to an offline data store nightly** — same call but `from: "now-24h"`, paginate until empty, write to S3 / Parquet / wherever.
-
-## Rate limits & cost
-
-- The API charges DD API quota, not per-eval. Pulling 10k spans is ~10 calls (1000 per page).
-- The data you pull stays in DD's storage until DD's retention expires — the export doesn't delete or "consume" anything.
-- DD throttles to a few requests per second per app key. Spread queries if you have lots of pulls.
+Exporting JSON does not create a useful dataset by itself. Retain the fields needed to interpret an example: ML application, service version, prompt version when available, span kind, input/output capture state, evaluator definitions, and the relationship between parent and child spans.
 
 <Aside type="caution">
-**Don't put `DD_APPLICATION_KEY` in the agent's pod env.** It's a high-privilege key. Keep export jobs in a separate workload (CronJob, offline notebook) with limited access. The agent service only needs `DD_API_KEY` for posting spans + evals — never for reading.
+Exported span content can include prompts, responses, and tool data. Moving it to a notebook or object store creates another governed copy. Define access, encryption, retention, and deletion behavior before scheduling the export.
 </Aside>
 
-## What's next
-
-- [Developer guide](../developer-guide/) — building your own evaluator pipeline that uses Export API as input.
-- [Experiments](../../experiments/) — the dataset feature this often feeds into.
+See [External evaluations](../external/) for in-application scoring and [Experiments](../../experiments/) for the planned regression workflow.

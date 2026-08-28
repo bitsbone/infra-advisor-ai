@@ -1,188 +1,66 @@
 ---
-title: Conventions
-description: Python, Kubernetes, Datadog, Airflow, and Git coding conventions
+title: Preserve project conventions
+description: Apply the small set of coding and deployment invariants that protect runtime behavior, secrets, and telemetry
+docType: reference
+audience:
+  - application-developer
+  - maintainer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 3
+  label: Conventions
 ---
 
-## Python
+These conventions exist because violating them changes runtime behavior—not simply style. Language formatting and package versions remain in each project file and lockfile.
 
-- **Python 3.12** across all services
-- **Package manager:** `uv` — use `uv sync` to install, `uv run` to execute
-- **Project file:** `pyproject.toml` in each service root
-- **Linter/formatter:** `ruff` — line length 100, auto-format on save
-- **Type hints:** Required on all function signatures
-- **Imports:** `import ddtrace.auto` must be the **first import** in every service entrypoint (`main.py`)
+## Python instrumentation starts first
 
-### Naming
+Deployable Python entrypoints import `ddtrace.auto` before libraries that should be patched. Moving it below FastAPI, HTTP, database, Kafka, or AI imports can silently remove automatic coverage.
 
-| Thing | Convention | Example |
-|-------|-----------|---------|
-| Modules/files | `snake_case` | `bridge_condition.py` |
-| Functions | `snake_case` | `get_bridge_condition()` |
-| Classes | `PascalCase` | `DDJsonFormatter` |
-| Constants / env vars | `UPPER_SNAKE_CASE` | `AZURE_SEARCH_INDEX_NAME` |
-| Private helpers | Leading underscore | `_build_date_range()` |
+Use explicit spans for application meaning that a library cannot infer. Avoid wrapping an already instrumented call merely to rename it; that produces duplicate spans.
 
-### Environment variables
+## Secrets and sensitive data stay out of source
 
-Never hardcode secrets or credentials. Always use:
+- Read required configuration from environment and fail clearly at startup.
+- Keep optional features explicit when their configuration is absent.
+- Never place credentials, JWTs, signed URLs, prompts, responses, filenames, or provider bodies in logs, metric tags, or custom span attributes.
+- Pass Kubernetes secrets through `secretKeyRef` or controlled creation targets, not committed manifests.
 
-```python
-import os
+Client tokens designed for browser/mobile SDK initialization are not API keys, but they still belong in environment or release configuration so applications can be separated cleanly.
 
-AZURE_SEARCH_ENDPOINT = os.environ["AZURE_SEARCH_ENDPOINT"]  # Fail fast on missing
-OPTIONAL_KEY = os.environ.get("OPTIONAL_KEY")                # Returns None if missing
-```
+## MCP tools return actionable failures
 
-`os.environ["VAR"]` (not `.get()`) is used for required variables — the KeyError on startup is the correct failure mode (immediate, clear, not a subtle runtime error).
+Provider failures should become a bounded result with a stable code/category and retry guidance when the agent can recover. Do not return raw exception prose or response bodies. Reserve thrown exceptions for programming errors or boundaries where the framework must produce an HTTP failure.
 
-### Error handling
+## Cross-language contracts are versioned
 
-Return structured error dicts from MCP tools rather than raising exceptions:
+When Python, .NET, and clients share a payload:
 
-```python
-return {
-    "error": "EIA API returned 429 Too Many Requests",
-    "action": "Retry in 60 seconds",
-    "retriable": True
-}
-```
+- keep a canonical schema or model;
+- use sanitized fixtures;
+- make additive changes compatible;
+- give breaking changes a new major version;
+- require consumers to ignore unknown versions safely.
 
-Use `retriable: false` for errors the LLM should not retry (index missing, auth failure, out-of-scope request).
+The chat-artifact contract is the reference implementation of this rule.
 
-### Datadog instrumentation patterns
+## Kubernetes identity is consistent
 
-```python
-# 1. First line of every entrypoint
-import ddtrace.auto  # noqa: F401
+Workloads use the correct namespace, a stable application label, Unified Service Tagging labels, and the namespace-local GHCR pull secret. Service, environment, and version values must agree between pod labels and runtime telemetry.
 
-# 2. Custom metric emission
-from datadog import statsd
-statsd.increment("mcp.tool.calls", tags=["tool:get_bridge_condition", "status:success"])
+Use immutable image identity for releases. A literal `latest` tag is not a useful version attribute and can prevent platforms from recognizing an update.
 
-# 3. Manual span for unmeasured operations
-from ddtrace import tracer
-with tracer.trace("azure.blob.upload", service="airflow-scheduler") as span:
-    span.set_tag("blob.path", blob_path)
-    span.set_tag("dag.id", dag_id)
-    blob_client.upload_blob(data, overwrite=True)
-```
+## Airflow files remain parseable
 
-## Kubernetes
+DAG modules use Airflow 3's `schedule=` form, disable catchup unless backfill is an explicit requirement, and keep expensive or task-only third-party imports inside task functions. The real DagBag and built-image contract—not a lightweight import stub—decide whether a DAG is deployable.
 
-### Resource naming
+## Metrics stay bounded
 
-- All resources: `kebab-case`
-- Service names match deployment names (e.g., deployment `agent-api`, service `agent-api`)
-- ConfigMaps: `<service>-config`
-- Secrets: `<service>-secret`
+Metric names should describe a stable aggregate question. Tags use controlled vocabularies such as tool, domain, result, or backend. User, conversation, trace, URL, query, and arbitrary error values belong elsewhere.
 
-### Required labels
+## Source schemas remain exact
 
-Every Deployment manifest must include:
-```yaml
-labels:
-  app: <service-name>
-  tags.datadoghq.com/env: dev
-  tags.datadoghq.com/service: <service-name>
-  tags.datadoghq.com/version: latest
-```
+Provider field names, including FHWA NBI identifiers, retain their source spelling at the provider boundary. Normalize only into an explicit downstream contract; do not casually rename raw fields and break mapping or fixtures.
 
-### imagePullSecrets
-
-Every Deployment and CronJob that pulls from GHCR must include:
-```yaml
-spec:
-  template:
-    spec:
-      imagePullSecrets:
-        - name: ghcr-pull-secret
-```
-
-### Namespaces
-
-| Workload type | Namespace |
-|--------------|-----------|
-| Application services | `infra-advisor` |
-| Airflow | `airflow` |
-| Kafka | `kafka` |
-| Datadog | `datadog` |
-
-## Datadog
-
-### Service names
-
-| Service | `DD_SERVICE` value |
-|---------|--------------------|
-| MCP Server | `mcp-server` |
-| Agent API | `agent-api` |
-| Auth API | `auth-api` |
-| Load Generator | `load-generator` |
-| Airflow Scheduler | `airflow-scheduler` |
-
-### Metric naming
-
-Format: `<service>.<category>.<metric_name>` — all lowercase, dots as separators.
-
-Examples:
-- `mcp.tool.calls` (count)
-- `mcp.tool.latency_ms` (timing)
-- `mcp.external_api.latency_ms` (timing)
-- `airflow.dag.blob_upload_latency_ms` (timing)
-
-### Span naming
-
-Use dot-separated lowercase: `azure.blob.upload`, `load_generator.run`, `faithfulness-eval`
-
-## Airflow DAGs
-
-```python
-# Standard DAG header
-import pendulum
-from airflow.decorators import dag, task
-
-@dag(
-    dag_id="nbi_refresh",
-    schedule="0 3 * * 0",      # Use schedule= (Airflow 3.x), not schedule_interval=
-    start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
-    catchup=False,              # Never backfill
-    tags=["ingestion", "transportation"],
-)
-def nbi_refresh():
-    ...
-```
-
-**Key rules:**
-- No `schedule_interval=` (Airflow 2 deprecated, removed in 3.x)
-- `catchup=False` always
-- Use `@task` decorator (TaskFlow API)
-- All third-party imports (pandas, Azure SDK, openai) must be **inside task function bodies** — the dag-processor scans DAG files with a minimal Python environment that does not have these packages installed
-- No top-level `import ddtrace.auto` — dag-processor does not have ddtrace
-
-## Git
-
-### Branch naming
-
-```
-phase-N/<short-description>   # phase work
-fix/<short-description>       # bug fixes
-feat/<short-description>      # features
-```
-
-### Commit messages
-
-Imperative mood, present tense, under 72 characters:
-```
-Add NBI bridge refresh DAG with ArcGIS pagination
-Fix scheduler CrashLoopBackOff from pyspark startup timeout
-Update FEMA tool to return structured error on 404
-```
-
-### PR requirements
-
-- All PRs require passing CI (pytest matrix + TypeScript build)
-- `main` branch is protected — no direct pushes
-- Merging to `main` triggers automatic Docker build + AKS rolling deploy
-
-## NBI field names
-
-The exact FHWA field names from the National Bridge Inventory schema must be preserved exactly in code, documentation, and tests. Do not rename, abbreviate, or camelCase them. See the [NBI Refresh DAG](/infra-advisor-ai/data-pipeline/nbi-refresh/) for the complete field reference.
+See [Build, test, and verify](/infra-advisor-ai/agent-guides/build-test-verify/) for command selection.

@@ -1,113 +1,68 @@
 ---
-title: Prompt tracking
-description: Version your system prompts so dashboards can compare cost, latency, and eval scores between v1 and v2 without rebuilding queries.
+title: Track prompt versions without exporting the prompt
+description: Correlate behavior with a content-derived prompt version while preserving the project's content-capture boundary
+docType: concept
+audience:
+  - agent-developer
+  - observability-engineer
+maturity: partial
+verifiedOn: 2026-08-27
+datadogDocs: https://docs.datadoghq.com/llm_observability/
 sidebar:
   order: 4
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import FeatureStatus from '@components/FeatureStatus.astro';
+import ObservationChecklist from '@components/ObservationChecklist.astro';
 
-When you ship prompt v2, you want to compare it to v1 across every dimension — latency, cost, eval scores — without manually filtering by date or commit hash. Prompt Tracking solves this by attaching a `name` + `version` + `template` to every LLM span. DD's "Prompts" view then groups by them automatically.
+<FeatureStatus status="partial" verifiedOn="2026-08-27" label="Version correlation implemented on .NET" />
 
-## The data shape
+When a prompt changes, date ranges are a weak comparison boundary: deployments overlap, rollbacks happen, and unrelated code may ship at the same time. A content-derived version lets traces and evaluations identify the prompt definition that actually ran.
 
-Each `chat` or `invoke_agent` span gets a JSON payload on the `_dd.ml_obs.prompt_tracking` attribute:
+## The privacy-preserving pattern
 
-```json
-{
-  "name": "infra-advisor-system",
-  "version": "v1-a2c4f1d8",
-  "template": "<full system prompt text>",
-  "variables": {}
-}
-```
-
-The `version` is derived from a content hash so it changes only when the template actually changes. Convention we use: `v<major>-<sha256[:8]>`. Bump the major manually when you want a clean break for dashboards; the hash bumps automatically on any wording change.
-
-## Wiring it up
-
-<Tabs syncKey="lang">
-  <TabItem label="Python (ddtrace)">
-
-```python
-# services/agent-api/src/agent.py (excerpt)
-import hashlib, json
-from ddtrace.llmobs import LLMObs
-
-AGENT_SYSTEM_PROMPT = """..."""  # the actual prompt text
-
-PROMPT_VERSION = "v1-" + hashlib.sha256(
-    AGENT_SYSTEM_PROMPT.encode()
-).hexdigest()[:8]
-
-# Inside the agent span, after the LLM call:
-LLMObs.annotate(
-    span=specialist_span,
-    prompt={
-        "name": "infra-advisor-system",
-        "version": PROMPT_VERSION,
-        "template": AGENT_SYSTEM_PROMPT,
-        "variables": {},
-    },
-)
-```
-
-`LLMObs.annotate(..., prompt=...)` writes the tracking JSON to the active span's `_dd.ml_obs.prompt_tracking` attribute.
-
-  </TabItem>
-  <TabItem label=".NET (OpenTelemetry)">
-
-The .NET path uses a global `ActivityListener` that stamps the JSON on every `invoke_agent` and `chat` span automatically — no per-call instrumentation:
+InfraAdvisor hashes the system prompt and exports only the version:
 
 ```csharp
-// services/agent-api-dotnet/Program.cs (excerpt)
-const string AgentSystemPrompt = """...""";
-
-static string ShortContentHash(string s) =>
-    Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)))
-        .Substring(0, 8).ToLowerInvariant();
+static string ShortContentHash(string text) =>
+    Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)))
+        .Substring(0, 8)
+        .ToLowerInvariant();
 
 var promptVersion = "v1-" + ShortContentHash(AgentSystemPrompt);
-var promptTrackingJson = JsonSerializer.Serialize(new {
-    name     = "infra-advisor-system",
-    version  = promptVersion,
-    template = AgentSystemPrompt,
-    variables = new Dictionary<string, object>(),
-});
 
-ActivitySource.AddActivityListener(new ActivityListener
-{
-    ShouldListenTo = src => src.Name is "Experimental.Microsoft.Extensions.AI"
-                         or TelemetrySetup.ActivitySourceName,
-    Sample = (ref ActivityCreationOptions<ActivityContext> _) =>
-        ActivitySamplingResult.AllDataAndRecorded,
-    ActivityStarted = activity =>
-    {
-        if (activity.OperationName is "chat" or "invoke_agent")
-            activity.SetTag("_dd.ml_obs.prompt_tracking", promptTrackingJson);
-    },
-});
+if (activity.OperationName is "invoke_agent" or "chat")
+    activity.SetTag("prompt.version", promptVersion);
 ```
 
-The listener is global, so adding a new agent that uses the same prompt automatically gets tracked — one less thing to remember.
+The value changes when the prompt content changes, but the template itself is not copied into a custom span attribute. This preserves correlation without expanding the telemetry content boundary.
 
-  </TabItem>
-</Tabs>
+## What is implemented
 
-## What you see in DD
+- The .NET backend stamps `prompt.version` on `invoke_agent` and `chat` activities.
+- External evaluation submissions include a prompt-version tag, although that tag currently comes from the `PROMPT_VERSION` environment value rather than the content-derived hash. Aligning those sources remains necessary for exact joins.
+- The Python backend does not yet emit an equivalent content-derived prompt-version tag.
 
-**DD → LLM Observability → Prompts** lists every `(name, version)` combination DD has seen, with traffic counts, latency, token totals, cost, and the average eval scores. Pick two versions, click "Compare", and you get a side-by-side: prompt diff on the left, metric deltas on the right.
+Because coverage and version sources differ, prompt comparisons across both backends are not yet authoritative.
 
-The view works without further wiring once `_dd.ml_obs.prompt_tracking` is on the spans.
+## Use the version to answer a bounded question
 
-## Common patterns
+Pair the version with a signal that represents the outcome you care about:
 
-- **A/B test a prompt:** define two prompt constants, hash both, pick one per request (random or sticky per user-ID hash), stamp the chosen version's JSON on the activity. The Prompts view groups them automatically.
-- **Promote a prompt:** bump the major version (`v2-...`) when the change is significant. Keeps dashboards bucketed by intent, not by typo-fix.
-- **Track regressions:** in DD UI, add an SLO on "avg eval score per prompt version > 4.0". Alerts when a new version is materially worse.
-- **Variable templates:** when your prompt is parameterized (e.g., conversation history is interpolated), put the parameter values into `variables`, not the templated text. DD diffs the template; variables are per-call metadata.
+- Evaluation score by `prompt.version`
+- Tool-selection rate by `prompt.version`
+- Token usage or cost by `prompt.version`
+- Error and latency distribution by `prompt.version`
 
-## What's next
+Do not interpret a correlation as causation without controlling for model, backend, traffic mix, and tool availability. For deliberate regression tests, use an offline [experiment](../../experiments/) with a stable dataset.
 
-- [Evaluations → Managed](../../evaluations/managed/) — the eval scores that Prompt Tracking groups by.
-- [Spans and traces](../spans-and-traces/) — `@meta.prompt.version:v2-*` queries for regression hunting.
+<ObservationChecklist title="Verify prompt-version evidence">
+  <ul>
+    <li>The agent and model operations carry the expected `prompt.version`.</li>
+    <li>The value changes after a real prompt edit and remains stable across unrelated deployments.</li>
+    <li>Evaluation tags use the same version source as the traced operation.</li>
+    <li>No custom attribute exports the full system prompt or user content.</li>
+  </ul>
+</ObservationChecklist>
+
+The next implementation step is to derive one version value per backend and reuse it for traces, evaluations, dashboards, and experiments.

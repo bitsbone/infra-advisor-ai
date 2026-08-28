@@ -1,166 +1,94 @@
 ---
-title: Quickstart
-description: Step-by-step deployment from zero to running application
+title: Deploy and verify InfraAdvisor
+description: Move from a validated environment to a running AKS application through explicit checkpoints
+docType: guide
+audience:
+  - platform-engineer
+  - maintainer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 2
+  label: Quickstart
 ---
 
-Complete deployment from a clean Azure subscription to a running application.
+This sequence mutates Azure, Kubernetes, and Datadog resources. Complete the [prerequisites](../prerequisites/) and confirm the intended subscription and cluster before running it.
 
-## 1. Clone and configure
+## 1. Validate configuration
 
 ```bash
-git clone https://github.com/kyletaylored/infra-advisor-ai.git
-cd infra-advisor-ai
-cp .env.example .env
-# Edit .env with your values (see Prerequisites)
-set -a && source .env && set +a
+set -a
+source .env
+set +a
+make check-env
+az account show
 ```
 
-## 2. Deploy Azure infrastructure
+Stop if the subscription, tenant, or region is not the intended environment.
+
+## 2. Provision Azure and connect to AKS
 
 ```bash
-az login
-az account set --subscription <your-subscription-id>
 make deploy-infra
-```
-
-This provisions:
-- AKS cluster (3× Standard_D2s_v3)
-- Azure OpenAI (4 model deployments)
-- Azure AI Search (Standard tier)
-- Azure Blob Storage
-- Log Analytics workspace
-
-**Duration:** 10–15 minutes
-
-## 3. Get AKS credentials
-
-```bash
 make get-credentials
-kubectl get nodes   # verify 3 nodes Ready
+kubectl config current-context
+kubectl get nodes
 ```
 
-## 4. Create GHCR pull secret
+Inspect the Bicep deployment result separately from node readiness.
+
+## 3. Prepare operators and Datadog
+
+Install the Datadog Operator according to the repository/environment process, then apply the checked-in custom resource:
 
 ```bash
-make create-ghcr-secret
+make apply-datadog-agent
 ```
 
-## 5. Create all secrets
+`make deploy-k8s` installs Strimzi resources for Kafka but deliberately skips the Datadog directory because the Agent is operator-managed.
 
-```bash
-make create-secrets
-```
-
-This runs all individual secret targets:
-- `create-mcp-server-secret`
-- `create-agent-api-secret` — Azure OpenAI keys + optional `DATABASE_URL`
-- `create-agent-api-dotnet-secret` — same keys for the .NET backend
-- `create-auth-api-secret`
-- `create-postgres-secret`
-- `create-dd-postgres-secret`
-- `create-airflow-secret`
-- `create-load-generator-secret`
-
-**Enabling conversation persistence (optional):** Set `DATABASE_URL` in your `.env` before running `make create-secrets`. Both Agent API services read this variable; if unset, conversation history is silently disabled and the sidebar shows no past conversations.
-
-```bash
-# .env
-DATABASE_URL=postgresql://appuser:password@postgres.infra-advisor.svc.cluster.local:5432/infraadvisor
-```
-
-## 6. Deploy Kubernetes workloads
+## 4. Deploy workloads
 
 ```bash
 make deploy-k8s
+make rollout-status
+make check-pods
 ```
 
-This applies in order:
-1. Namespaces
-2. Strimzi Operator CRDs (with `kubectl wait --for=condition=established`)
-3. Kafka cluster and topics
-4. Redis
-5. PostgreSQL
-6. Datadog Agent (DatadogAgent CR)
-7. Mailpit (bcrypt basic auth)
-8. MCP Server
-9. Agent API
-10. Auth API
-11. Load Generator
-12. UI
-13. Airflow (Helm install)
+The deployment target creates namespace-local registry and application secrets, installs or safely upgrades Airflow, applies data services, then applies both Python and .NET application paths.
 
-**Duration:** 5–10 minutes for all pods to reach Running state.
-
-## 7. Verify pods
+Do not accept `Running` alone. Check readiness, restart counts, image tags/digests, and recent events:
 
 ```bash
-kubectl get pods -n infra-advisor
-kubectl get pods -n airflow
-kubectl get pods -n kafka
-kubectl get pods -n datadog
+kubectl get pods -A
+kubectl get events -A --sort-by=.lastTimestamp
 ```
 
-All pods should show `Running` status. Airflow dependencies, DAGs, and helper scripts are already installed in its verified custom image; pods never install packages at startup.
-
-## 8. Initialize the knowledge base
+## 5. Initialize derived data
 
 ```bash
-make run-dags       # trigger the approved canary DAGs bundled in the Airflow image
+make run-dags
 ```
 
-The `knowledge_base_init` DAG must complete before `search_project_knowledge` returns results. Monitor progress in the Airflow UI:
-```
-https://infra-advisor-ai.kyletaylor.dev/airflow
-```
+This triggers the approved canary DAGs, including knowledge-base initialization and selected source refreshes. Confirm task success and search-index output before testing retrieval-dependent questions.
 
-## 9. Get the application URL
+## 6. Verify the product loop
+
+1. Resolve the UI LoadBalancer address and configured DNS/TLS endpoint.
+2. Register or use an authorized test account.
+3. Send the same tool-using question to Python and .NET.
+4. Confirm streaming, citations or artifacts, and conversation restoration.
+5. Locate browser RUM, backend APM, Agent Observability, MCP/provider work, and correlated logs.
+6. Confirm dashboards distinguish backend-specific metric and evaluation coverage.
+
+## Upgrade safely
+
+CI deploys changed services with immutable commit tags after merges to `main`. For Airflow, publish the immutable image and use:
 
 ```bash
-kubectl get svc -n infra-advisor ui -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+make upgrade-airflow AIRFLOW_IMAGE_TAG=<commit-sha>
 ```
 
-Point your DNS record (or use the IP directly):
-```
-https://infra-advisor-ai.kyletaylor.dev
-```
+Resolve a failed preflight instead of deleting the release. Use destructive recovery only after accepting the documented data-loss boundary.
 
-## 10. Register a user
-
-Navigate to the application URL, click **Register**, and create your account. The first user becomes an admin automatically.
-
----
-
-## Upgrade deployments
-
-After pushing code changes (handled automatically by CI on merge to `main`):
-
-```bash
-# Manually force a rollout if needed:
-kubectl rollout restart deployment/agent-api -n infra-advisor
-kubectl rollout restart deployment/mcp-server -n infra-advisor
-kubectl rollout restart deployment/auth-api -n infra-advisor
-kubectl rollout restart deployment/ui -n infra-advisor
-```
-
-## Upgrade Airflow config
-
-After changing `k8s/airflow/values.yaml`:
-
-```bash
-make create-airflow-ghcr-secret
-make upgrade-airflow AIRFLOW_IMAGE_TAG=<git-commit-sha>
-```
-
-The upgrade is intentionally fail-closed: it requires a deployed, single-image release with current metadata migrations and valid application/registry secrets, pulls the requested image, runs its real DagBag/runtime contract locally, performs an atomic Helm upgrade, and verifies the live workloads against the immutable image afterward. Resolve a failed preflight instead of uninstalling the release or deleting the namespace.
-
-## Deliver DAG changes
-
-After modifying DAG files in `services/ingestion/dags/`:
-
-```bash
-make test-airflow
-make test-airflow-container
-# Build and publish an immutable image, then run the verified upgrade above.
-```
-
-DAG changes are never copied into a live pod or PVC. The DAG processor scans the image-bundled directory at the configured two-minute interval, and the scheduler health threshold is three minutes so the one-minute Kubernetes health probe remains tolerant of the intentionally quieter scan cadence.
+Continue to [Kubernetes resources](../kubernetes/) for ownership and common inspection commands.

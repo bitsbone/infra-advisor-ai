@@ -1,101 +1,98 @@
 ---
-title: MCP clients in LLM Observability
-description: How MCP tool calls show up in the trace tree, how W3C traceparent propagates between services, and the K8s session-affinity gotcha.
+title: Trace MCP tool calls across services
+description: Preserve one trace from the agent's tool decision through the MCP protocol and provider request
+docType: guide
+audience:
+  - application-developer
+  - platform-engineer
+maturity: stable
+verifiedOn: 2026-08-27
 sidebar:
   order: 3
 ---
 
 import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import FeatureStatus from '@components/FeatureStatus.astro';
+import ObservationChecklist from '@components/ObservationChecklist.astro';
 
-MCP (Model Context Protocol) is how InfraAdvisor's agent talks to its tools — `mcp-server-dotnet` exposes 11 tools over HTTP, and both agent backends call them as MCP clients. From DD's perspective, MCP calls show up as `tool`-kind LLMObs spans with child HTTP spans, all under the same `trace_id` as the originating `/query`.
+<FeatureStatus status="stable" verifiedOn="2026-08-27" />
 
-## What MCP looks like in a trace
+An agent trace is incomplete if it ends at “call tool.” The useful debugging path continues through the MCP client, the server handling the tool, and the downstream provider request.
 
+## The trace you are trying to preserve
+
+```text
+agent decision
+└── execute tool                 Agent Observability: tool
+    └── MCP client request       protocol operation
+        └── POST /mcp            APM: agent API → MCP server
+            └── tools/call       server-side MCP operation
+                └── provider     HTTP, database, or search work
 ```
-└── execute_tool / call_tool                  tool   ← MCP client (in agent-api)
-    └── HTTP POST → mcp-server                http   ← outbound HTTP
-        └── [mcp-server-dotnet]
-            POST /mcp/                        workflow ← AspNetCore on the server
-            └── tools/call <name>             (mcp)    ← MCP server-side span
-                └── HTTP → upstream API       (http)   ← FHWA / EIA / EPA / etc.
-```
 
-The keystone is W3C `traceparent` flowing through MCP's request metadata. As long as both ends register `Experimental.ModelContextProtocol` as a tracing source, propagation is automatic.
+W3C `traceparent` is the continuity mechanism. Both services must instrument the MCP library, and the transport must propagate the active context.
 
-## Client-side instrumentation
+## Instrument both ends
 
 <Tabs syncKey="lang">
-  <TabItem label="Python (ddtrace)">
+  <TabItem label="Python — Datadog SDK">
 
-ddtrace's MCP integration ships in `ddtrace>=3.11`. Once `ddtrace.auto` is in place, `ClientSession.call_tool()` emits a `tool`-kind LLMObs span without any code change. The MCP client library (`mcp` package) is what gets patched.
-
-LangChain's MCP adapter (`langchain-mcp-adapters`) wraps `call_tool` in a `BaseTool` that ddtrace's LangChain integration ALSO instruments, so you get **two** spans nested by default — the LangChain tool span (outer) and the MCP call span (inner). That's by design; the outer captures the LangChain-level metadata (tool name as the agent saw it), the inner captures the MCP protocol details.
+With `ddtrace.auto` loaded first, `ClientSession.call_tool()` is instrumented by the MCP integration. LangChain's MCP adapter may contribute an outer tool span while the MCP integration contributes the protocol-level child. The nesting is useful when each span represents a different boundary; do not add another manual tool span around both.
 
   </TabItem>
-  <TabItem label=".NET (OpenTelemetry)">
+  <TabItem label=".NET — OpenTelemetry">
 
-In .NET, the MCP C# SDK (≥1.3.0) emits OTel spans on the `Experimental.ModelContextProtocol` source. Register it on both client and server `TelemetrySetup.cs`:
+Register `Experimental.ModelContextProtocol` on the agent client and MCP server. Register `Experimental.Microsoft.Extensions.AI` on the agent service for the outer `execute_tool` operation:
 
 ```csharp
-// Client (services/agent-api-dotnet/Observability/TelemetrySetup.cs)
-.WithTracing(t => t
-    .AddSource("Experimental.ModelContextProtocol")
-    .AddSource("Experimental.Microsoft.Extensions.AI")  // emits execute_tool wrapper
-    ...)
-
-// Server (services/mcp-server-dotnet/Observability/TelemetrySetup.cs)
-.WithTracing(t => t
+.WithTracing(tracing => tracing
     .AddAspNetCoreInstrumentation()
-    .AddSource("Experimental.ModelContextProtocol")
-    ...)
+    .AddSource("Experimental.Microsoft.Extensions.AI")
+    .AddSource("Experimental.ModelContextProtocol"))
 ```
 
-`Experimental.Microsoft.Extensions.AI` is what emits the outer `execute_tool` span; `Experimental.ModelContextProtocol` emits the inner protocol-level spans. Both need to be registered or your trace tree will have a hole.
+The MCP SDK version must support trace-context propagation. An activity source registered on only one side leaves a visible gap even when the request succeeds.
 
   </TabItem>
 </Tabs>
 
-## Server-side instrumentation
+## Keep stateful sessions on one server replica
 
-The MCP server emits a workflow span for `POST /mcp/` (from AspNetCore auto-instrumentation) and a child MCP span per tool call. The MCP C# SDK on the server side reads incoming `traceparent` from message metadata and attaches the request to the parent trace.
+The MCP HTTP transport associates follow-up requests with an `Mcp-Session-Id`. A Kubernetes Service that sends the next request to another pod can produce a 400 or 404 even though tracing is configured correctly.
 
-If the MCP server is missing from your trace tree entirely, the cause is almost always one of:
-
-1. **MCP SDK older than 1.3.0** — traceparent propagation didn't exist in earlier versions. Bump the package.
-2. **Server `TelemetrySetup` only configured `.WithMetrics(...)`** — no `.WithTracing(...)` block. We hit this once; nothing emits without it.
-3. **Source name not registered server-side** — `.AddSource("Experimental.ModelContextProtocol")` is required on the server too, not just the client.
-
-## Session affinity (the gotcha)
-
-MCP 1.3.0+'s HTTP transport is **session-stateful by default**. Each request after the initial `initialize` carries an `Mcp-Session-Id` header bound to one server pod. When K8s' Service round-robins a follow-up tool call to a different replica, the server returns 400 or 404 because it doesn't know about the session.
-
-**Fix:** `sessionAffinity: ClientIP` on the MCP server's K8s Service. Pins each client to one backend for the session lifetime:
+InfraAdvisor uses client-IP affinity:
 
 ```yaml
-# k8s/mcp-server-dotnet/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: mcp-server-dotnet
 spec:
-  selector:
-    app: mcp-server-dotnet
   sessionAffinity: ClientIP
   sessionAffinityConfig:
     clientIP:
       timeoutSeconds: 3600
-  ports:
-    - port: 8001
-      targetPort: 8001
 ```
 
-**Alternative:** set `Stateless = true` on `WithHttpTransport(options => ...)` server-side. But the .NET MCP **client** library still issues session-aware requests, so a stateless server returns 400 on every tool call. Use affinity instead.
+This is an application-availability requirement, not merely a tracing preference. Autoscaling and pod termination still need graceful handling so active sessions are not discarded.
 
 <Aside type="caution">
-**Don't enable replica-count autoscaling on the MCP server without affinity.** New replicas accept new sessions but break in-flight ones bound to a scaled-down pod. With affinity, in-flight sessions survive until their pod terminates gracefully.
+Do not interpret every missing server span as a telemetry failure. A rejected or misrouted stateful MCP request may never reach the expected handler. Check the HTTP status and session routing first.
 </Aside>
 
-## What's next
+<ObservationChecklist title="Verify the service boundary">
+  <ul>
+    <li>The client tool decision and MCP protocol request share a trace ID.</li>
+    <li>The server request is a child of the outbound client operation.</li>
+    <li>The named `tools/call` operation identifies the selected tool.</li>
+    <li>Provider HTTP, search, or database work appears beneath the server operation.</li>
+    <li>Failures identify the boundary without recording raw provider bodies or credentials.</li>
+  </ul>
+</ObservationChecklist>
 
-- [Spans and traces](../spans-and-traces/) — querying / filtering for tool-related traces.
-- [APM correlation](../apm-correlation/) — log + DBM linkage for tool calls that hit a DB.
+## Diagnose a broken chain
+
+| Last visible operation | Likely boundary |
+|---|---|
+| Agent tool decision | MCP client instrumentation or source registration |
+| Outbound HTTP request | Server propagation or server-side MCP instrumentation |
+| Server request with 400/404 | Stateful session routed to the wrong replica |
+| MCP tool operation | Provider client instrumentation or an intentionally suppressed provider boundary |
+
+Continue to [Spans and traces](../spans-and-traces/) to query tool-related requests or [APM correlation](../apm-correlation/) to follow logs and database work.

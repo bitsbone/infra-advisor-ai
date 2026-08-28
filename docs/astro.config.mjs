@@ -263,11 +263,11 @@ export default defineConfig({
                 items: [
                     { label: 'Documentation Approach', slug: 'agent-guides/documentation' },
                     { label: 'Project Map', slug: 'agent-guides/project-map' },
-                    { label: 'Core Conventions', slug: 'agent-guides/core-conventions' },
-                    { label: 'Build, Test & Verify', slug: 'agent-guides/build-test-verify' },
+                    { label: 'Maintainer Invariants', slug: 'agent-guides/core-conventions' },
+                    { label: 'Build, Test, and Verify', slug: 'agent-guides/build-test-verify' },
                 ],
             },
-            { label: 'Resource Group Migration', slug: 'resource-group-migration' },
+            { label: 'AKS Resource Group Boundaries', slug: 'resource-group-migration' },
         ],
     }), mdx()],
 });

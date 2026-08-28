@@ -1,64 +1,41 @@
 ---
 title: Services
-description: Microservice reference for InfraAdvisor AI
+description: Choose the service that owns a behavior before following implementation details
+docType: guide
+audience:
+  - application-developer
+  - maintainer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  order: 4
 ---
 
-InfraAdvisor AI runs seven microservices plus an Airflow ingestion workload, all containerized and deployed on AKS. This section documents each service's API, design decisions, and observability instrumentation.
+InfraAdvisor separates interaction, identity, reasoning, data access, and synthetic work. The split keeps provider APIs out of the client and keeps conversation policy out of data tools.
 
-The platform offers **parallel Python and .NET implementations** of the core reasoning stack (Agent API + MCP Server). The UI lets users switch between them at runtime; both share the same PostgreSQL conversation store and Redis session memory.
+## Ownership map
 
-## Service map
+| Service | Owns | Main consumers |
+|---|---|---|
+| UI | Browser interaction, streaming presentation, RUM | Web users |
+| Auth API | Users, JWTs, reset/admin credential workflows | Web and mobile clients |
+| Python Agent API | LangGraph orchestration and Python telemetry experiment | UI, mobile, Kafka consumer |
+| .NET Agent API | Microsoft agent orchestration and OTel/evaluator experiment | UI and mobile |
+| Python MCP server | Stateless Python tool/provider adapters | Python agent |
+| .NET MCP server | Stateful .NET MCP transport and matching tools | .NET agent |
+| Load generator | Synthetic corpus selection and Kafka production | Python Kafka consumer |
 
-```
-Browser
-  │
-  └── nginx (UI pod, port 80)
-        ├── /auth/*        → Auth API          (port 8002)
-        │                       └── PostgreSQL
-        ├── /api/*         → Agent API (Python) (port 8001)
-        │                       ├── Redis (session memory + suggestion pool)
-        │                       ├── Kafka (eval events)
-        │                       ├── PostgreSQL (conversation history)
-        │                       └── MCP Server (port 8000)
-        │                             └── External APIs (FHWA, FEMA, EIA, EPA, SAM.gov, …)
-        ├── /api-dotnet/*  → Agent API (.NET)   (port 8001)
-        │                       ├── Redis (session memory)
-        │                       ├── Kafka (eval events)
-        │                       ├── PostgreSQL (conversation history)
-        │                       └── MCP Server .NET (port 8000)
-        │                             └── External APIs (same as Python MCP)
-        └── /airflow/*     → Airflow API Server (airflow namespace, admin auth required)
-```
+Both agent backends expose comparable client contracts, including streaming, attachments, conversations, suggestions, direct tool sandboxing, and feedback. Their internal agent and observability architectures are intentionally different.
 
-## At a glance
+## Follow a boundary
 
-### MCP Server (Python)
-The **data access layer**. Exposes 11 tools over the [Model Context Protocol](https://modelcontextprotocol.io/) HTTP transport. Fetches, normalizes, and returns structured data from government APIs and Azure AI Search. No LLM reasoning — only deterministic data retrieval. Emits custom Datadog metrics on every tool call.
+- [Agent API (Python)](./agent-api/) explains router/specialist orchestration and the Datadog SDK path.
+- [Agent API (.NET)](./agent-api-dotnet/) explains the single-agent, retrieval, OTel, and evaluator path.
+- [MCP Server (Python)](./mcp-server/) explains stateless tool transport and provider normalization.
+- [MCP Server (.NET)](./mcp-server-dotnet/) explains session affinity and the matching provider layer.
+- [MCP tool guide](./mcp-tools/) teaches tool selection without duplicating every volatile parameter.
+- [Auth API](./auth-api/) documents identity and credential-security boundaries.
+- [UI](./ui/) documents client state, streaming, and safe RUM actions.
+- [Load generator](./load-generator/) documents the synthetic Kafka loop and its limits.
 
-### MCP Server (.NET)
-A **full .NET 10 port** of the Python MCP Server. Same 11 tools, same API contract, same Scriban document templates. Uses `ModelContextProtocol.AspNetCore` and sends traces via OpenTelemetry OTLP to the Datadog Agent.
-
-### Agent API (Python)
-The **reasoning core**. Receives natural-language queries, routes them through a router LLM to select a specialist agent (engineering, water/energy, business development, document drafting, or general), executes MCP tool calls via LangChain ReAct + LangGraph, and synthesizes cited answers. Maintains 24-hour Redis session memory. Produces full LLM Observability span trees in Datadog. Persists conversation history to PostgreSQL when `DATABASE_URL` is set.
-
-### Agent API (.NET)
-A **full ASP.NET Core 10 port** of the Python Agent API. Same multi-agent routing, same 9 endpoints, same Redis memory model. Uses OpenInference.NET for LLM telemetry and exports traces via OTel OTLP. Conversation history persisted to PostgreSQL via Npgsql.
-
-### Auth API
-The **identity layer**. Handles user registration (restricted to `@datadoghq.com` by default), JWT issuance, password reset via SMTP, and admin user management. Backed by PostgreSQL with DDM-instrumented queries for Datadog Database Monitoring.
-
-### UI
-The **consultant interface**. A React 18 SPA with a conversational chat interface, citations, **backend switcher (Python / .NET)**, **model selection with localStorage persistence**, **conversation history sidebar**, feedback buttons, an MCP tool sandbox, and an admin panel. Fully instrumented with Datadog RUM + session replay.
-
-### Load Generator
-A **Kubernetes CronJob** (every 5 minutes) that samples from three YAML query corpora (happy path, edge cases, adversarial) and publishes synthetic queries to Kafka. The Agent API consumer processes them through the full pipeline, producing continuous LLM Obs traces and faithfulness scores without requiring real user traffic.
-
-## Sections in this chapter
-
-- [MCP Server](/infra-advisor-ai/services/mcp-server/) — Python: all 11 tools, parameters, return fields, custom metrics
-- [MCP Server (.NET)](/infra-advisor-ai/services/mcp-server-dotnet/) — .NET port: tool coverage, OTel wiring, Scriban templates
-- [Agent API](/infra-advisor-ai/services/agent-api/) — Python: multi-agent design, endpoints, session memory, conversation history, LLM Obs span tree
-- [Agent API (.NET)](/infra-advisor-ai/services/agent-api-dotnet/) — .NET port: OTel tracing, Npgsql conversation persistence, endpoint reference
-- [Auth API](/infra-advisor-ai/services/auth-api/) — Registration, JWT, password reset flow, DB schema, Mailpit
-- [Load Generator](/infra-advisor-ai/services/load-generator/) — Corpus structure, Kafka message format, observability
-- [UI](/infra-advisor-ai/services/ui/) — Backend switcher, conversation sidebar, model persistence, RUM, nginx proxy
+Use each service's generated API or tool schema as the source of truth for exact request fields. These pages explain why the surface exists and how it behaves in the wider system.

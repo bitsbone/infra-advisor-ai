@@ -1,82 +1,35 @@
 ---
-title: EIA Energy Refresh
-description: U.S. Energy Information Administration weekly state electricity data ingestion
+title: Refresh regional energy data
+description: Follow weekly EIA operational data for the configured southeastern-state cohort
+docType: reference
+audience:
+  - data-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+sidebar:
+  label: EIA energy refresh
 ---
 
-**DAG ID:** `eia_refresh`  
-**Schedule:** Weekly, 04:00 UTC  
-**Data source:** [EIA API v2](https://www.eia.gov/opendata/) — U.S. Energy Information Administration  
-**Coverage:** All US states
+**DAG:** `eia_refresh` · **Schedule:** Sunday 04:00 UTC · **Source:** EIA electric-power operational data API
 
-## Purpose
+The deployed DAG is not an all-state pipeline. It requests annual generation and capacity for the configured southeastern cohort: FL, GA, AL, MS, LA, TX, AR, TN, SC, NC, and VA.
 
-EIA provides authoritative data on US electricity generation, capacity, and fuel mix. This DAG indexes state-level energy statistics to support queries like:
-- "What is Texas's renewable energy capacity breakdown by fuel type?"
-- "Compare solar generation growth in California vs Texas from 2020–2024"
-- "Show states with the highest natural gas generation share"
+## Flow
 
-## Task structure
+1. Fetch each state separately with EIA API pagination and the requested generation/capacity fields.
+2. Add the requested state code to each record and stage the combined collection through the manifest helper.
+3. Write a Parquet snapshot under the EIA prefix.
+4. Create narratives using source period, state, sector, fuel description, values, and source-provided units.
+5. Token-chunk, embed, and upsert energy-domain documents.
 
-```
-fetch_eia_data
-  └── Paginate EIA API v2 endpoints
-      Endpoints:
-        - /v2/electricity/electric-power-operational-data (generation)
-        - /v2/electricity/capacity (installed capacity by fuel)
-      Auth: EIA_API_KEY header
-  └── XCom push: list of generation/capacity records
+## Interpretation boundary
 
-store_raw_parquet
-  └── Serialize to Parquet
-  └── Upload: raw-data/eia/eia_generation_YYYYMMDD.parquet
+Keep generation and capacity distinct and preserve their source units. The dataset does not provide project capital cost, asset vulnerability, plant-age analysis, or a complete national comparison in its current configured scope.
 
-index_to_search
-  └── For each record:
-        - Generate narrative text (state, fuel type, year, MWh/MW)
-        - Embed via text-embedding-3-small
-        - Upsert to Azure AI Search
-```
+## Verify a run
 
-## Data fields
-
-| Field | Description |
-|-------|-------------|
-| `state` | State abbreviation |
-| `fuelTypeCode` | COL, NG, NUC, SUN, WND, WAT, GEO, OTH |
-| `fuelType` | Human-readable fuel type name |
-| `year` | Calendar year |
-| `generation_mwh` | Annual generation in megawatt-hours |
-| `capacity_mw` | Installed capacity in megawatts |
-
-**What EIA data does NOT include:** per-plant age, cost data, capital investment (capex), infrastructure vulnerability assessments, or resilience metrics. The tool returns generation and capacity aggregates only.
-
-## Fuel type codes
-
-| Code | Fuel type |
-|------|-----------|
-| `COL` | Coal |
-| `NG` | Natural gas |
-| `NUC` | Nuclear |
-| `SUN` | Solar |
-| `WND` | Wind |
-| `WAT` | Conventional hydroelectric |
-| `GEO` | Geothermal |
-| `OTH` | Other (biomass, petroleum, etc.) |
-
-## AI Search document structure
-
-```json
-{
-  "id": "eia_TX_WND_2023",
-  "content": "Texas wind generation in 2023: 133,000,000 MWh generation. Installed capacity: 37,500 MW. Wind accounts for 24% of Texas total generation.",
-  "content_vector": [0.019, -0.038, ...],
-  "source": "EIA",
-  "domain": "energy",
-  "document_type": "energy_statistics",
-  "state": "TX"
-}
-```
-
-## API key
-
-EIA API v2 requires a free API key from [eia.gov/opendata/register.php](https://www.eia.gov/opendata/register.php). Set it as `EIA_API_KEY` in `.env` and in the `airflow-azure-secret` Kubernetes secret.
+- Every requested state appears and no unconfigured state is implied.
+- Pagination stops from provider totals/empty pages without duplicating offsets.
+- Generation and capacity use their corresponding source units.
+- Search documents carry energy domain and EIA source identity.
+- `EIA_API_KEY` is supplied through the Airflow secret and absent from URLs/logs.

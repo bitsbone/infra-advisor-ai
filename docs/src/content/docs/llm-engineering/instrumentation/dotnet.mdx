@@ -1,162 +1,122 @@
 ---
 title: .NET instrumentation with OpenTelemetry
-description: Pure-OTel instrumentation for .NET LLM apps — Microsoft Agents Framework + Microsoft.Extensions.AI + MCP, exported via OTLP to a Datadog Agent collector.
+description: Follow GenAI activities from Microsoft libraries through OTLP and into Datadog Agent Observability
+docType: guide
+audience:
+  - dotnet-developer
+  - observability-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+datadogDocs: https://docs.datadoghq.com/llm_observability/instrument/otel_instrumentation/
 sidebar:
   order: 2
   label: .NET (OpenTelemetry)
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import FeatureStatus from '@components/FeatureStatus.astro';
+import ObservationChecklist from '@components/ObservationChecklist.astro';
 
-The .NET ecosystem doesn't have a ddtrace-style auto-instrumenter for LLM frameworks. Instead, **the LLM libraries themselves emit OTel spans** when you opt in. The job of `TelemetrySetup.cs` is to register those sources with the OpenTelemetry SDK and ship the result to a Datadog Agent OTel collector via OTLP.
+<FeatureStatus status="stable" verifiedOn="2026-08-27" />
 
-**Source of truth in this repo:** `services/agent-api-dotnet/Observability/TelemetrySetup.cs` and `services/mcp-server-dotnet/Observability/TelemetrySetup.cs`.
+The .NET backend stays OpenTelemetry-native. Microsoft AI and MCP libraries create activities, the application adds missing product meaning, and the Datadog Agent collector receives OTLP data for Agent Observability.
+
+**Source of truth:** `services/agent-api-dotnet/Observability/TelemetrySetup.cs` and `services/mcp-server-dotnet/Observability/TelemetrySetup.cs`
 
 <Aside type="caution">
-**One tracer only.** We do **not** run the Datadog .NET tracer alongside the OTel SDK. Running both produces split trace IDs (DD reads `x-datadog-trace-id`; OTel reads W3C `traceparent`), which fragments your trace tree. Pick one and stick with it. We pick OTel because LLMObs span classification only happens on the OTLP ingest path.
+**Use one tracing pipeline.** InfraAdvisor does not run the Datadog .NET tracer beside the OpenTelemetry SDK. Two tracers can interpret propagation differently and split one request into separate trace trees.
 </Aside>
 
-## What gets auto-instrumented
+## Follow responsibility through the pipeline
 
-| Library | Source name | OTel spans emitted | LLMObs span kind |
-|---|---|---|---|
-| `Microsoft.Extensions.AI` (M.E.AI) | `Experimental.Microsoft.Extensions.AI` | `chat`, `embeddings`, `execute_tool` | `llm`, `embedding`, `tool` |
-| `Microsoft.Agents.AI` (MAF) | (your ActivitySource name) | `invoke_agent` | `agent` |
-| `ModelContextProtocol(.AspNetCore)` | `Experimental.ModelContextProtocol` | MCP request / response | `tool` (client side) |
-| `Npgsql.OpenTelemetry` | (built-in) | every SQL command | (no LLMObs kind; APM only) |
-| ASP.NET Core | (built-in) | HTTP server / client | `workflow` (root) |
-
-LLMObs span-kind classification (`llm`, `agent`, `tool`, `embedding`) happens on DD's OTLP ingest based on the OTel GenAI semconv operation names: `chat`, `invoke_agent`, `execute_tool`, `embeddings`. No app-side mapping required.
-
-## Configure the SDK
-
-```csharp
-// services/agent-api-dotnet/Observability/TelemetrySetup.cs
-public const string ActivitySourceName = "infra-advisor-agent-api-dotnet";
-
-public static void Configure(WebApplicationBuilder builder)
-{
-    var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT")
-        ?? "http://datadog-agent.datadog.svc.cluster.local:4318";
-    var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME")
-        ?? "infra-advisor-agent-api-dotnet";
-    var ddEnv = Environment.GetEnvironmentVariable("DD_ENV") ?? "dev";
-    var ddVersion = Environment.GetEnvironmentVariable("DD_VERSION") ?? "latest";
-
-    builder.Services.AddOpenTelemetry()
-        .ConfigureResource(r => r
-            .AddService(serviceName)
-            .AddAttributes(new Dictionary<string, object>
-            {
-                ["deployment.environment"] = ddEnv,
-                ["service.version"]        = ddVersion,
-                ["source"]                 = "otel",   // tells DD this is OTel-emitted
-            }))
-        .WithTracing(t => t
-            .AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation()
-            .AddNpgsql()                                       // Postgres command spans
-            .AddSource("Experimental.Microsoft.Extensions.AI") // chat / execute_tool / embeddings
-            .AddSource("Experimental.ModelContextProtocol")    // MCP client + server
-            .AddSource(ActivitySourceName)                     // invoke_agent + custom spans
-            .SetSampler(new AlwaysOnSampler())
-            .AddOtlpExporter(otlp =>
-            {
-                otlp.Endpoint = new Uri($"{otlpEndpoint.TrimEnd('/')}/v1/traces");
-                otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
-            }))
-        .WithMetrics(metrics => metrics
-            .AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation()
-            .AddMeter(ActivitySourceName)
-            .AddOtlpExporter(otlp =>
-            {
-                otlp.Endpoint = new Uri($"{otlpEndpoint.TrimEnd('/')}/v1/metrics");
-                otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
-            }));
-}
+```text
+Microsoft Agents / M.E.AI / MCP
+        │ create GenAI activities
+        ▼
+OpenTelemetry SDK
+        │ selects sources, resources, sampling, exporters
+        ▼
+Datadog Agent OTel collector
+        │ processes resources and forwards OTLP
+        ▼
+Agent Observability + APM
 ```
 
-The `source = otel` resource attribute matters: without it, DD tags spans `source:undefined` and the external-evaluations API won't match. Both layers (spans and evals) have to agree.
+| Source | What it contributes |
+|---|---|
+| `Experimental.Microsoft.Extensions.AI` | Chat, embedding, and tool-execution activities |
+| Application `ActivitySource` | Agent orchestration and project-specific tasks |
+| `Experimental.ModelContextProtocol` | MCP client and server operations |
+| ASP.NET Core and HTTP instrumentation | Request boundaries and downstream calls |
+| Npgsql instrumentation | Database work for APM and DBM correlation |
 
-## Wire the LLM libraries to emit OTel
+Datadog classifies supported GenAI operations from their semantic attributes. Application-specific `task` or `retrieval` work may need an explicit `dd.llmobs.span.kind` attribute.
 
-`AddSource(...)` just *listens* on a source name. The actual spans only flow if you opt the library into emitting them. For M.E.AI and MAF:
+## Register only the sources you need
 
-```csharp
-// services/agent-api-dotnet/Program.cs (excerpt)
-builder.Services.AddSingleton<IChatClient>(sp =>
-{
-    var azureClient = new AzureOpenAIClient(...);
-    return azureClient.GetChatClient("gpt-4.1-mini")
-        .AsIChatClient()
-        .AsBuilder()
-        .UseFunctionInvocation()          // emits execute_tool spans
-        .UseOpenTelemetry(loggerFactory: sp.GetRequiredService<ILoggerFactory>(),
-                          sourceName: "Experimental.Microsoft.Extensions.AI",
-                          configure: opts => opts.EnableSensitiveData = true)
-        .Build();
-});
-
-builder.Services.AddSingleton<AIAgent>(sp =>
-{
-    var chatClient = sp.GetRequiredService<IChatClient>();
-    return new ChatClientAgent(chatClient, instructions: AgentSystemPrompt, tools: ...)
-        .AsBuilder()
-        .UseOpenTelemetry(sourceName: TelemetrySetup.ActivitySourceName)
-        .Build();
-});
-```
-
-`EnableSensitiveData = true` is required for LLMObs to capture prompt + completion content. Without it, you get tokens and timing but no message bodies — much less useful for offline debugging.
-
-## Custom spans for steps the libraries don't cover
-
-Anything that isn't a chat / agent / tool / embedding call is invisible to the auto-instrumentation. Wrap those manually:
+The essential tracing configuration is intentionally small:
 
 ```csharp
-// services/agent-api-dotnet/Services/AgentService.cs (excerpt)
-private static readonly ActivitySource s = new(TelemetrySetup.ActivitySourceName);
-
-public async Task<string> ClassifyDomainTraced(string query)
-{
-    using var activity = s.StartActivity("classify_domain", ActivityKind.Internal);
-    activity?.SetTag("dd.llmobs.span.kind", "task");          // → LLMObs `task` kind
-    activity?.SetTag("gen_ai.operation.name", "classify_domain");
-    activity?.SetTag("input.value", query);
-    var domain = await DoClassification(query);
-    activity?.SetTag("output.value", domain);
-    return domain;
-}
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource
+        .AddService(serviceName)
+        .AddAttributes(new Dictionary<string, object>
+        {
+            ["deployment.environment"] = ddEnv,
+            ["service.version"] = ddVersion,
+            ["source"] = "otel",
+        }))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddNpgsql()
+        .AddSource("Experimental.Microsoft.Extensions.AI")
+        .AddSource("Experimental.ModelContextProtocol")
+        .AddSource(TelemetrySetup.ActivitySourceName)
+        .AddOtlpExporter());
 ```
 
-The `dd.llmobs.span.kind` tag is the escape hatch for span kinds that aren't in the OTel GenAI semconv yet — `task` and `retrieval` in particular. Standard kinds (`llm`, `agent`, `tool`, `embedding`) classify automatically from `gen_ai.operation.name`.
+Registering a source only tells OpenTelemetry to listen. The AI libraries must also be configured to emit activities with `.UseOpenTelemetry(...)`.
 
-## Cross-service trace propagation
+## Add meaning the libraries cannot infer
 
-MCP calls span two services (`agent-api-dotnet` → `mcp-server-dotnet`). W3C `traceparent` propagates automatically because:
-- The MCP C# SDK (≥1.3.0) inserts `traceparent` into MCP message metadata on outbound requests.
-- `mcp-server-dotnet` registers `Experimental.ModelContextProtocol` as a tracing source, so its inbound MCP spans see the parent context.
+Wrap deterministic application work with the project activity source:
 
-If the MCP server is missing from your trace tree, the cause is almost always one of:
-- MCP SDK older than 1.3.0 (the propagation didn't exist).
-- Server-side `TelemetrySetup` only configured `.WithMetrics(...)` and missed `.WithTracing(...)`.
-- K8s Service round-robined a follow-up request to a different replica — see [Monitoring → MCP clients](../../monitoring/mcp-clients/#session-affinity) for the `sessionAffinity: ClientIP` fix.
+```csharp
+using var activity = ActivitySource.StartActivity("classify_domain");
+activity?.SetTag("dd.llmobs.span.kind", "task");
+activity?.SetTag("gen_ai.operation.name", "classify_domain");
 
-## Troubleshooting
+var domain = await ClassifyDomain(query);
+activity?.SetTag("query.domain", domain);
+```
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `source:undefined` on spans | Missing resource attribute | Add `["source"] = "otel"` to `ConfigureResource` |
-| Trace tree split across two trace IDs | DD .NET tracer running alongside OTel | Remove `admission.datadoghq.com/dotnet-lib.version: v3` annotation |
-| `chat` spans missing prompt/completion text | `EnableSensitiveData` not set | `.UseOpenTelemetry(configure: opts => opts.EnableSensitiveData = true)` |
-| MCP server missing from trace tree | No `.WithTracing(...)` on the server | Add `.AddSource("Experimental.ModelContextProtocol")` server-side |
-| APM trace → Logs tab is empty | No trace context in log JSON | Wire `DatadogTraceContextEnricher` into Serilog (see [APM correlation](../../monitoring/apm-correlation/#log-trace-correlation)) |
-| Postgres host shows as a pod IP | Missing `reported_hostname` in DBM config | Set in `ad.datadoghq.com/postgres.checks` annotation |
+The explicit span identifies the operation and its safe outcome. It does not need to copy the full query into a custom attribute when the child model activity already carries permitted content.
 
-## What's next
+## Decide whether content should be captured
 
-- [Monitoring → Spans and traces](../../monitoring/spans-and-traces/) — the trace tree this produces and how to query it.
-- [Monitoring → MCP clients](../../monitoring/mcp-clients/) — the cross-service span propagation that lets one trace_id cover both services.
-- [Monitoring → APM correlation](../../monitoring/apm-correlation/) — DBM and log correlation, also pure-OTel.
-- [Evaluations → External](../../evaluations/external/) — the `IResponseEvaluator` pipeline this stack ships.
+Microsoft.Extensions.AI can emit prompt and completion content when sensitive-data capture is enabled. Without it, timing, tokens, model details, and operation structure remain observable while message bodies are omitted.
+
+Choose that setting from the service's data policy, not from a desire to maximize fields. Never attach SAS URLs, raw media, credentials, or unbounded provider responses as custom activity attributes.
+
+<ObservationChecklist title="Verify the OpenTelemetry path">
+  <ul>
+    <li>Agent, chat, tool, and application task activities share one W3C trace ID.</li>
+    <li>Resource attributes identify the service, environment, version, and OTel source.</li>
+    <li>MCP server operations continue beneath the client tool span.</li>
+    <li>Agent Observability and APM show the same request boundary.</li>
+  </ul>
+</ObservationChecklist>
+
+## Diagnose the missing boundary
+
+| Symptom | Check first |
+|---|---|
+| AI operations missing | Library emission and matching `.AddSource(...)` registration |
+| Span reaches APM without Agent classification | GenAI operation name and semantic attributes |
+| Trace splits across services | W3C propagation and accidental second tracer |
+| Prompt content absent | Sensitive-data capture policy and library configuration |
+| OTLP export fails | Endpoint protocol, `/v1/traces` handling, and collector ports |
+| MCP server absent | Server-side source registration and session routing |
+
+Continue to [MCP client instrumentation](../../monitoring/mcp-clients/) for the service boundary or [APM correlation](../../monitoring/apm-correlation/) for logs and database work.
