@@ -174,7 +174,7 @@ const INITIAL_SUGGESTIONS: Suggestion[] = [
   },
   {
     label: "Infrastructure opportunities",
-    query: "What active federal infrastructure procurement opportunities are open on SAM.gov for civil engineering NAICS codes?",
+    query: "What active federal procurement opportunities are open for civil engineering, water, transportation, or resilience work?",
   },
   {
     label: "Disaster risk counties",
@@ -388,6 +388,7 @@ function AIAvatar() {
 
 interface MessageActionsProps {
   content: string;
+  backend: BackendType;
   steps?: StreamStep[];
   toolMeta?: Record<string, ToolDisplayMeta>;
   domain?: string;
@@ -416,12 +417,24 @@ function formatStepsForCopy(steps: StreamStep[], toolMeta: Record<string, ToolDi
     .join("\n\n");
 }
 
-function MessageActions({ content, steps, toolMeta, domain, traceId, spanId }: MessageActionsProps) {
+function MessageActions({ content, backend, steps, toolMeta, domain, traceId, spanId }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
   const [copiedReasoning, setCopiedReasoning] = useState(false);
-  const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
+  const [feedback, setFeedback] = useState<"up" | "down" | "reported" | null>(null);
+  const [feedbackStatus, setFeedbackStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
 
   const toolSteps = (steps ?? []).filter((s) => s.kind.kind === "tool");
+  const canSubmitFeedback = Boolean(traceId && spanId);
+
+  // Message rows are index-keyed while streaming and when switching saved
+  // conversations. Reset local action state when the response identity changes
+  // so feedback from one span never appears selected on another response.
+  useEffect(() => {
+    setFeedback(null);
+    setFeedbackStatus("idle");
+    setFeedbackMessage("");
+  }, [backend, traceId, spanId]);
 
   function handleCopy() {
     navigator.clipboard.writeText(content).then(() => {
@@ -439,21 +452,37 @@ function MessageActions({ content, steps, toolMeta, domain, traceId, spanId }: M
     });
   }
 
-  function handleFeedback(positive: boolean) {
+  async function handleFeedback(positive: boolean) {
     const next = positive ? "up" : "down";
-    if (feedback === next) return;
-    setFeedback(next);
+    if (!traceId || !spanId || (feedback === next && feedbackStatus === "success")) return;
+    setFeedbackStatus("submitting");
+    setFeedbackMessage("Submitting feedback…");
     trackMessageFeedback(positive, domain);
-    if (traceId && spanId) {
+    try {
       const rating: FeedbackRating = positive ? "positive" : "negative";
-      submitFeedback(traceId, spanId, rating);
+      await submitFeedback(traceId, spanId, rating, backend);
+      setFeedback(next);
+      setFeedbackStatus("success");
+      setFeedbackMessage("Feedback submitted to Datadog.");
+    } catch {
+      setFeedbackStatus("error");
+      setFeedbackMessage("Feedback could not be submitted. Try again.");
     }
   }
 
-  function handleReport() {
+  async function handleReport() {
+    if (!traceId || !spanId || (feedback === "reported" && feedbackStatus === "success")) return;
+    setFeedbackStatus("submitting");
+    setFeedbackMessage("Submitting report feedback…");
     trackMessageReported(domain);
-    if (traceId && spanId) {
-      submitFeedback(traceId, spanId, "reported");
+    try {
+      await submitFeedback(traceId, spanId, "reported", backend);
+      setFeedback("reported");
+      setFeedbackStatus("success");
+      setFeedbackMessage("Report feedback submitted to Datadog.");
+    } catch {
+      setFeedbackStatus("error");
+      setFeedbackMessage("Report feedback could not be submitted. Try again.");
     }
   }
 
@@ -468,12 +497,15 @@ function MessageActions({ content, steps, toolMeta, domain, traceId, spanId }: M
   };
 
   return (
-    <HStack gap={0.5} mt={1.5}>
+    <VStack gap={0.5} mt={1.5} align="start">
+    <HStack gap={0.5}>
       <IconButton
         {...actionBtnProps}
         aria-label="Helpful"
         title="Helpful"
         color={feedback === "up" ? "green.500" : "gray.400"}
+        disabled={!canSubmitFeedback || feedbackStatus === "submitting"}
+        aria-pressed={feedback === "up"}
         onClick={() => handleFeedback(true)}
       >
         <ThumbsUp size={13} />
@@ -483,6 +515,8 @@ function MessageActions({ content, steps, toolMeta, domain, traceId, spanId }: M
         aria-label="Not helpful"
         title="Not helpful"
         color={feedback === "down" ? "red.500" : "gray.400"}
+        disabled={!canSubmitFeedback || feedbackStatus === "submitting"}
+        aria-pressed={feedback === "down"}
         onClick={() => handleFeedback(false)}
       >
         <ThumbsDown size={13} />
@@ -511,7 +545,9 @@ function MessageActions({ content, steps, toolMeta, domain, traceId, spanId }: M
         {...actionBtnProps}
         aria-label="Report issue"
         title="Report issue"
-        color="gray.400"
+        color={feedback === "reported" ? "red.500" : "gray.400"}
+        disabled={!canSubmitFeedback || feedbackStatus === "submitting"}
+        aria-pressed={feedback === "reported"}
         onClick={handleReport}
       >
         <Flag size={13} />
@@ -537,6 +573,13 @@ function MessageActions({ content, steps, toolMeta, domain, traceId, spanId }: M
         </Link>
       )}
     </HStack>
+      {feedbackStatus !== "idle" && (
+        <HStack gap={1.5} color={feedbackStatus === "error" ? "red.600" : "gray.500"} aria-live="polite">
+          {feedbackStatus === "submitting" && <Spinner size="xs" />}
+          <Text fontSize="xs">{feedbackMessage}</Text>
+        </HStack>
+      )}
+    </VStack>
   );
 }
 
@@ -1317,6 +1360,7 @@ export function Chat() {
                       {msg.role === "assistant" && (
                         <MessageActions
                           content={msg.content}
+                          backend={selectedBackend}
                           steps={msg.steps}
                           toolMeta={TOOL_META}
                           traceId={msg.traceId}

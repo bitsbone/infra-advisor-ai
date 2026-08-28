@@ -20,8 +20,8 @@ export function setBackend(backend: BackendType): void {
   localStorage.setItem(BACKEND_KEY, backend);
 }
 
-export function getApiBase(): string {
-  return getBackend() === "dotnet" ? "/api-dotnet" : (import.meta.env.VITE_AGENT_API_URL || "/api");
+export function getApiBase(backend: BackendType = getBackend()): string {
+  return backend === "dotnet" ? "/api-dotnet" : (import.meta.env.VITE_AGENT_API_URL || "/api");
 }
 
 // Chat attachment uploads go to whichever backend (`getBackend()`) is
@@ -438,20 +438,22 @@ export async function submitFeedback(
   traceId: string,
   spanId: string,
   rating: FeedbackRating,
+  backend: BackendType = getBackend(),
 ): Promise<void> {
-  try {
-    await fetch(`${getApiBase()}/feedback`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeader() },
-      body: JSON.stringify({
-        trace_id: traceId,
-        span_id: spanId,
-        rating,
-        session_id: getSessionId(),
-      }),
-    });
-  } catch {
-    // fire-and-forget — feedback failures are non-fatal
+  const response = await fetch(`${getApiBase(backend)}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...rumHeaders(), ...authHeader() },
+    body: JSON.stringify({
+      trace_id: traceId,
+      span_id: spanId,
+      rating,
+      session_id: getSessionId(),
+    }),
+  });
+
+  if (!response.ok) {
+    const { detail, traceId: errorTraceId } = await extractErrorDetail(response);
+    throw new ApiError(detail, response.status, errorTraceId);
   }
 }
 

@@ -5,7 +5,7 @@ using InfraAdvisor.Mobile.Services;
 
 namespace InfraAdvisor.Mobile.ViewModels;
 
-public partial class InfoViewModel(AppSession session, IAppNavigator navigator, IObservability observability, IAppRuntimeInfo runtimeInfo) : ObservableObject
+public partial class InfoViewModel(AppSession session, ISessionStore sessionStore, IAppNavigator navigator, IObservability observability, IAppRuntimeInfo runtimeInfo) : ObservableObject
 {
     public string Email => session.User?.Email ?? "Not signed in";
     public string UserId => session.User?.Id ?? "—";
@@ -34,9 +34,10 @@ public partial class InfoViewModel(AppSession session, IAppNavigator navigator, 
         }
         finally
         {
+            await sessionStore.ClearAsync();
             observability.ClearUser();
             observability.StopSession();
-            navigator.ShowLogin();
+            await navigator.ShowLoginAsync();
         }
     }
 }

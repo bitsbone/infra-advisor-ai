@@ -3,7 +3,7 @@ using InfraAdvisor.Mobile.Models;
 namespace InfraAdvisor.Mobile.Services;
 
 /// <summary>
-/// Holds account credentials only for the process lifetime. JWTs are intentionally never written to Preferences or secure storage in this educational demo.
+/// Holds the active account in memory. The MAUI host may restore this state from platform-protected secure storage; ordinary Preferences must never contain the JWT.
 /// </summary>
 public sealed class AppSession
 {

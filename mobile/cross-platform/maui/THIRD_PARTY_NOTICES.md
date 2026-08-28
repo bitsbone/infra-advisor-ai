@@ -1,12 +1,12 @@
 # Third-party notices
 
-## Syncfusion MAUI Toolkit
+## Prism for .NET MAUI
 
-This application references `Syncfusion.Maui.Toolkit` and uses its MIT-licensed control/toolkit infrastructure. The application does not copy the Essential UI Kit sample application, stock images, FFImageLoading integration, or unrelated assets.
+Application composition, page-scoped dependency injection, and navigation use `Prism.DryIoc.Maui` 9.0.537. Prism 9 is distributed under Prism's Community or Commercial license terms; users must confirm eligibility and accept the applicable license before use.
 
-Source: <https://github.com/syncfusion/maui-toolkit>
+Source: <https://github.com/PrismLibrary/Prism>
 
-License: MIT
+License: <https://prismlibrary.com/license/>
 
 ## Plugin.Maui.Audio
 

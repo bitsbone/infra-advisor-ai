@@ -5,7 +5,7 @@ using InfraAdvisor.Mobile.Services;
 
 namespace InfraAdvisor.Mobile.ViewModels;
 
-public partial class LoginViewModel(InfraAdvisorApiClient api, AppSession session, IAppNavigator navigator, IObservability observability) : ObservableObject
+public partial class LoginViewModel(InfraAdvisorApiClient api, AppSession session, ISessionStore sessionStore, IAppNavigator navigator, IObservability observability) : ObservableObject
 {
     [ObservableProperty] private string email = string.Empty;
     [ObservableProperty] private string password = string.Empty;
@@ -36,11 +36,12 @@ public partial class LoginViewModel(InfraAdvisorApiClient api, AppSession sessio
         {
             var response = await api.LoginAsync(Email.Trim(), Password, cancellationToken);
             session.SignIn(response);
+            await sessionStore.SaveAsync(response);
             Password = string.Empty;
             observability.IdentifyUser(response.User.Id, response.User.Email);
+            await navigator.ShowAuthenticatedAppAsync();
             observability.Info("Login completed", new Dictionary<string, object> { ["result"] = "success" });
             observability.SucceedOperation("authentication.login", operationKey, new Dictionary<string, object> { ["result"] = "success" });
-            navigator.ShowAuthenticatedApp();
         }
         catch (OperationCanceledException)
         {
@@ -58,6 +59,15 @@ public partial class LoginViewModel(InfraAdvisorApiClient api, AppSession sessio
             ErrorMessage = "The service could not be reached. Check your connection and try again.";
             observability.FailOperation("authentication.login", operationKey, abandoned: false, new Dictionary<string, object> { ["error_type"] = "transport" });
             observability.Error("Login transport failed", exception);
+        }
+        catch (Exception exception)
+        {
+            await sessionStore.ClearAsync();
+            await session.SignOutAsync();
+            observability.ClearUser();
+            ErrorMessage = "Sign in succeeded, but InfraAdvisor could not open. Try again.";
+            observability.FailOperation("authentication.login", operationKey, abandoned: false, new Dictionary<string, object> { ["error_type"] = "navigation" });
+            observability.Error("Authenticated navigation failed", exception, new Dictionary<string, object> { ["screen"] = "login" });
         }
         finally
         {

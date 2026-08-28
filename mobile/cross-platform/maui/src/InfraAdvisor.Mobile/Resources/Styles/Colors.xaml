@@ -15,11 +15,11 @@
     <Color x:Key="Warning">#B45309</Color>
     <Color x:Key="Danger">#B91C1C</Color>
     <Color x:Key="DangerSoft">#FEE2E2</Color>
-    <!-- Field Advisor semantic palette: calm, high-contrast colors suited to field use and evidence review. -->
-    <Color x:Key="FieldNavy">#17324D</Color>
-    <Color x:Key="FieldNavySoft">#E8EEF4</Color>
-    <Color x:Key="FieldTeal">#0F766E</Color>
-    <Color x:Key="FieldTealSoft">#CCFBF1</Color>
+    <!-- InfraAdvisor semantic colors keep evidence and infrastructure categories consistent across iOS and Android. -->
+    <Color x:Key="InfraNavy">#17324D</Color>
+    <Color x:Key="InfraNavySoft">#E8EEF4</Color>
+    <Color x:Key="InfraTeal">#0F766E</Color>
+    <Color x:Key="InfraTealSoft">#CCFBF1</Color>
     <Color x:Key="EvidenceAmber">#B45309</Color>
     <Color x:Key="EvidenceAmberSoft">#FEF3C7</Color>
     <Color x:Key="Overlay">#99112435</Color>

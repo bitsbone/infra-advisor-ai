@@ -1,29 +1,29 @@
-# Infra Advisor .NET MAUI client
+# InfraAdvisor .NET MAUI client
 
 This .NET 10 MAUI application runs on Android API 23+ and iOS 15+. It includes chat, history, model/backend selection, file/audio uploads, and Datadog observability.
 
-The runtime client token and RUM application ID are public mobile identifiers. Credentials and JWTs remain in memory. Do not add a Datadog API key, application key, signing certificate, provisioning profile, keystore, real account credentials, prompt text, response body, filename, local path, or attachment URL to tracked configuration or telemetry.
+The runtime client token and RUM application ID are public mobile identifiers. The authenticated session is stored only through iOS Keychain or Android secure storage and is removed on logout. Do not add a Datadog API key, application key, signing certificate, provisioning profile, keystore, real account credentials, prompt text, response body, filename, local path, or attachment URL to tracked configuration or telemetry.
 
 ## Architecture
 
 | Area | Reference implementation |
 | --- | --- |
 | Host, DI, Datadog modules | [`src/InfraAdvisor.Mobile/MauiProgram.cs`](src/InfraAdvisor.Mobile/MauiProgram.cs) |
+| Prism composition and navigation registration | [`src/InfraAdvisor.Mobile/PrismStartup.cs`](src/InfraAdvisor.Mobile/PrismStartup.cs) and [`src/InfraAdvisor.Mobile/Services/AppNavigator.cs`](src/InfraAdvisor.Mobile/Services/AppNavigator.cs) |
 | Public build/runtime defaults | [`src/InfraAdvisor.Mobile/Configuration/AppConfiguration.cs`](src/InfraAdvisor.Mobile/Configuration/AppConfiguration.cs) |
 | RUM identity, logs, errors, session lifecycle | [`src/InfraAdvisor.Mobile/Observability/DatadogObservability.cs`](src/InfraAdvisor.Mobile/Observability/DatadogObservability.cs) |
 | RUM session correlation header | [`src/InfraAdvisor.Mobile/Observability/MauiRumSessionProvider.cs`](src/InfraAdvisor.Mobile/Observability/MauiRumSessionProvider.cs) |
 | URL, action, error, and attribute privacy guard | [`src/InfraAdvisor.Mobile.Core/Services/TelemetrySanitizer.cs`](src/InfraAdvisor.Mobile.Core/Services/TelemetrySanitizer.cs) |
 | Automatic HTTP resource/trace boundary | [`src/InfraAdvisor.Mobile.Core/Services/InfraAdvisorApiClient.cs`](src/InfraAdvisor.Mobile.Core/Services/InfraAdvisorApiClient.cs) |
-| Memory-only JWT and user session | [`src/InfraAdvisor.Mobile.Core/Services/AppSession.cs`](src/InfraAdvisor.Mobile.Core/Services/AppSession.cs) |
+| In-memory session and protected persistence contract | [`src/InfraAdvisor.Mobile.Core/Services/AppSession.cs`](src/InfraAdvisor.Mobile.Core/Services/AppSession.cs), [`src/InfraAdvisor.Mobile.Presentation/Services/ApplicationAbstractions.cs`](src/InfraAdvisor.Mobile.Presentation/Services/ApplicationAbstractions.cs), and [`src/InfraAdvisor.Mobile/Services/MauiApplicationAdapters.cs`](src/InfraAdvisor.Mobile/Services/MauiApplicationAdapters.cs) |
 | Fragment-safe SSE parsing | [`src/InfraAdvisor.Mobile.Core/Services/SseParser.cs`](src/InfraAdvisor.Mobile.Core/Services/SseParser.cs) |
 | Testable presentation abstractions | [`src/InfraAdvisor.Mobile.Presentation/Services/ApplicationAbstractions.cs`](src/InfraAdvisor.Mobile.Presentation/Services/ApplicationAbstractions.cs) |
 | MAUI platform adapters | [`src/InfraAdvisor.Mobile/Services/MauiApplicationAdapters.cs`](src/InfraAdvisor.Mobile/Services/MauiApplicationAdapters.cs) |
 | Attachment privacy, MIME, size, recording | [`src/InfraAdvisor.Mobile/Services/Media/MediaInputService.cs`](src/InfraAdvisor.Mobile/Services/Media/MediaInputService.cs) and [`src/InfraAdvisor.Mobile.Core/Services/MediaValidator.cs`](src/InfraAdvisor.Mobile.Core/Services/MediaValidator.cs) |
-| Field Advisor workspace, transcript, evidence sheet, and Syncfusion selector | [`src/InfraAdvisor.Mobile/Views/ChatPage.xaml`](src/InfraAdvisor.Mobile/Views/ChatPage.xaml) and [`src/InfraAdvisor.Mobile/ViewModels/ChatViewModel.cs`](src/InfraAdvisor.Mobile/ViewModels/ChatViewModel.cs) |
+| InfraAdvisor workspace, selectors, MCP suggestions, transcript, and evidence sheet | [`src/InfraAdvisor.Mobile/Views/ChatPage.xaml`](src/InfraAdvisor.Mobile/Views/ChatPage.xaml) and [`src/InfraAdvisor.Mobile/ViewModels/ChatViewModel.cs`](src/InfraAdvisor.Mobile/ViewModels/ChatViewModel.cs) |
 | Dedicated conversation History destination | [`src/InfraAdvisor.Mobile/Views/HistoryPage.xaml`](src/InfraAdvisor.Mobile/Views/HistoryPage.xaml) and [`src/InfraAdvisor.Mobile/ViewModels/HistoryViewModel.cs`](src/InfraAdvisor.Mobile/ViewModels/HistoryViewModel.cs) |
 | Versioned chat-artifact API models | [`src/InfraAdvisor.Mobile.Core/Models/ApiModels.cs`](src/InfraAdvisor.Mobile.Core/Models/ApiModels.cs) |
 | Evidence presentation and privacy-safe source links | [`src/InfraAdvisor.Mobile/Models/ChatPresentationModels.cs`](src/InfraAdvisor.Mobile/Models/ChatPresentationModels.cs) |
-| Linker-safe Syncfusion selector wrapper | [`src/InfraAdvisor.Mobile/Controls/BackendSegmentedControl.cs`](src/InfraAdvisor.Mobile/Controls/BackendSegmentedControl.cs) |
 | Safe Markdown and link renderer | [`src/InfraAdvisor.Mobile/Controls/MarkdownLabel.cs`](src/InfraAdvisor.Mobile/Controls/MarkdownLabel.cs) |
 | Shared design tokens and reusable styles | [`src/InfraAdvisor.Mobile/Resources/Styles/Colors.xaml`](src/InfraAdvisor.Mobile/Resources/Styles/Colors.xaml) and [`src/InfraAdvisor.Mobile/Resources/Styles/Styles.xaml`](src/InfraAdvisor.Mobile/Resources/Styles/Styles.xaml) |
 | Adaptive layout and accessibility contract | [`src/InfraAdvisor.Mobile/Views/ChatPage.xaml`](src/InfraAdvisor.Mobile/Views/ChatPage.xaml), [`src/InfraAdvisor.Mobile/Views/LoginPage.xaml.cs`](src/InfraAdvisor.Mobile/Views/LoginPage.xaml.cs), and [`tests/InfraAdvisor.Mobile.Core.Tests/XamlAccessibilityGuardTests.cs`](tests/InfraAdvisor.Mobile.Core.Tests/XamlAccessibilityGuardTests.cs) |
@@ -38,11 +38,21 @@ The runtime client token and RUM application ID are public mobile identifiers. C
 
 One DI-managed `HttpClient` performs every request. Datadog automatically records its resources and propagates Datadog and W3C trace headers to the configured API host.
 
+Prism replaces MAUI Shell for page-scoped navigation and dependency injection. `PrismStartup` registers Login and the four authenticated destinations, while `AppNavigator` keeps Prism APIs out of the presentation project. Shared XAML tokens, local SVG icons, and reusable styles produce the same layout on Android and iOS. Prism 9 requires an accepted Community or Commercial license; confirm eligibility before redistributing a build.
+
+The Chat destination opens directly to a compact new-conversation composer with native backend and model pickers and one suggestion list; saved conversations live only in the dedicated History tab. The list always includes broad Grants.gov and SAM.gov examples that intentionally exercise MCP tools without requiring a narrow NAICS match. Both platforms place primary tabs at the bottom, and tab assets use a fixed canvas so selected and unselected items retain the same alignment. Structured evidence is shown once in the evidence sheet rather than repeated as small citation buttons, and the app-owned Markdown renderer normalizes agent headings and lists for mobile reading.
+
+Message actions acknowledge completion in the message itself: Copy changes to Copied, Helpful and Report show submission status, and failed feedback remains retryable. Android explicitly references the generated adaptive `appicon` and `appicon_round` resources so the InfraAdvisor icon appears in launchers and app drawers.
+
+Helpful submits `positive` with a passing assessment and Report submits `reported` with a failing assessment. The .NET backend posts these events through Datadog's Evaluations API at `/api/intake/llm-obs/v2/eval-metric`; the payload retains `data.type=evaluation_metric` and sets `event_kind=feedback`. Both backends include the authenticated user ID as the submitter, use the response span as the single target, and omit `join_on`. These events appear in LLM Observability feedback views and can support analysis or automation; Report does not create a support ticket or moderation queue by itself. The Datadog API key remains on the backend, while the mobile client records only a sanitized `ai.feedback` operation.
+
+See [Datadog end-user feedback](https://docs.datadoghq.com/llm_observability/configure/evaluations/end_user_feedback/) for the event schema and available feedback views.
+
 ## Prerequisites
 
 - .NET SDK 10 with `maui`, `maui-android`, and `maui-ios` workloads.
 - Android Studio with Android SDK Platform 36 and an API 23+ emulator, or Xcode matching the installed .NET iOS workload and an iOS 15+ simulator.
-- An existing Infra Advisor account. Registration is intentionally outside this demo.
+- An existing InfraAdvisor account. Registration is intentionally outside this demo.
 
 Verify the workloads and restore packages:
 
@@ -85,14 +95,18 @@ xcrun simctl list devices available
 make run-ios IOS_SIMULATOR_UDID=SIMULATOR-UDID
 ```
 
-The Make target passes `_DeviceName` to prevent `mlaunch` from choosing another compatible simulator. It targets Apple Silicon; Intel hosts can run the equivalent `dotnet build` command with `iossimulator-x64`. If the intended device is missing from `xcrun simctl`, verify `xcode-select -p` points to the Xcode installation that owns its runtime. Use an Xcode version supported by the installed .NET iOS workload.
+The Make target selects the booted simulator by UDID and targets Apple Silicon. Intel hosts can run the equivalent `dotnet build` command with `iossimulator-x64`. If the intended device is missing from `xcrun simctl`, verify `xcode-select -p` points to the Xcode installation that owns its runtime. Use an Xcode version supported by the installed .NET iOS workload.
+
+`make run-ios` performs an explicit build, removes the previously installed simulator bundle, installs the newly built `.app`, and launches it. It stops before launch if the build fails, preventing a stale application from appearing successful. If it reports that the selected iOS SDK runtime is missing, install that exact runtime from **Xcode → Settings → Components** or select an Xcode whose SDK matches an installed runtime.
+
+If an SDK or workload update leaves `AOTCompile` pointing to a missing `mono-aot-cross` version, refresh the generated iOS metadata once with `dotnet clean mobile/cross-platform/maui/src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-ios -c Debug -p:InfraAdvisorBuildPlatform=ios -p:RuntimeIdentifier=iossimulator-arm64`, then rerun `make run-ios`. Use `dotnet workload repair` only if the clean build still reports a missing pack.
 
 ## Exercise the AI and observability flows
 
-1. Sign in and verify the RUM user ID and email.
+1. Sign in, restart the app, and verify the protected session restores the RUM user ID and email without another login.
 2. Send a prompt and follow the mobile resource into the backend and AI trace.
 3. Test history, image/audio upload, logs, errors, and a debugger-free crash.
-4. Verify Session Replay masks sensitive inputs and logout clears the user.
+4. Verify Session Replay masks sensitive inputs and logout clears both the protected session and Datadog user.
 
 ## Release symbols and Mobile App Testing uploads
 

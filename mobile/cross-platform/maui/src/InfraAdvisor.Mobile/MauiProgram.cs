@@ -7,7 +7,6 @@ using InfraAdvisor.Mobile.Services.Media;
 using InfraAdvisor.Mobile.ViewModels;
 using InfraAdvisor.Mobile.Views;
 using Plugin.Maui.Audio;
-using Syncfusion.Maui.Toolkit.Hosting;
 
 namespace InfraAdvisor.Mobile;
 
@@ -18,7 +17,7 @@ public static class MauiProgram
         var builder = MauiApp.CreateBuilder();
         builder
             .UseMauiApp<App>()
-            .ConfigureSyncfusionToolkit()
+            .UsePrism(PrismStartup.Configure)
             .UseDatadog(new DdSdkConfiguration
             {
                 ClientToken = AppConfiguration.DatadogClientToken,
@@ -81,9 +80,8 @@ public static class MauiProgram
         builder.Services.AddSingleton<IMediaInputService, MediaInputService>();
         builder.Services.AddSingleton<IRumSessionProvider, MauiRumSessionProvider>();
         builder.Services.AddSingleton<IObservability, DatadogObservability>();
-        builder.Services.AddSingleton<AppNavigator>();
-        builder.Services.AddSingleton<IAppNavigator>(services => services.GetRequiredService<AppNavigator>());
         builder.Services.AddSingleton<IAppPreferences, MauiAppPreferences>();
+        builder.Services.AddSingleton<ISessionStore, MauiSecureSessionStore>();
         builder.Services.AddSingleton<IClipboardService, MauiClipboardService>();
         builder.Services.AddSingleton<ILinkLauncher, MauiLinkLauncher>();
         builder.Services.AddSingleton<IAppRuntimeInfo, MauiAppRuntimeInfo>();
@@ -94,18 +92,6 @@ public static class MauiProgram
             client.Timeout = TimeSpan.FromMinutes(3);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("InfraAdvisor-MAUI/0.1.0");
         });
-
-        builder.Services.AddTransient<LoginViewModel>();
-        builder.Services.AddTransient<ChatViewModel>();
-        builder.Services.AddTransient<HistoryViewModel>();
-        builder.Services.AddTransient<ErrorLabViewModel>();
-        builder.Services.AddTransient<InfoViewModel>();
-        builder.Services.AddTransient<LoginPage>();
-        builder.Services.AddTransient<ChatPage>();
-        builder.Services.AddTransient<HistoryPage>();
-        builder.Services.AddTransient<ErrorLabPage>();
-        builder.Services.AddTransient<InfoPage>();
-        builder.Services.AddTransient<AppShell>();
 
         return builder.Build();
     }

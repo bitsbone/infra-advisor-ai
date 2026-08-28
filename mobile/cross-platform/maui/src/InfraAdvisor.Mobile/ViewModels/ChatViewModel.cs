@@ -19,6 +19,13 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         new("Federal procurement (MCP)", "What current federal procurement opportunities exist related to operational resilience or emergency management enhancements in Texas infrastructure systems?"),
     ];
 
+    // Keep two deterministic MCP examples visible even when the API returns a random suggestion-pool slice. These questions intentionally exercise Grants.gov/SAM.gov and the awards-to-opportunities business-development chain.
+    private static readonly SuggestionItem[] ToolCallSuggestions =
+    [
+        new("Federal resilience grants", "Show active federal grants from Grants.gov for infrastructure resilience, emergency management, water, or transportation projects, including deadlines and available funding."),
+        new("Infrastructure bids", "Find recent federal infrastructure contract awards, then show active SAM.gov opportunities for related civil engineering, water, transportation, or resilience work."),
+    ];
+
     private CancellationTokenSource? queryCancellation;
     private CancellationTokenSource? recordingTimerCancellation;
     private CancellationTokenSource? stillWorkingCancellation;
@@ -43,7 +50,7 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     [ObservableProperty] private int? selectedBackendIndex = 0;
     [ObservableProperty] private string? selectedModel;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasSelectedConversation))] private ConversationSummary? selectedConversation;
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsModalVisible)), NotifyPropertyChangedFor(nameof(IsAdvisorInteractive))] private bool isHistoryVisible;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsModalVisible)), NotifyPropertyChangedFor(nameof(IsAdvisorInteractive))] private bool isSettingsVisible;
     [ObservableProperty] private bool isHistoryLoading;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasHistoryError))] private string? historyErrorMessage;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(RecordLabel))] private bool isRecording;
@@ -56,16 +63,19 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
     public bool HasMessages => Messages.Count > 0;
     public bool HasNoMessages => !HasMessages;
+    public bool IsNewConversationVisible => !HasMessages;
+    public bool IsComposerVisible => true;
+    public string ComposerPlaceholder => HasMessages ? "Ask a follow-up…" : "Ask about infrastructure…";
     public bool HasNoConversations => Conversations.Count == 0;
     public bool HasSelectedConversation => SelectedConversation is not null;
     public bool HasHistoryError => !string.IsNullOrWhiteSpace(HistoryErrorMessage);
     public bool CanSend => !IsBusy && !IsMetadataLoading && (!string.IsNullOrWhiteSpace(Prompt) || Attachments.Count > 0) && SelectedModel is not null && Attachments.All(item => item.Remote is not null);
-    public string SendLabel => IsBusy ? "Working…" : "Ask Infra Advisor";
-    public string RecordLabel => IsRecording ? $"Stop {RecordingDuration:mm\\:ss}" : "Record";
+    public string SendLabel => IsBusy ? "Working…" : "Send";
+    public string RecordLabel => IsRecording ? $"Stop {RecordingDuration:mm\\:ss}" : "Record audio";
     public bool CanChangeBackend => !IsConversationLocked && !IsBusy && !IsMetadataLoading;
     public bool CanChangeModel => !IsBusy && !IsMetadataLoading;
     public bool IsEvidenceVisible => SelectedEvidenceMessage is not null;
-    public bool IsModalVisible => IsHistoryVisible || IsEvidenceVisible;
+    public bool IsModalVisible => IsSettingsVisible || IsEvidenceVisible;
     public bool IsAdvisorInteractive => !IsModalVisible;
 
     partial void OnPromptChanged(string value) => OnPropertyChanged(nameof(CanSend));
@@ -168,10 +178,13 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     }
 
     [RelayCommand]
-    private void ToggleHistory() => IsHistoryVisible = !IsHistoryVisible;
+    private void ToggleSettings()
+    {
+        IsSettingsVisible = !IsSettingsVisible;
+    }
 
     [RelayCommand]
-    private void CloseHistory() => IsHistoryVisible = false;
+    private void CloseSettings() => IsSettingsVisible = false;
 
     [RelayCommand]
     private async Task NewConversationAsync()
@@ -191,8 +204,9 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
         Messages.Clear();
         PipelineSteps.Clear();
         Attachments.Clear();
+        Prompt = string.Empty;
         ErrorMessage = null;
-        IsHistoryVisible = false;
+        IsSettingsVisible = false;
         IsConversationLocked = false;
         NotifyMessageState();
     }
@@ -314,14 +328,19 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     private Task ReportFeedbackAsync(ChatMessageItem message) => SubmitFeedbackAsync(message, "reported");
 
     [RelayCommand]
-    private Task CopyMessageAsync(ChatMessageItem message) => clipboard.SetTextAsync(message.Content);
-
-    [RelayCommand]
-    private async Task OpenSourceAsync(string source)
+    private async Task CopyMessageAsync(ChatMessageItem message)
     {
-        if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+        try
         {
-            await linkLauncher.OpenAsync(uri);
+            await clipboard.SetTextAsync(message.Content);
+            message.IsCopied = true;
+            message.ActionStatus = "Copied to clipboard.";
+            observability.Info("AI response copied", new Dictionary<string, object> { ["screen"] = "advisor" });
+        }
+        catch (Exception exception)
+        {
+            message.ActionStatus = "The response could not be copied.";
+            observability.Error("AI response copy failed", exception, new Dictionary<string, object> { ["screen"] = "advisor" });
         }
     }
 
@@ -566,7 +585,6 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
                 }
                 SelectedModel = detail.Model;
             }
-            IsHistoryVisible = false;
             NotifyMessageState();
         }
         catch (Exception exception) when (exception is ApiException or HttpRequestException)
@@ -640,13 +658,44 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     private void SetSuggestions(IEnumerable<SuggestionItem> values)
     {
         Suggestions.Clear();
-        foreach (var value in values.Take(6)) Suggestions.Add(value);
+        foreach (var value in ToolCallSuggestions.Concat(values).DistinctBy(value => value.Query, StringComparer.OrdinalIgnoreCase).Take(6)) Suggestions.Add(value);
     }
 
     private void NotifyMessageState()
     {
         OnPropertyChanged(nameof(HasMessages));
         OnPropertyChanged(nameof(HasNoMessages));
+        OnPropertyChanged(nameof(IsNewConversationVisible));
+        OnPropertyChanged(nameof(IsComposerVisible));
+        OnPropertyChanged(nameof(ComposerPlaceholder));
+    }
+
+    /// <summary>
+    /// Clears an unsent draft when returning to the home state. This keeps Home a navigation surface instead of another partially configured chat.
+    /// </summary>
+    private async Task ResetDraftAsync()
+    {
+        queryCancellation?.Cancel();
+        if (IsRecording)
+        {
+            await CancelRecordingAsync();
+        }
+
+        foreach (var attachment in Attachments.ToArray())
+        {
+            attachment.UploadCancellation?.Cancel();
+            await mediaInput.RemoveAsync(attachment);
+        }
+
+        session.StartNewConversation();
+        SelectedConversation = null;
+        Messages.Clear();
+        PipelineSteps.Clear();
+        Attachments.Clear();
+        Prompt = string.Empty;
+        ErrorMessage = null;
+        IsSettingsVisible = false;
+        IsConversationLocked = false;
     }
 
     private async Task AddAndUploadAsync(AttachmentItem item)
@@ -706,25 +755,35 @@ public partial class ChatViewModel(InfraAdvisorApiClient api, AppSession session
     {
         if (message.TraceId is null || message.SpanId is null)
         {
+            message.ActionStatus = "Feedback is unavailable for this response.";
             return;
         }
 
+        message.IsFeedbackSubmitting = true;
+        message.ActionStatus = rating == "reported" ? "Submitting report…" : "Submitting feedback…";
         var operationKey = observability.StartOperation("ai.feedback", new Dictionary<string, object> { ["rating"] = rating, ["backend"] = session.Backend.ApiValue() });
         try
         {
             await api.SendFeedbackAsync(new FeedbackRequest(message.TraceId, message.SpanId, rating, session.SessionId), sessionCancellation.Token);
+            message.SubmittedFeedback = rating;
+            message.ActionStatus = rating == "reported" ? "Report signal submitted." : "Thanks—feedback submitted.";
             observability.SucceedOperation("ai.feedback", operationKey, new Dictionary<string, object> { ["rating"] = rating, ["backend"] = session.Backend.ApiValue() });
             observability.Info("AI response feedback submitted", new Dictionary<string, object> { ["rating"] = rating, ["backend"] = session.Backend.ApiValue() });
         }
         catch (Exception exception) when (exception is ApiException or HttpRequestException)
         {
             ErrorMessage = "Feedback could not be submitted.";
+            message.ActionStatus = "Feedback could not be submitted. Try again.";
             observability.FailOperation("ai.feedback", operationKey, abandoned: false, new Dictionary<string, object> { ["rating"] = rating, ["backend"] = session.Backend.ApiValue() });
             observability.Error("AI response feedback failed", exception, new Dictionary<string, object> { ["rating"] = rating });
         }
         catch (OperationCanceledException) when (sessionCancellation.IsCancellationRequested)
         {
             observability.FailOperation("ai.feedback", operationKey, abandoned: true, new Dictionary<string, object> { ["rating"] = rating, ["backend"] = session.Backend.ApiValue() });
+        }
+        finally
+        {
+            message.IsFeedbackSubmitting = false;
         }
     }
 

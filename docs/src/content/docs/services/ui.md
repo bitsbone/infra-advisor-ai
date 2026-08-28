@@ -49,10 +49,12 @@ The admin view manages users and displays read-only .NET evaluator and AI Guard 
 
 RUM captures views, resources, replays, errors, and bounded workflow actions. Query actions retain length and domain—not prompt content. Feedback, evidence, copy/report, and media actions use controlled metadata. Session Replay masks input.
 
+Helpful, Not helpful, and Report submit authenticated feedback against the assistant response span through the selected backend. The action shows pending, success, and retryable failure states; it never treats a failed network request as successful. The backend sends the signal through Datadog's Evaluations API with `event_kind=feedback`, while the browser records only bounded RUM action metadata and never receives the Datadog API key.
+
 The UI sends RUM session metadata and distributed trace headers, but client comments or headers do not themselves guarantee an Agent Observability session tag. Verify the actual backend trace fields.
 
 ## Verify a change
 
-Run the TypeScript/build checks, then exercise narrow and wide layouts, keyboard/focus behavior, streaming fragmentation, cancellation, restored conversations, backend locking, unknown artifacts, unsafe links, authentication expiry, and RUM privacy sentinels.
+Run the TypeScript/build checks, then exercise narrow and wide layouts, keyboard/focus behavior, streaming fragmentation, cancellation, restored conversations, backend locking, feedback success/failure, unknown artifacts, unsafe links, authentication expiry, and RUM privacy sentinels.
 
 See [Browser RUM](/infra-advisor-ai/observability/rum/) for the investigation workflow.

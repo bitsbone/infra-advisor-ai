@@ -1,4 +1,6 @@
 using InfraAdvisor.Mobile.Configuration;
+using InfraAdvisor.Mobile.Models;
+using System.Text.Json;
 
 namespace InfraAdvisor.Mobile.Services;
 
@@ -10,6 +12,37 @@ public sealed class MauiAppPreferences : IAppPreferences
     public string? Get(string key, string? fallback) => Preferences.Default.Get(key, fallback);
 
     public void Set(string key, string value) => Preferences.Default.Set(key, value);
+}
+
+/// <summary>
+/// Stores the JWT and minimum user profile in iOS Keychain or Android encrypted secure storage. The payload is intentionally never emitted to logs or RUM attributes.
+/// </summary>
+public sealed class MauiSecureSessionStore : ISessionStore
+{
+    private const string SessionKey = "infra_advisor.auth.session.v1";
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+
+    public Task SaveAsync(LoginResponse response) => SecureStorage.Default.SetAsync(SessionKey, JsonSerializer.Serialize(response, SerializerOptions));
+
+    public async Task<LoginResponse?> RestoreAsync()
+    {
+        try
+        {
+            var value = await SecureStorage.Default.GetAsync(SessionKey);
+            return string.IsNullOrWhiteSpace(value) ? null : JsonSerializer.Deserialize<LoginResponse>(value, SerializerOptions);
+        }
+        catch (Exception exception) when (exception is JsonException or FormatException)
+        {
+            SecureStorage.Default.Remove(SessionKey);
+            return null;
+        }
+    }
+
+    public Task ClearAsync()
+    {
+        SecureStorage.Default.Remove(SessionKey);
+        return Task.CompletedTask;
+    }
 }
 
 public sealed class MauiClipboardService : IClipboardService

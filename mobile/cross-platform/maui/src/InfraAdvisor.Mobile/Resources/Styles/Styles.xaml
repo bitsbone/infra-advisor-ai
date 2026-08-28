@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<ResourceDictionary xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" x:Class="InfraAdvisor.Mobile.Resources.Styles.Styles">
+<ResourceDictionary xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" xmlns:android="clr-namespace:Microsoft.Maui.Controls.PlatformConfiguration.AndroidSpecific;assembly=Microsoft.Maui.Controls" x:Class="InfraAdvisor.Mobile.Resources.Styles.Styles">
     <!-- Spacing tokens retain the web client's visual rhythm across phone and tablet layouts. -->
     <x:Double x:Key="SpaceXs">4</x:Double>
     <x:Double x:Key="SpaceSm">8</x:Double>
@@ -29,7 +29,7 @@
     <Style x:Key="Eyebrow" TargetType="Label">
         <Setter Property="FontSize" Value="11" />
         <Setter Property="FontAttributes" Value="Bold" />
-        <Setter Property="TextColor" Value="{DynamicResource FieldTeal}" />
+        <Setter Property="TextColor" Value="{DynamicResource InfraTeal}" />
         <Setter Property="TextTransform" Value="Uppercase" />
         <Setter Property="CharacterSpacing" Value="1" />
     </Style>
@@ -59,7 +59,6 @@
         <Setter Property="MinimumHeightRequest" Value="48" />
         <Setter Property="FontAutoScalingEnabled" Value="True" />
     </Style>
-
     <Style x:Key="BaseButton" TargetType="Button">
         <Setter Property="BackgroundColor" Value="{DynamicResource Primary}" />
         <Setter Property="TextColor" Value="White" />
@@ -67,6 +66,15 @@
         <Setter Property="MinimumHeightRequest" Value="48" />
         <Setter Property="FontAttributes" Value="Bold" />
         <Setter Property="FontAutoScalingEnabled" Value="True" />
+        <Setter Property="VisualStateManager.VisualStateGroups">
+            <VisualStateGroupList>
+                <VisualStateGroup x:Name="CommonStates">
+                    <VisualState x:Name="Normal" />
+                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Property="Opacity" Value="0.72" /><Setter Property="Scale" Value="0.97" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Property="Opacity" Value="0.45" /></VisualState.Setters></VisualState>
+                </VisualStateGroup>
+            </VisualStateGroupList>
+        </Setter>
     </Style>
     <Style TargetType="Button" BasedOn="{StaticResource BaseButton}" />
     <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
@@ -85,13 +93,77 @@
     <Style x:Key="PrimaryCompactButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
         <Setter Property="MinimumHeightRequest" Value="48" />
         <Setter Property="Padding" Value="16,8" />
-        <Setter Property="BackgroundColor" Value="{DynamicResource FieldTeal}" />
+        <Setter Property="BackgroundColor" Value="{DynamicResource InfraTeal}" />
     </Style>
     <Style x:Key="QuietButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
         <Setter Property="MinimumHeightRequest" Value="48" />
         <Setter Property="Padding" Value="14,8" />
         <Setter Property="BackgroundColor" Value="Transparent" />
-        <Setter Property="TextColor" Value="{DynamicResource FieldNavy}" />
+        <Setter Property="TextColor" Value="{DynamicResource InfraNavy}" />
+    </Style>
+    <Style x:Key="ToolbarButton" TargetType="Button" BasedOn="{StaticResource QuietButton}">
+        <Setter Property="Padding" Value="12,8" />
+        <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style x:Key="OutlineButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
+        <Setter Property="BackgroundColor" Value="{DynamicResource Surface}" />
+        <Setter Property="BorderColor" Value="{DynamicResource Border}" />
+        <Setter Property="BorderWidth" Value="1" />
+        <Setter Property="TextColor" Value="{DynamicResource InfraNavy}" />
+    </Style>
+    <Style x:Key="SuggestionButton" TargetType="Button" BasedOn="{StaticResource OutlineButton}">
+        <Setter Property="HorizontalOptions" Value="Fill" />
+        <Setter Property="Padding" Value="14,10" />
+        <Setter Property="FontAttributes" Value="None" />
+        <Setter Property="LineBreakMode" Value="WordWrap" />
+    </Style>
+    <Style x:Key="CompactSuggestionButton" TargetType="Button" BasedOn="{StaticResource OutlineButton}">
+        <Setter Property="HorizontalOptions" Value="Fill" />
+        <Setter Property="Padding" Value="12,7" />
+        <Setter Property="FontAttributes" Value="None" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="LineBreakMode" Value="TailTruncation" />
+    </Style>
+    <Style x:Key="DomainButton" TargetType="Button" BasedOn="{StaticResource OutlineButton}">
+        <Setter Property="MinimumHeightRequest" Value="104" />
+        <Setter Property="Padding" Value="10" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="LineBreakMode" Value="WordWrap" />
+        <Setter Property="ContentLayout" Value="Top,8" />
+    </Style>
+    <Style x:Key="MessageActionButton" TargetType="Button" BasedOn="{StaticResource QuietButton}">
+        <Setter Property="Padding" Value="10,6" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style x:Key="EvidenceButton" TargetType="Button" BasedOn="{StaticResource OutlineButton}">
+        <Setter Property="TextColor" Value="{DynamicResource Primary}" />
+        <Setter Property="HorizontalOptions" Value="Start" />
+        <Setter Property="Padding" Value="12,7" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style x:Key="IconImageButton" TargetType="ImageButton">
+        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="MinimumHeightRequest" Value="48" />
+        <Setter Property="MinimumWidthRequest" Value="48" />
+        <Setter Property="HeightRequest" Value="48" />
+        <Setter Property="WidthRequest" Value="48" />
+        <Setter Property="Padding" Value="12" />
+        <Setter Property="CornerRadius" Value="16" />
+        <Setter Property="Aspect" Value="AspectFit" />
+        <Setter Property="VisualStateManager.VisualStateGroups">
+            <VisualStateGroupList>
+                <VisualStateGroup x:Name="CommonStates">
+                    <VisualState x:Name="Normal" />
+                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Property="Opacity" Value="0.62" /><Setter Property="Scale" Value="0.92" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Property="Opacity" Value="0.35" /></VisualState.Setters></VisualState>
+                </VisualStateGroup>
+            </VisualStateGroupList>
+        </Setter>
+    </Style>
+    <Style x:Key="SecondaryIconButton" TargetType="ImageButton" BasedOn="{StaticResource IconImageButton}"><Setter Property="BackgroundColor" Value="{DynamicResource PrimarySoft}" /></Style>
+    <Style x:Key="HistoryRefreshButton" TargetType="ImageButton" BasedOn="{StaticResource SecondaryIconButton}"><Setter Property="Padding" Value="14" /></Style>
+    <Style x:Key="PrimaryIconButton" TargetType="ImageButton" BasedOn="{StaticResource IconImageButton}">
+        <Setter Property="BackgroundColor" Value="{DynamicResource Primary}" />
     </Style>
 
     <Style x:Key="Card" TargetType="Border">
@@ -100,6 +172,15 @@
         <Setter Property="StrokeThickness" Value="1" />
         <Setter Property="Padding" Value="16" />
         <Setter Property="StrokeShape" Value="RoundRectangle 16" />
+    </Style>
+    <Style x:Key="HomeActionCard" TargetType="Border" BasedOn="{StaticResource Card}">
+        <Setter Property="MinimumHeightRequest" Value="88" />
+        <Setter Property="Padding" Value="16" />
+        <Setter Property="Stroke" Value="{DynamicResource InfraNavySoft}" />
+    </Style>
+    <Style x:Key="TopicCard" TargetType="Border" BasedOn="{StaticResource Card}">
+        <Setter Property="MinimumHeightRequest" Value="112" />
+        <Setter Property="Padding" Value="12" />
     </Style>
     <Style x:Key="AssistantBubble" TargetType="Border">
         <Setter Property="BackgroundColor" Value="{DynamicResource Surface}" />
@@ -120,28 +201,56 @@
         <Setter Property="HeightRequest" Value="16" />
     </Style>
     <Style x:Key="InteractiveCard" TargetType="Border" BasedOn="{StaticResource Card}">
-        <Setter Property="Stroke" Value="{DynamicResource FieldNavySoft}" />
+        <Setter Property="Stroke" Value="{DynamicResource InfraNavySoft}" />
         <Setter Property="Padding" Value="16,14" />
         <Setter Property="MinimumHeightRequest" Value="48" />
     </Style>
     <Style x:Key="MetadataPill" TargetType="Border">
-        <Setter Property="BackgroundColor" Value="{DynamicResource FieldNavySoft}" />
+        <Setter Property="BackgroundColor" Value="{DynamicResource InfraNavySoft}" />
         <Setter Property="StrokeThickness" Value="0" />
         <Setter Property="Padding" Value="9,4" />
         <Setter Property="StrokeShape" Value="RoundRectangle 10" />
     </Style>
     <Style x:Key="EvidenceCard" TargetType="Border">
         <Setter Property="BackgroundColor" Value="{DynamicResource Surface}" />
-        <Setter Property="Stroke" Value="{DynamicResource FieldTeal}" />
+        <Setter Property="Stroke" Value="{DynamicResource InfraTeal}" />
         <Setter Property="StrokeThickness" Value="1" />
         <Setter Property="Padding" Value="14" />
         <Setter Property="StrokeShape" Value="RoundRectangle 14" />
     </Style>
     <Style x:Key="ComposerCard" TargetType="Border">
         <Setter Property="BackgroundColor" Value="{DynamicResource Surface}" />
-        <Setter Property="Stroke" Value="{DynamicResource FieldNavySoft}" />
+        <Setter Property="Stroke" Value="{DynamicResource InfraNavySoft}" />
         <Setter Property="StrokeThickness" Value="1" />
         <Setter Property="Padding" Value="8" />
         <Setter Property="StrokeShape" Value="RoundRectangle 18" />
+    </Style>
+    <Style x:Key="ContextCard" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource Canvas}" />
+        <Setter Property="Stroke" Value="{DynamicResource Border}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Padding" Value="12,9" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 12" />
+    </Style>
+    <Style x:Key="ProgressPill" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource PrimarySoft}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="Padding" Value="10,6" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 12" />
+    </Style>
+    <Style x:Key="ConversationListItem" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource Surface}" />
+        <Setter Property="Stroke" Value="{DynamicResource Border}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Padding" Value="12" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 12" />
+    </Style>
+    <Style TargetType="TabbedPage">
+        <!-- MAUI places Android tabs at the top by default; this keeps primary navigation consistent with iOS. -->
+        <Setter Property="android:TabbedPage.ToolbarPlacement" Value="Bottom" />
+        <Setter Property="BarBackgroundColor" Value="{DynamicResource Surface}" />
+        <Setter Property="BarTextColor" Value="{DynamicResource Primary}" />
+        <Setter Property="SelectedTabColor" Value="{DynamicResource Primary}" />
+        <Setter Property="UnselectedTabColor" Value="{DynamicResource TextSecondary}" />
     </Style>
 </ResourceDictionary>

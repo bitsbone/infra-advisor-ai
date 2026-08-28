@@ -8,9 +8,10 @@ namespace InfraAdvisor.AgentApi.Services;
 //
 //   POST https://api.<site>/api/intake/llm-obs/v2/eval-metric
 //
-// Used for "external evaluations" — scores produced by code we control
-// (MAF-style evaluators) that attach to existing OTel-emitted spans. Tagged
-// source:otel per DD's OTel-instrumented-spans requirement (dd-otel.md).
+// Used for external evaluations produced by code we control and end-user
+// feedback submitted with event_kind=feedback. Both use the Evaluations API;
+// feedback differs by carrying a submitter, one direct target, and no join_on.
+// External evaluations are tagged source:otel per DD's OTel span requirement.
 //
 // Designed to be fire-and-forget from the caller's perspective: every
 // submission method catches its own exceptions and logs a warning. The
@@ -80,6 +81,99 @@ public class DatadogEvalsClient
             valueField: ("categorical_value", value),
             reasoning: reasoning, extraTags: extraTags, ct: ct);
 
+    /// <summary>
+    /// Sends end-user feedback through Datadog's Evaluations API. Feedback is
+    /// not an external evaluation: event_kind is feedback, it has an authenticated
+    /// submitter, it targets one response span, and it omits join_on.
+    /// </summary>
+    public async Task<bool> SubmitFeedbackAsync(
+        string traceIdDecimal,
+        string spanIdDecimal,
+        string rating,
+        string submitterId,
+        CancellationToken ct = default)
+    {
+        const string label = "response_feedback";
+        if (!_enabled)
+        {
+            _log.Record(new EvalSubmissionEntry(
+                Timestamp: DateTimeOffset.UtcNow,
+                Label: label,
+                MetricType: "categorical",
+                Value: rating,
+                Reasoning: null,
+                TraceIdDecimal: traceIdDecimal,
+                SpanIdDecimal: spanIdDecimal,
+                Success: false,
+                DurationMs: 0,
+                Error: "DD_API_KEY not set — submission skipped"));
+            return false;
+        }
+
+        var startedAt = DateTimeOffset.UtcNow;
+        var success = false;
+        string? error = null;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            var metric = new Dictionary<string, object?>
+            {
+                ["event_kind"] = "feedback",
+                ["span_id"] = spanIdDecimal,
+                ["metric_type"] = "categorical",
+                ["ml_app"] = _mlApp,
+                ["timestamp_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                ["label"] = label,
+                ["categorical_value"] = rating,
+                ["assessment"] = rating == "positive" ? "pass" : "fail",
+                ["submitter"] = new { id = submitterId, type = "user" },
+            };
+            var payload = new
+            {
+                data = new
+                {
+                    type = "evaluation_metric",
+                    attributes = new { metrics = new[] { metric } },
+                },
+            };
+
+            using var req = CreateRequest(payload);
+            using var resp = await _http.SendAsync(req, timeout.Token);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync(timeout.Token);
+                error = $"HTTP {(int)resp.StatusCode}: {Truncate(body, 120)}";
+                _logger.LogWarning("DD feedback submission failed: {Status} — {Body}", (int)resp.StatusCode, Truncate(body, 200));
+            }
+            else
+            {
+                success = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"{ex.GetType().Name}: {Truncate(ex.Message, 120)}";
+            _logger.LogWarning("DD feedback submission threw: {Error}", ex.Message);
+        }
+        finally
+        {
+            _log.Record(new EvalSubmissionEntry(
+                Timestamp: startedAt,
+                Label: label,
+                MetricType: "categorical",
+                Value: rating,
+                Reasoning: null,
+                TraceIdDecimal: traceIdDecimal,
+                SpanIdDecimal: spanIdDecimal,
+                Success: success,
+                DurationMs: (int)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds,
+                Error: error));
+        }
+
+        return success;
+    }
+
     private async Task SubmitAsync(
         string traceIdDecimal, string spanIdDecimal,
         string metricType, string label,
@@ -142,13 +236,7 @@ public class DatadogEvalsClient
                 },
             };
 
-            var url = $"https://api.{_site}/api/intake/llm-obs/v2/eval-metric";
-            using var req = new HttpRequestMessage(HttpMethod.Post, url);
-            req.Headers.TryAddWithoutValidation("DD-API-KEY", _apiKey);
-            req.Content = new StringContent(
-                JsonSerializer.Serialize(payload),
-                Encoding.UTF8,
-                new MediaTypeHeaderValue("application/json"));
+            using var req = CreateRequest(payload);
 
             using var resp = await _http.SendAsync(req, ct);
             if (!resp.IsSuccessStatusCode)
@@ -184,6 +272,14 @@ public class DatadogEvalsClient
                 DurationMs: durationMs,
                 Error: error));
         }
+    }
+
+    private HttpRequestMessage CreateRequest(object payload)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, $"https://api.{_site}/api/intake/llm-obs/v2/eval-metric");
+        req.Headers.TryAddWithoutValidation("DD-API-KEY", _apiKey);
+        req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, new MediaTypeHeaderValue("application/json"));
+        return req;
     }
 
     private static string? TruncateForLog(string? reasoning) =>

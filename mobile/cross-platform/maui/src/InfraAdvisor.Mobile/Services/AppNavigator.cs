@@ -1,22 +1,51 @@
+using InfraAdvisor.Mobile.Views;
+using Prism.Navigation;
+
 namespace InfraAdvisor.Mobile.Services;
 
-public sealed class AppNavigator(IServiceProvider services) : IAppNavigator
+/// <summary>
+/// Keeps Prism navigation details out of presentation view models. The adapter is page-scoped by Prism,
+/// so each operation uses the navigation service associated with the page that initiated it.
+/// </summary>
+public sealed class AppNavigator(INavigationService navigation) : IAppNavigator
 {
-    public void ShowAuthenticatedApp()
+    public async Task ShowAuthenticatedAppAsync()
     {
-        if (Application.Current?.Windows.FirstOrDefault() is { } window)
-        {
-            window.Page = services.GetRequiredService<AppShell>();
-        }
+        await NavigateAuthenticatedAsync(navigation);
     }
 
-    public void ShowLogin()
+    public static async Task NavigateAuthenticatedAsync(INavigationService navigationService)
     {
-        if (Application.Current?.Windows.FirstOrDefault() is { } window)
-        {
-            window.Page = services.GetRequiredService<Views.LoginPage>();
-        }
+        var result = await navigationService.CreateBuilder()
+            .UseAbsoluteNavigation()
+            .AddTabbedSegment(tabs => tabs
+                .CreateTab(nameof(ChatPage))
+                .CreateTab(nameof(HistoryPage))
+                .CreateTab(nameof(ErrorLabPage))
+                .CreateTab(nameof(InfoPage))
+                .SelectedTab(nameof(ChatPage)))
+            .NavigateAsync();
+
+        EnsureSucceeded(result, "open the authenticated application");
     }
 
-    public Task ShowAdvisorAsync() => Shell.Current?.GoToAsync("//chat") ?? Task.CompletedTask;
+    public async Task ShowLoginAsync()
+    {
+        var result = await navigation.NavigateAsync($"/{nameof(LoginPage)}");
+        EnsureSucceeded(result, "return to sign in");
+    }
+
+    public async Task ShowAdvisorAsync()
+    {
+        var result = await navigation.SelectTabAsync(nameof(ChatPage));
+        EnsureSucceeded(result, "open Chat");
+    }
+
+    public static void EnsureSucceeded(INavigationResult result, string operation)
+    {
+        if (!result.Success && !result.Cancelled)
+        {
+            throw new InvalidOperationException($"Prism could not {operation}.", result.Exception);
+        }
+    }
 }

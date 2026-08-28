@@ -15,9 +15,10 @@ public sealed class ViewModelTests
     {
         var handler = new RoutingHandler();
         var session = new AppSession();
+        var sessionStore = new FakeSessionStore();
         var navigator = new FakeNavigator();
         var telemetry = new FakeObservability();
-        var viewModel = new LoginViewModel(CreateApi(handler, session), session, navigator, telemetry) { Email = " person@example.com ", Password = "secret" };
+        var viewModel = new LoginViewModel(CreateApi(handler, session), session, sessionStore, navigator, telemetry) { Email = " person@example.com ", Password = "secret" };
 
         await viewModel.LoginCommand.ExecuteAsync(null);
 
@@ -26,6 +27,7 @@ public sealed class ViewModelTests
         Assert.Equal(1, navigator.AuthenticatedNavigations);
         Assert.Equal("u1", telemetry.IdentifiedUserId);
         Assert.Equal("person@example.com", telemetry.IdentifiedUserEmail);
+        Assert.Equal("jwt", sessionStore.Saved?.Token);
         Assert.Contains(telemetry.SucceededOperations, operation => operation.Name == "authentication.login");
         Assert.DoesNotContain(telemetry.Attributes, pair => pair.Key.Contains("password", StringComparison.OrdinalIgnoreCase));
     }
@@ -35,12 +37,31 @@ public sealed class ViewModelTests
     {
         var handler = new RoutingHandler();
         var session = new AppSession();
-        var viewModel = new LoginViewModel(CreateApi(handler, session), session, new FakeNavigator(), new FakeObservability());
+        var viewModel = new LoginViewModel(CreateApi(handler, session), session, new FakeSessionStore(), new FakeNavigator(), new FakeObservability());
 
         await viewModel.LoginCommand.ExecuteAsync(null);
 
         Assert.True(viewModel.HasError);
         Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task NavigationFailureReturnsToAReadableSignedOutState()
+    {
+        var handler = new RoutingHandler();
+        var session = new AppSession();
+        var navigator = new FakeNavigator { AuthenticatedNavigationException = new InvalidOperationException("Prism navigation failed") };
+        var telemetry = new FakeObservability();
+        var sessionStore = new FakeSessionStore();
+        var viewModel = new LoginViewModel(CreateApi(handler, session), session, sessionStore, navigator, telemetry) { Email = "person@example.com", Password = "secret" };
+
+        await viewModel.LoginCommand.ExecuteAsync(null);
+
+        Assert.False(session.IsAuthenticated);
+        Assert.True(viewModel.HasError);
+        Assert.True(telemetry.UserCleared);
+        Assert.True(sessionStore.WasCleared);
+        Assert.Contains(telemetry.FailedOperations, operation => operation.Name == "authentication.login");
     }
 
     [Fact]
@@ -52,10 +73,27 @@ public sealed class ViewModelTests
         await viewModel.InitializeCommand.ExecuteAsync(null);
 
         Assert.Equal(3, handler.RequestCount);
-        var suggestion = Assert.Single(viewModel.Suggestions);
+        Assert.Contains(viewModel.Suggestions, value => value.Label == "Federal resilience grants" && value.Query.Contains("Grants.gov", StringComparison.Ordinal));
+        Assert.Contains(viewModel.Suggestions, value => value.Label == "Infrastructure bids" && value.Query.Contains("SAM.gov", StringComparison.Ordinal));
+        var suggestion = Assert.Single(viewModel.Suggestions, value => value.Label == "Procurement");
         Assert.Equal("Procurement", suggestion.Label);
         viewModel.UseSuggestionCommand.Execute(suggestion.Query);
         Assert.Equal("Find opportunities", viewModel.Prompt);
+        Assert.True(viewModel.IsNewConversationVisible);
+        Assert.True(viewModel.IsComposerVisible);
+    }
+
+    [Fact]
+    public async Task ChatAlwaysPresentsANewConversationWhenTranscriptIsEmpty()
+    {
+        var (viewModel, _, _, _, _) = CreateChatViewModel();
+        await viewModel.InitializeCommand.ExecuteAsync(null);
+
+        await viewModel.NewConversationCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.IsNewConversationVisible);
+        Assert.True(viewModel.IsComposerVisible);
+        Assert.Equal("Ask about infrastructure…", viewModel.ComposerPlaceholder);
     }
 
     [Fact]
@@ -147,6 +185,7 @@ public sealed class ViewModelTests
         Assert.Null(viewModel.SelectedConversation);
         Assert.Empty(viewModel.Messages);
         Assert.True(viewModel.CanChangeBackend);
+        Assert.True(viewModel.IsNewConversationVisible);
         Assert.Equal(["dotnet-default", "dotnet-saved"], viewModel.Models);
         Assert.Equal("dotnet-saved", viewModel.SelectedModel);
     }
@@ -210,19 +249,6 @@ public sealed class ViewModelTests
         Assert.Empty(viewModel.Models);
         Assert.Null(viewModel.SelectedModel);
         Assert.Contains(telemetry.ErrorMessages, message => message.Contains("metadata", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public void CompactHistoryCanBeOpenedAndDismissedWithoutChangingConversationState()
-    {
-        var (viewModel, _, session, _, _) = CreateChatViewModel();
-
-        viewModel.ToggleHistoryCommand.Execute(null);
-        Assert.True(viewModel.IsHistoryVisible);
-        Assert.Null(session.ConversationId);
-
-        viewModel.CloseHistoryCommand.Execute(null);
-        Assert.False(viewModel.IsHistoryVisible);
     }
 
     [Fact]
@@ -393,6 +419,39 @@ public sealed class ViewModelTests
         await viewModel.PositiveFeedbackCommand.ExecuteAsync(message);
 
         Assert.Contains(telemetry.SucceededOperations, operation => operation.Name == "ai.feedback");
+        Assert.Equal("positive", message.SubmittedFeedback);
+        Assert.Equal("Helpful ✓", message.HelpfulLabel);
+        Assert.Equal("Thanks—feedback submitted.", message.ActionStatus);
+        Assert.False(message.CanSubmitFeedback);
+    }
+
+    [Fact]
+    public async Task CopyProvidesVisibleConfirmation()
+    {
+        var session = SignedInSession();
+        var clipboard = new FakeClipboard();
+        var viewModel = new ChatViewModel(CreateApi(new RoutingHandler(), session), session, new FakeObservability(), new FakeMediaInputService(), new FakePreferences(), clipboard, new FakeLinkLauncher());
+        var message = new ChatMessageItem { Role = "assistant", Content = "Answer" };
+
+        await viewModel.CopyMessageCommand.ExecuteAsync(message);
+
+        Assert.Equal("Answer", clipboard.LastValue);
+        Assert.True(message.IsCopied);
+        Assert.Equal("Copied ✓", message.CopyLabel);
+        Assert.Equal("Copied to clipboard.", message.ActionStatus);
+    }
+
+    [Fact]
+    public async Task ReportProvidesVisibleConfirmation()
+    {
+        var (viewModel, _, _, _, _) = CreateChatViewModel();
+        var message = new ChatMessageItem { Role = "assistant", Content = "Answer", TraceId = "42", SpanId = "7" };
+
+        await viewModel.ReportFeedbackCommand.ExecuteAsync(message);
+
+        Assert.Equal("reported", message.SubmittedFeedback);
+        Assert.Equal("Reported ✓", message.ReportLabel);
+        Assert.Equal("Report signal submitted.", message.ActionStatus);
     }
 
     [Fact]
@@ -428,7 +487,8 @@ public sealed class ViewModelTests
         session.RegisterSessionCleanup(() => { cleaned = true; return Task.CompletedTask; });
         var navigator = new FakeNavigator();
         var telemetry = new FakeObservability();
-        var viewModel = new InfoViewModel(session, navigator, telemetry, new FakeRuntimeInfo());
+        var sessionStore = new FakeSessionStore { Saved = new LoginResponse("jwt", session.User!) };
+        var viewModel = new InfoViewModel(session, sessionStore, navigator, telemetry, new FakeRuntimeInfo());
 
         await viewModel.LogoutCommand.ExecuteAsync(null);
 
@@ -437,6 +497,7 @@ public sealed class ViewModelTests
         Assert.True(telemetry.UserCleared);
         Assert.True(telemetry.SessionStopped);
         Assert.Equal(1, navigator.LoginNavigations);
+        Assert.True(sessionStore.WasCleared);
     }
 
     [Fact]
@@ -588,8 +649,18 @@ public sealed class ViewModelTests
         public int AuthenticatedNavigations { get; private set; }
         public int LoginNavigations { get; private set; }
         public int AdvisorNavigations { get; private set; }
-        public void ShowAuthenticatedApp() => AuthenticatedNavigations++;
-        public void ShowLogin() => LoginNavigations++;
+        public Exception? AuthenticatedNavigationException { get; init; }
+        public Task ShowAuthenticatedAppAsync()
+        {
+            AuthenticatedNavigations++;
+            return AuthenticatedNavigationException is null ? Task.CompletedTask : Task.FromException(AuthenticatedNavigationException);
+        }
+
+        public Task ShowLoginAsync()
+        {
+            LoginNavigations++;
+            return Task.CompletedTask;
+        }
         public Task ShowAdvisorAsync() { AdvisorNavigations++; return Task.CompletedTask; }
     }
 
@@ -600,9 +671,19 @@ public sealed class ViewModelTests
         public void Set(string key, string value) => values[key] = value;
     }
 
+    private sealed class FakeSessionStore : ISessionStore
+    {
+        public LoginResponse? Saved { get; set; }
+        public bool WasCleared { get; private set; }
+        public Task SaveAsync(LoginResponse response) { Saved = response; return Task.CompletedTask; }
+        public Task<LoginResponse?> RestoreAsync() => Task.FromResult(Saved);
+        public Task ClearAsync() { Saved = null; WasCleared = true; return Task.CompletedTask; }
+    }
+
     private sealed class FakeClipboard : IClipboardService
     {
-        public Task SetTextAsync(string value) => Task.CompletedTask;
+        public string? LastValue { get; private set; }
+        public Task SetTextAsync(string value) { LastValue = value; return Task.CompletedTask; }
     }
 
     private sealed class FakeLinkLauncher : ILinkLauncher

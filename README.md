@@ -107,12 +107,12 @@ flowchart LR
     Agent["Agent API"]
     KR[("Kafka\ninfra.eval.results")]
     Eval["Faithfulness Scorer\ngpt-4.1-mini · async thread"]
-    DD["Datadog\neval.faithfulness_score metric\nuser_feedback evaluation"]
+    DD["Datadog\neval.faithfulness_score metric\nend-user feedback event"]
 
     LG -->|"produce"| KQ -->|"consume"| Agent -->|"produce"| KR -->|"consume"| Eval -->|"metric"| DD
 ```
 
-Scoring runs as a fire-and-forget background thread — zero added latency for real users. User thumbs-up/down feedback also flows to Datadog LLM Observability as `user_feedback` evaluations.
+Scoring runs as a fire-and-forget background thread — zero added latency for real users. Web and mobile feedback flows through the Evaluations API as `event_kind=feedback` events associated with the response span and authenticated submitter.
 
 ---
 
@@ -296,7 +296,7 @@ Images: `ghcr.io/kyletaylored/infra-advisor-ai/{service}:latest`
 | Signal | What's instrumented |
 |---|---|
 | **APM** | All 4 Python services via `ddtrace.auto`; service map; DBM (auth-api → Postgres with `DD_DBM_PROPAGATION_MODE=full`) |
-| **LLM Observability** | Full span tree per query: `workflow → router → specialist → tool calls`; token counts; `faithfulness_score` and `user_feedback` evaluations |
+| **LLM Observability** | Full span tree per query: `workflow → router → specialist → tool calls`; token counts; `faithfulness_score` evaluations; authenticated end-user feedback events |
 | **RUM** | React UI — `query_submitted`, `citation_expanded`, `suggestion_clicked` custom events; session replay; linked to LLM Obs via `session.id` |
 | **Data Streams** | Kafka topology: load-generator → `infra.query.events` → agent-api → `infra.eval.results`; consumer lag alerts |
 | **Data Jobs** | Airflow DAG run duration, task status, and per-task breakdown via OpenLineage Datadog transport |

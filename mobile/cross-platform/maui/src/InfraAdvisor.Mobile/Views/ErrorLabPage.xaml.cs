@@ -3,7 +3,7 @@ using Datadog.Maui;
 using InfraAdvisor.Mobile.ViewModels;
 using Microsoft.Maui.Accessibility;
 namespace InfraAdvisor.Mobile.Views;
-[DdView("Diagnostics")]
+[DdView("Errors")]
 public partial class ErrorLabPage : ContentPage
 {
     private readonly ErrorLabViewModel viewModel;
@@ -37,7 +37,7 @@ public partial class ErrorLabPage : ContentPage
 
     private async void OnCrashClicked(object? sender, EventArgs eventArgs)
     {
-        var confirmed = await DisplayAlertAsync("Crash Infra Advisor?", "The process will terminate immediately. Relaunch the app to upload the stored crash report. For iOS, launch without an attached debugger.", "Crash", "Cancel");
+        var confirmed = await DisplayAlertAsync("Crash InfraAdvisor?", "The process will terminate immediately. Relaunch the app to upload the stored crash report. For iOS, launch without an attached debugger.", "Crash", "Cancel");
         if (confirmed)
         {
             viewModel.CrashAppCommand.Execute(null);

@@ -53,3 +53,17 @@ def test_custom_agent_sources_have_no_sensitive_attribute_keys():
         "output_data=",
     ):
         assert forbidden not in combined
+
+
+def test_end_user_feedback_has_submitter_and_exactly_one_target():
+    from observability.llm_obs import _feedback_payload
+
+    metric = _feedback_payload("456", "positive", "user-123")["data"]["attributes"]["metrics"][0]
+
+    assert metric["event_kind"] == "feedback"
+    assert metric["span_id"] == "456"
+    assert metric["submitter"] == {"id": "user-123", "type": "user"}
+    assert metric["assessment"] == "pass"
+    assert "join_on" not in metric
+    assert "trace_id" not in metric
+    assert "session_id" not in metric

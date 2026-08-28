@@ -12,8 +12,10 @@ Instrumentation strategy
 import asyncio
 import logging
 import os
+import time
 from typing import Any
 
+import httpx
 from ddtrace.llmobs import LLMObs
 
 logger = logging.getLogger(__name__)
@@ -163,28 +165,61 @@ async def _compute_faithfulness(
         logger.warning("faithfulness scoring failed (non-fatal) error_type=%s", type(exc).__name__)
 
 
-def submit_user_feedback(
-    trace_id: str,
+def _feedback_payload(span_id: str, rating: str, submitter_id: str) -> dict[str, Any]:
+    """Build Datadog's feedback event without evaluation-only join fields."""
+    return {
+        "data": {
+            "type": "evaluation_metric",
+            "attributes": {
+                "metrics": [
+                    {
+                        "event_kind": "feedback",
+                        "span_id": span_id,
+                        "ml_app": os.environ.get("DD_LLMOBS_ML_APP", "infra-advisor-ai"),
+                        "timestamp_ms": int(time.time() * 1000),
+                        "metric_type": "categorical",
+                        "label": "response_feedback",
+                        "categorical_value": rating,
+                        "assessment": "pass" if rating == "positive" else "fail",
+                        "submitter": {"id": submitter_id, "type": "user"},
+                    }
+                ]
+            },
+        }
+    }
+
+
+async def submit_user_feedback(
     span_id: str,
     rating: str,
-    session_id: str | None = None,
-) -> None:
-    """Submit a user feedback evaluation to Datadog LLM Observability.
+    submitter_id: str,
+) -> bool:
+    """Submit authenticated end-user feedback to Datadog LLM Observability.
 
-    Attaches a categorical `user_feedback` evaluation to the LLM span identified
-    by the given trace/span IDs.  `rating` must be one of: positive, negative, reported.
+    Datadog feedback events require a submitter and exactly one target. The
+    response span is the most precise target, so trace and session identifiers
+    deliberately stay out of this SDK call.
     """
+    api_key = os.environ.get("DD_API_KEY")
+    if not api_key:
+        logger.warning("submit_user_feedback skipped because DD_API_KEY is not configured")
+        return False
+
+    site = os.environ.get("DD_SITE", "datadoghq.com")
+    url = f"https://api.{site}/api/intake/llm-obs/v2/eval-metric"
     try:
-        LLMObs.submit_evaluation(
-            span_context={"trace_id": trace_id, "span_id": span_id},
-            label="user_feedback",
-            metric_type="categorical",
-            value=rating,
-            tags={},
-        )
-        logger.info("user_feedback submitted trace_id=%s rating=%s", trace_id, rating)
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                url,
+                headers={"DD-API-KEY": api_key},
+                json=_feedback_payload(span_id, rating, submitter_id),
+            )
+            response.raise_for_status()
+        logger.info("end_user_feedback submitted span_id=%s rating=%s", span_id, rating)
+        return True
     except Exception as exc:
         logger.warning("submit_user_feedback failed (non-fatal) error_type=%s", type(exc).__name__)
+        return False
 
 
 def schedule_faithfulness_score(

@@ -104,18 +104,18 @@ This is a real, billable Azure resource provisioning step — paused here for th
 ## Scope decisions
 
 - Build one shared .NET 10 MAUI application under `mobile/cross-platform/maui` targeting `net10.0-android` and `net10.0-ios`, with Android API 23+ and iOS 15+ to match the supported Datadog MAUI SDK range.
-- Use Shell navigation, dependency injection, XAML, and MVVM with `CommunityToolkit.Mvvm`; keep platform-specific code limited to permissions, signing, and OS integration.
-- Treat Syncfusion's Essential UI Kit as an MIT-licensed design/template source, selectively port only useful responsive XAML patterns, and record attribution. Do not import its full sample application, stock imagery, FFImageLoading dependency, or third-party assets. Use the MIT `Syncfusion.Maui.Toolkit` package only for controls that materially improve the interface, beginning with the backend segmented selector.
+- Use Prism navigation, dependency injection, XAML, and MVVM with `CommunityToolkit.Mvvm`; keep platform-specific code limited to permissions, signing, protected storage, and OS integration.
+- Use platform-native controls for the shared interface and retain third-party UI dependencies only when they materially improve the experience.
 - Match the web client's current multimodal contract: JPEG, PNG, WebP, WAV, MP3, and OGG files up to 10 MB, plus microphone-recorded WAV audio. Arbitrary document upload is out of scope because neither backend currently accepts document MIME types.
-- Preserve the repository's security boundary: JWT and account credentials remain memory-only; the public MAUI RUM application ID and client token may be compiled into the app; no Datadog API/application key, signing secret, prompt, response body, SAS query string, or raw attachment content enters source or telemetry.
+- Preserve the repository's security boundary: JWTs use only iOS Keychain or Android secure storage and are cleared on logout; the public MAUI RUM application ID and client token may be compiled into the app; no Datadog API/application key, signing secret, prompt, response body, SAS query string, or raw attachment content enters source or telemetry.
 
 ## Phase 1 — Project foundation and design system
 
 - [x] Replace the reserved README-only directory with a .NET 10 MAUI solution and one multi-targeted application project.
-- [x] Add pinned package versions for `Datadog.Maui` 0.2.0, `CommunityToolkit.Mvvm`, `Plugin.Maui.Audio`, and the minimal Syncfusion MAUI Toolkit dependency selected during the UI spike.
+- [x] Add pinned package versions for `Datadog.Maui` 0.2.0, `CommunityToolkit.Mvvm`, `Plugin.Maui.Audio`, and Prism.
 - [x] Add build-time configuration for API base URL, Datadog site/environment/service, RUM application ID, client token, session/resource trace/replay sampling, and app version without introducing privileged values.
 - [x] Create shared color, typography, spacing, icon, card, button, input, skeleton, and message-bubble resources that mirror the web interface's blue/gray visual language and use `docs/public/favicon.svg` as the app-icon source.
-- [x] Add `THIRD_PARTY_NOTICES.md` entries for any Syncfusion template/control or other external asset retained in the application.
+- [x] Add `THIRD_PARTY_NOTICES.md` entries for retained third-party packages and assets.
 
 ## Phase 2 — Application architecture and API layer
 
@@ -200,14 +200,14 @@ The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM be
 
 ---
 
-# Field Advisor MAUI and structured tool artifacts
+# InfraAdvisor MAUI and structured tool artifacts
 
 ## Plan
 
 - [x] Add a versioned, provider-neutral chat-artifact contract with sanitized procurement fixtures.
 - [x] Normalize SAM.gov and current Grants.gov responses, emit bounded safe structured logs, and remove raw provider payloads from telemetry.
 - [x] Transport optional artifacts through streaming and non-streaming agent responses and persist them additively with conversations.
-- [x] Apply the Field Advisor visual system to the MAUI app with responsive Advisor, History, Diagnostics, and Profile destinations.
+- [x] Apply the approved visual system to the InfraAdvisor MAUI app with responsive Chat, History, Errors, and Info destinations.
 - [x] Render typed evidence cards and detail views while preserving existing conversations, uploads, audio, tracing, RUM, replay privacy, and crash demonstrations.
 - [x] Stabilize the Airflow runtime with a reproducible image, required Parquet dependencies, bundled DAG scripts, and real import checks.
 - [x] Split application health semantics and suppress probe spans at their instrumentation source without reducing real request sampling.
@@ -217,6 +217,8 @@ The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM be
 
 ## Remaining acceptance
 
+- [x] Separate the MAUI Chat destination into Home, New Conversation, and active-conversation states; remove duplicate header actions and citation buttons; normalize agent Markdown; and align bottom navigation, selectors, and topic icons across Android and iOS.
+- [x] Bind the generated MAUI adaptive icon in the Android manifest and add visible per-message completion states for Copy, Helpful, and Report actions.
 - [ ] Complete native accessibility and replay acceptance: authenticated four-tab VoiceOver/TalkBack traversal and focus order, modal focus containment/restoration, dynamic status announcements, hardware-keyboard navigation, and visual Session Replay masking. Small-phone, tablet, landscape, software-keyboard, Android 2.0x font scale, and the largest iOS accessibility text category render clear of system safe areas; each page retains a full-page scroll container for content beyond the viewport.
 - [x] Build and execute the custom Airflow image locally, verify installed dependency consistency, and import the real Airflow 3.2.1 DagBag from the sealed image.
 - [ ] Deploy the custom Airflow image through a cluster canary with metadata-database backup and one approved DAG at a time.
@@ -229,7 +231,7 @@ The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM be
 ## Review
 
 - Added a generic versioned chat-artifact boundary, a closed procurement v1 JSON Schema, an invented fixture, current SAM.gov/Grants.gov normalization, bounded JSON logs, URL/error sanitization, additive SSE/API transport, and PostgreSQL JSONB persistence in both language stacks. Both agent parsers reconstruct exact allowlisted objects and reject invalid providers, dates, funding, counts, URLs, oversized values, nested secrets, and arbitrary raw provider fields.
-- Reworked the MAUI client into Field Advisor with Advisor, History, Diagnostics, and Profile views, responsive safe-area-aware layouts, typed evidence cards, a safe source sheet, generic attachment labels, and tolerant unknown-artifact handling. Cross-backend conversation restoration now refreshes the target model catalog before restoring the saved model and restores the original backend metadata after a failed load; uploads follow the selected backend.
+- Reworked the MAUI client as InfraAdvisor with Chat, History, Errors, and Info views, responsive safe-area-aware layouts, typed evidence cards, a safe source sheet, generic attachment labels, and tolerant unknown-artifact handling. Cross-backend conversation restoration now refreshes the target model catalog before restoring the saved model and restores the original backend metadata after a failed load; uploads follow the selected backend.
 - Hardened multimodal telemetry so randomized storage keys, Python LLMObs annotations, .NET GenAI activities, HTTP spans, logs, and MCP failure summaries retain useful modality/status/count/latency/correlation metadata without filenames, session identifiers, signed URLs, prompts, answers, transcripts, raw media, provider bodies, or exception text.
 - Bound conversation ownership, memory, and serialized agent state to the JWT subject with opaque tenant/session keys in both Agent APIs; rejected cross-tenant continuations before model invocation and repeated the owner predicate under the persistence lock. Attachment references now require the configured HTTPS Blob host/container, generated paths, matching kind/MIME/size, and blob-scoped read-only SAS, while .NET audio fetches also reject redirects.
 - Hardened the MAUI metadata and accessibility paths so optional suggestion failures retain a valid model catalog, request timeouts fail into a readable non-loading state, truncated SSE streams cannot appear successful, modal sheets exclude the underlying controls, and evidence focus restoration targets the invoking control when it remains realized.
@@ -250,7 +252,7 @@ The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM be
 
 ## Review
 
-- The iOS target passes `_DeviceName` so the .NET launcher uses the selected simulator instead of opening another device.
+- The iOS target selects the booted simulator by UDID, builds explicitly, replaces the installed bundle, and launches that exact build.
 
 ---
 
@@ -273,7 +275,20 @@ The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM be
 - Verification passed with 73 unit/contract tests, a zero-warning Android build, an installed Android emulator smoke test, and a clean documentation build/link/content check.
 - The iOS build compiled the managed projects and reached Apple's asset compiler, then stopped because the installed iOS simulator runtimes do not match SDK build 23F81a. Install a matching runtime or select the matching Xcode before simulator acceptance.
 
-- Pending implementation.
+# Prevent stale MAUI iOS simulator launches
+
+## Plan
+
+- [x] Compare source and built-bundle timestamps and inspect the embedded XAML manifest.
+- [x] Replace the direct MSBuild `Run` invocation with explicit build, uninstall, install, and launch steps.
+- [x] Fail fast when the selected Xcode SDK has no matching installed simulator runtime or the build fails.
+- [x] Document the behavior and verify the Make recipe against the booted simulator.
+
+## Review
+
+- The previously launched `.app` was dated August 26 and still embedded `AppShell.xaml`; the redesigned source was dated August 27.
+- The selected Xcode exposes iOS SDK 26.5 while the newest installed simulator runtime is iOS 26.1, so the corrected target now stops with an actionable message instead of launching the stale bundle.
+- After installing the matching runtime, stale iOS intermediates referenced AOT pack `10.0.2` while the installed workload provided `10.0.11`; a target-scoped clean regenerated the path, after which `make run-ios` built with zero warnings, replaced the app, and launched the current Prism bundle.
 
 ---
 

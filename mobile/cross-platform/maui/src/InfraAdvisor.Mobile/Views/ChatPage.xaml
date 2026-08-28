@@ -10,263 +10,130 @@
     x:Class="InfraAdvisor.Mobile.Views.ChatPage"
     x:Name="ChatRoot"
     x:DataType="viewModels:ChatViewModel"
-    Title="Advisor"
+    Title="Chat"
+    IconImageSource="tab_chat.png"
     SafeAreaEdges="Container"
     AutomationId="ChatPage">
-    <Grid ColumnDefinitions="Auto,*">
-        <VisualStateManager.VisualStateGroups>
-            <VisualStateGroup Name="WindowStates">
-                <VisualState Name="Compact">
-                    <VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="0" /></VisualState.StateTriggers>
-                    <VisualState.Setters>
-                        <Setter TargetName="HistoryRail" Property="IsVisible" Value="False" />
-                        <Setter TargetName="CompactHistoryButton" Property="IsVisible" Value="True" />
-                    </VisualState.Setters>
-                </VisualState>
-                <VisualState Name="Wide">
-                    <VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="850" /></VisualState.StateTriggers>
-                    <VisualState.Setters>
-                        <Setter TargetName="HistoryRail" Property="IsVisible" Value="True" />
-                        <Setter TargetName="CompactHistoryButton" Property="IsVisible" Value="False" />
-                    </VisualState.Setters>
-                </VisualState>
-            </VisualStateGroup>
-        </VisualStateManager.VisualStateGroups>
-
-        <Border x:Name="HistoryRail" WidthRequest="280" Margin="12" Style="{StaticResource Card}" IsVisible="False" InputTransparent="{Binding IsModalVisible}" AutomationProperties.ExcludedWithChildren="{Binding IsModalVisible}">
-            <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="12">
-                <Label Text="Conversations" Style="{StaticResource SectionTitle}" />
-                <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                    <Button Text="New conversation" Command="{Binding NewConversationCommand}" Style="{StaticResource SecondaryButton}" SemanticProperties.Hint="Clears the current conversation" AutomationId="WideNewConversation" />
-                    <Button Grid.Column="1" Text="Refresh" Command="{Binding LoadHistoryCommand}" Style="{StaticResource SecondaryButton}" SemanticProperties.Hint="Reloads saved conversations" AutomationId="WideRefreshHistory" />
-                </Grid>
-                <Label Grid.Row="2" Text="No saved conversations yet." IsVisible="{Binding HasNoConversations}" TextColor="{StaticResource TextSecondary}" />
-                <VerticalStackLayout Grid.Row="3" Spacing="6">
-                    <ActivityIndicator IsRunning="{Binding IsHistoryLoading}" IsVisible="{Binding IsHistoryLoading}" HorizontalOptions="Start" SemanticProperties.Description="Loading conversation history" />
-                    <Label Text="{Binding HistoryErrorMessage}" IsVisible="{Binding HasHistoryError}" TextColor="{StaticResource Danger}" SemanticProperties.Description="Conversation history error" />
-                </VerticalStackLayout>
-                <CollectionView Grid.Row="4" ItemsSource="{Binding Conversations}" SelectedItem="{Binding SelectedConversation}" SelectionMode="Single" AutomationId="WideConversationHistory">
-                    <CollectionView.ItemTemplate>
-                        <DataTemplate x:DataType="coreModels:ConversationSummary">
-                            <Grid Padding="8" RowDefinitions="Auto,Auto" MinimumHeightRequest="48" SemanticProperties.Description="{Binding Title}" SemanticProperties.Hint="Opens this conversation">
-                                <Label Text="{Binding Title}" FontAttributes="Bold" LineBreakMode="TailTruncation" />
-                                <Label Grid.Row="1" Text="{Binding MessageCount, StringFormat='{0} messages'}" FontSize="11" TextColor="{StaticResource TextSecondary}" />
-                            </Grid>
-                        </DataTemplate>
-                    </CollectionView.ItemTemplate>
-                </CollectionView>
+    <Grid>
+        <Grid x:Name="AdvisorContent" Padding="16,10,16,8" RowDefinitions="Auto,*,Auto" RowSpacing="10" MaximumWidthRequest="820" InputTransparent="{Binding IsModalVisible}" AutomationProperties.ExcludedWithChildren="{Binding IsModalVisible}">
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                <Image Source="brandmark.png" HeightRequest="38" WidthRequest="38" SemanticProperties.Description="InfraAdvisor bridge logo" />
+                <Label Grid.Column="1" Text="InfraAdvisor" FontSize="22" FontAttributes="Bold" VerticalTextAlignment="Center" SemanticProperties.HeadingLevel="Level1" />
             </Grid>
-        </Border>
 
-        <Grid Grid.Column="1" Padding="16" RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="10" MaximumWidthRequest="1100" InputTransparent="{Binding IsModalVisible}" AutomationProperties.ExcludedWithChildren="{Binding IsModalVisible}">
-            <!-- Keep selectors reachable in landscape and under large font scaling without allowing them to displace the transcript and composer. -->
-            <ScrollView MaximumHeightRequest="360" VerticalScrollBarVisibility="Default" AutomationId="AdvisorConfigurationScroll">
-                <VerticalStackLayout Spacing="10">
-                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="8">
-                        <VerticalStackLayout Spacing="0">
-                            <Label Text="Field Advisor" Style="{StaticResource PageTitle}" />
-                            <Label Text="Evidence-backed guidance for resilient infrastructure" TextColor="{StaticResource TextSecondary}" />
+            <Grid Grid.Row="1">
+                <ScrollView IsVisible="{Binding IsNewConversationVisible}" AutomationId="EmptyAdvisorScroll">
+                    <VerticalStackLayout Spacing="12" Padding="0,4,0,18">
+                        <VerticalStackLayout Spacing="3">
+                            <Label Text="New conversation" Style="{StaticResource SectionTitle}" />
+                            <Label Text="Choose how InfraAdvisor should answer or start typing below." Style="{StaticResource MutedBody}" />
                         </VerticalStackLayout>
-                        <Button Grid.Column="1" Text="New" Command="{Binding NewConversationCommand}" Style="{StaticResource PrimaryCompactButton}" SemanticProperties.Description="New conversation" SemanticProperties.Hint="Clears the current conversation" AutomationId="NewConversation" />
-                        <FlexLayout Grid.Row="1" Grid.ColumnSpan="2" Direction="Row" Wrap="Wrap" AlignItems="Center">
-                            <Button x:Name="CompactHistoryButton" Text="Conversations" Command="{Binding ToggleHistoryCommand}" Margin="0,0,6,6" Style="{StaticResource QuietButton}" SemanticProperties.Hint="Opens saved conversation history" AutomationId="OpenConversationHistory" />
-                            <Button Text="Delete current" IsVisible="{Binding HasSelectedConversation}" Clicked="OnDeleteConversationClicked" CommandParameter="{Binding SelectedConversation}" Margin="0,0,6,6" Style="{StaticResource DangerButton}" SemanticProperties.Hint="Shows a confirmation before deleting the current conversation" AutomationId="DeleteConversation" />
-                        </FlexLayout>
-                    </Grid>
-
-                    <Border Style="{StaticResource Card}" Padding="12">
-                        <Grid RowDefinitions="Auto,Auto" RowSpacing="10">
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="8" AutomationId="AdvisorConfigurationCard">
                             <VerticalStackLayout Spacing="4">
-                                <Label Text="Backend" FontSize="12" TextColor="{StaticResource TextSecondary}" SemanticProperties.HeadingLevel="Level2" />
-                                <!-- Syncfusion's segmented control makes the mutually exclusive backend boundary explicit and mirrors the web toggle. -->
-                                <controls:BackendSegmentedControl ItemsSource="{Binding Backends}" SelectedIndex="{Binding SelectedBackendIndex, Mode=TwoWay}" IsEnabled="{Binding CanChangeBackend}" SegmentBackground="{StaticResource PrimarySoft}" Stroke="{StaticResource Border}" CornerRadius="12" SegmentHeight="48" SemanticProperties.Description="Backend" SemanticProperties.Hint="Choose the Python or dot net backend" AutomationId="BackendSelector" />
+                                <Label Text="Backend" Style="{StaticResource Eyebrow}" />
+                                <Picker Title="Choose a backend" ItemsSource="{Binding Backends}" SelectedItem="{Binding SelectedBackend, Mode=TwoWay}" IsEnabled="{Binding CanChangeBackend}" SemanticProperties.Description="Backend API" SemanticProperties.Hint="Choose the Python or dot net implementation" AutomationId="BackendSelector" />
                             </VerticalStackLayout>
-                            <VerticalStackLayout Grid.Row="1" Spacing="4">
-                                <Label Text="Model" FontSize="12" TextColor="{StaticResource TextSecondary}" SemanticProperties.HeadingLevel="Level2" />
-                                <Picker Title="Choose a model" ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" IsEnabled="{Binding CanChangeModel}" SemanticProperties.Description="AI model" SemanticProperties.Hint="Choose the model used for the next request" AutomationId="ModelPicker" />
+                            <VerticalStackLayout Grid.Column="1" Spacing="4">
+                                <Label Text="Model" Style="{StaticResource Eyebrow}" />
+                                <Picker Title="Choose a model" ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" IsEnabled="{Binding CanChangeModel}" SemanticProperties.Description="AI model" SemanticProperties.Hint="Choose the model used for the response" AutomationId="ModelPicker" />
                             </VerticalStackLayout>
                         </Grid>
-                    </Border>
-
-                    <ScrollView Orientation="Horizontal" HorizontalScrollBarVisibility="Never" SemanticProperties.Description="Prompt suggestions">
-                        <HorizontalStackLayout Spacing="8" BindableLayout.ItemsSource="{Binding Suggestions}">
+                        <Label Text="Try asking" Style="{StaticResource Eyebrow}" />
+                        <VerticalStackLayout Spacing="6" BindableLayout.ItemsSource="{Binding Suggestions}">
                             <BindableLayout.ItemTemplate>
                                 <DataTemplate x:DataType="coreModels:SuggestionItem">
-                                    <Button Text="{Binding Label}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.UseSuggestionCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding Query}" Style="{StaticResource SecondaryButton}" FontSize="12" Padding="12,6" SemanticProperties.Hint="Copies this suggestion into the prompt editor" AutomationId="UseSuggestion" />
+                                    <Button Text="{Binding Label, StringFormat='{0}  ›'}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.UseSuggestionCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding Query}" Style="{StaticResource CompactSuggestionButton}" SemanticProperties.Hint="Adds this suggested question to the message field" AutomationId="UseSuggestion" />
                                 </DataTemplate>
                             </BindableLayout.ItemTemplate>
-                        </HorizontalStackLayout>
-                    </ScrollView>
-                </VerticalStackLayout>
-            </ScrollView>
-
-            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <ScrollView Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
-                    <HorizontalStackLayout Spacing="8" BindableLayout.ItemsSource="{Binding PipelineSteps}">
-                        <BindableLayout.ItemTemplate>
-                            <DataTemplate x:DataType="models:PipelineStepItem">
-                                <Border BackgroundColor="#E0E7FF" StrokeThickness="0" Padding="10,5" StrokeShape="RoundRectangle 14" SemanticProperties.Description="{Binding Label}"><Label Text="{Binding Label}" FontSize="12" TextColor="{StaticResource PrimaryDark}" /></Border>
-                            </DataTemplate>
-                        </BindableLayout.ItemTemplate>
-                    </HorizontalStackLayout>
-                </ScrollView>
-                <Label Grid.Column="1" Text="Still working…" IsVisible="{Binding IsStillWorking}" FontAttributes="Italic" TextColor="{StaticResource TextSecondary}" SemanticProperties.Description="The advisor is still working" />
-            </Grid>
-
-            <Grid Grid.Row="2">
-                <ScrollView IsVisible="{Binding HasNoMessages}" AutomationId="EmptyAdvisorScroll">
-                    <VerticalStackLayout Padding="0,12" HorizontalOptions="Center" VerticalOptions="Center" Spacing="12" MaximumWidthRequest="680">
-                        <Label Text="Where should we start?" Style="{StaticResource SectionTitle}" HorizontalTextAlignment="Center" />
-                        <Label Text="Explore infrastructure resilience, emergency management, procurement, bridges, and disaster response." HorizontalTextAlignment="Center" TextColor="{StaticResource TextSecondary}" MaximumWidthRequest="540" />
-                        <VerticalStackLayout Spacing="8">
-                            <Button Text="Infrastructure risk" Command="{Binding UseSuggestionCommand}" CommandParameter="What infrastructure risks should a Texas city review before hurricane season?" Style="{StaticResource SecondaryButton}" SemanticProperties.Hint="Copies this suggestion into the prompt editor" AutomationId="DomainInfrastructureRisk" />
-                            <Button Text="FEMA response" Command="{Binding UseSuggestionCommand}" CommandParameter="Summarize FEMA disaster declarations affecting Texas this year." Style="{StaticResource SecondaryButton}" SemanticProperties.Hint="Copies this suggestion into the prompt editor" AutomationId="DomainFemaResponse" />
-                            <Button Text="Bridge priorities" Command="{Binding UseSuggestionCommand}" CommandParameter="Which bridges should be prioritized based on condition and traffic?" Style="{StaticResource SecondaryButton}" SemanticProperties.Hint="Copies this suggestion into the prompt editor" AutomationId="DomainBridgePriorities" />
-                            <Button Text="Federal procurement (MCP)" Command="{Binding UseSuggestionCommand}" CommandParameter="What current federal procurement opportunities exist related to operational resilience or emergency management enhancements in Texas infrastructure systems?" Style="{StaticResource SecondaryButton}" SemanticProperties.Hint="Copies an MCP procurement question into the prompt editor" AutomationId="DomainFederalProcurement" />
                         </VerticalStackLayout>
                     </VerticalStackLayout>
                 </ScrollView>
 
-                <CollectionView x:Name="Transcript" ItemsSource="{Binding Messages}" SelectionMode="None" SemanticProperties.Description="Conversation transcript" AutomationId="ChatTranscript">
-                    <CollectionView.ItemTemplate>
-                        <DataTemplate x:DataType="models:ChatMessageItem">
-                            <Border Margin="0,5" Style="{StaticResource AssistantBubble}">
-                                <Border.Triggers><DataTrigger TargetType="Border" Binding="{Binding IsUser}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource PrimarySoft}" /></DataTrigger></Border.Triggers>
-                                <VerticalStackLayout Spacing="8">
-                                    <Grid ColumnDefinitions="*,Auto">
-                                        <Label Text="{Binding Role}" FontAttributes="Bold" FontSize="11" TextColor="{StaticResource Primary}" TextTransform="Uppercase" />
-                                        <Label Grid.Column="1" Text="{Binding TimestampText}" FontSize="11" TextColor="{StaticResource TextSecondary}" />
-                                    </Grid>
-                                    <controls:MarkdownLabel Markdown="{Binding Content}" LineBreakMode="WordWrap" />
-                                    <FlexLayout BindableLayout.ItemsSource="{Binding Steps}" Direction="Row" Wrap="Wrap">
-                                        <BindableLayout.ItemTemplate><DataTemplate x:DataType="models:PipelineStepItem"><Border BackgroundColor="#E0E7FF" StrokeThickness="0" Padding="8,3" Margin="0,0,5,5" StrokeShape="RoundRectangle 10"><Label Text="{Binding Label}" FontSize="11" TextColor="{StaticResource PrimaryDark}" /></Border></DataTemplate></BindableLayout.ItemTemplate>
-                                    </FlexLayout>
-                                    <FlexLayout BindableLayout.ItemsSource="{Binding Attachments}" Direction="Row" Wrap="Wrap">
-                                        <BindableLayout.ItemTemplate><DataTemplate x:DataType="coreModels:MediaReference"><Border BackgroundColor="#ECFDF5" Stroke="#86EFAC" Padding="8,3" Margin="0,0,5,5" StrokeShape="RoundRectangle 10"><Label Text="{Binding Kind, StringFormat='Attached {0}'}" FontSize="11" TextColor="{StaticResource Success}" /></Border></DataTemplate></BindableLayout.ItemTemplate>
-                                    </FlexLayout>
-                                    <FlexLayout BindableLayout.ItemsSource="{Binding Sources}" Direction="Row" Wrap="Wrap">
-                                        <BindableLayout.ItemTemplate><DataTemplate x:DataType="x:String"><Button Text="{Binding .}" FontSize="11" Padding="8,3" Margin="0,0,5,5" Style="{StaticResource SecondaryButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.OpenSourceCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" SemanticProperties.Hint="Opens this citation in the browser" AutomationId="OpenCitation" /></DataTemplate></BindableLayout.ItemTemplate>
-                                    </FlexLayout>
-                                    <Button Text="{Binding EvidenceLabel}" IsVisible="{Binding HasEvidence}" FontSize="12" Style="{StaticResource SecondaryButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.OpenEvidenceCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Clicked="OnOpenEvidenceClicked" SemanticProperties.Hint="Opens structured evidence returned by data tools" AutomationId="OpenEvidence" />
-                                    <Label Text="{Binding Metadata}" FontSize="11" TextColor="{StaticResource TextSecondary}" />
-                                    <FlexLayout Direction="Row" Wrap="Wrap" AlignItems="Center">
-                                        <Button Text="Copy" FontSize="11" Padding="8,2" Margin="0,0,6,6" Style="{StaticResource SecondaryButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.CopyMessageCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" SemanticProperties.Hint="Copies this message to the clipboard" AutomationId="CopyMessage" />
-                                        <Button Text="Helpful" IsVisible="{Binding CanFeedback}" FontSize="11" Padding="8,2" Margin="0,0,6,6" Style="{StaticResource SecondaryButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.PositiveFeedbackCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" SemanticProperties.Hint="Marks this answer as helpful" AutomationId="PositiveFeedback" />
-                                        <Button Text="Not helpful" IsVisible="{Binding CanFeedback}" FontSize="11" Padding="8,2" Margin="0,0,6,6" Style="{StaticResource SecondaryButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.NegativeFeedbackCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" SemanticProperties.Hint="Marks this answer as not helpful" AutomationId="NegativeFeedback" />
-                                        <Button Text="Report" IsVisible="{Binding CanFeedback}" FontSize="11" Padding="8,2" Margin="0,0,6,6" Style="{StaticResource DangerButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.ReportFeedbackCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" SemanticProperties.Hint="Reports this answer for review" AutomationId="ReportFeedback" />
-                                    </FlexLayout>
-                                </VerticalStackLayout>
-                            </Border>
-                        </DataTemplate>
-                    </CollectionView.ItemTemplate>
-                </CollectionView>
-            </Grid>
-
-            <VerticalStackLayout Grid.Row="3" Spacing="6">
-                <ScrollView Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
-                    <HorizontalStackLayout BindableLayout.ItemsSource="{Binding Attachments}" Spacing="6">
-                        <BindableLayout.ItemTemplate>
-                            <DataTemplate x:DataType="models:AttachmentItem">
-                                <Border Style="{StaticResource AttachmentChip}">
-                                    <FlexLayout Direction="Row" Wrap="Wrap" AlignItems="Center">
-                                        <Label Text="{Binding DisplayLabel}" FontSize="12" VerticalTextAlignment="Center" />
-                                        <Label Text="{Binding State}" Margin="8,0,0,0" FontSize="12" TextColor="{StaticResource TextSecondary}" VerticalTextAlignment="Center" />
-                                        <ProgressBar Progress="{Binding Progress}" WidthRequest="60" Margin="8,0,0,0" IsVisible="{Binding IsUploading}" SemanticProperties.Description="Attachment upload progress" />
-                                        <Button Text="Play" IsVisible="{Binding IsAudio}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.PlayAttachmentCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Padding="6,0" Margin="8,0,0,0" Style="{StaticResource SecondaryButton}" SemanticProperties.Hint="Plays this audio attachment" AutomationId="PlayAttachment" />
-                                        <Button Text="Retry" IsVisible="{Binding CanRetry}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.RetryAttachmentCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Padding="6,0" Margin="8,0,0,0" Style="{StaticResource SecondaryButton}" SemanticProperties.Hint="Retries this attachment upload" AutomationId="RetryAttachment" />
-                                        <Button Text="Cancel" IsVisible="{Binding CanCancel}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.CancelAttachmentCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Padding="6,0" Margin="8,0,0,0" Style="{StaticResource DangerButton}" SemanticProperties.Hint="Cancels this attachment upload" AutomationId="CancelAttachment" />
-                                        <Button Text="Remove" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.RemoveAttachmentCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Padding="6,0" Margin="8,0,0,0" BackgroundColor="Transparent" TextColor="{StaticResource Danger}" SemanticProperties.Hint="Removes this attachment from the pending message" AutomationId="RemoveAttachment" />
-                                    </FlexLayout>
-                                </Border>
-                            </DataTemplate>
-                        </BindableLayout.ItemTemplate>
-                    </HorizontalStackLayout>
-                </ScrollView>
-                <FlexLayout Direction="Row" Wrap="Wrap" AlignItems="Center">
-                    <Button Text="Attach" Command="{Binding PickAttachmentCommand}" Margin="0,0,8,6" Style="{StaticResource SecondaryButton}" SemanticProperties.Hint="Choose an image or audio file" AutomationId="PickAttachment" />
-                    <Button Text="{Binding RecordLabel}" Command="{Binding RecordAudioCommand}" Margin="0,0,8,6" Style="{StaticResource SecondaryButton}" SemanticProperties.Hint="Starts or stops an audio recording" AutomationId="RecordAudio" />
-                    <Button Text="Cancel recording" Command="{Binding CancelRecordingCommand}" IsVisible="{Binding IsRecording}" Margin="0,0,8,6" Style="{StaticResource DangerButton}" AutomationId="CancelRecording" />
-                    <Button Text="Cancel request" Command="{Binding CancelQueryCommand}" IsVisible="{Binding IsBusy}" Margin="0,0,8,6" Style="{StaticResource DangerButton}" AutomationId="CancelQuery" />
-                </FlexLayout>
-                <Label Text="{Binding ErrorMessage}" IsVisible="{Binding HasError}" TextColor="{StaticResource Danger}" SemanticProperties.Description="The most recent chat error" />
-            </VerticalStackLayout>
-
-            <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <Border Style="{StaticResource ComposerCard}"><Editor Text="{Binding Prompt}" Placeholder="Ask about risks, funding, assets, or response plans…" AutoSize="TextChanges" MinimumHeightRequest="72" MaximumHeightRequest="160" SemanticProperties.Description="Message prompt" SemanticProperties.Hint="Enter a question for Field Advisor. Sensitive input is masked in Session Replay" AutomationId="PromptEditor" /></Border>
-                <Button Grid.Column="1" Text="Send" Command="{Binding SendCommand}" IsEnabled="{Binding CanSend}" WidthRequest="72" VerticalOptions="End" Style="{StaticResource PrimaryCompactButton}" SemanticProperties.Hint="Sends the prompt and pending attachments" AutomationId="SendPrompt" />
-            </Grid>
-        </Grid>
-
-        <Grid Grid.ColumnSpan="2" ZIndex="20" RowDefinitions="*,Auto" IsVisible="{Binding IsHistoryVisible}" AutomationId="ConversationHistorySheet">
-            <BoxView Grid.RowSpan="2" BackgroundColor="#660F172A">
-                <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseHistoryCommand}" /></BoxView.GestureRecognizers>
-            </BoxView>
-            <Border Grid.Row="1" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Border}" StrokeThickness="1" Padding="20" MaximumHeightRequest="620" StrokeShape="RoundRectangle 24">
-                <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="12">
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                        <Label Text="Conversation history" Style="{StaticResource SectionTitle}" VerticalTextAlignment="Center" SemanticProperties.HeadingLevel="Level1" />
-                        <Button x:Name="CloseConversationHistoryButton" Grid.Column="1" Text="Close" Command="{Binding CloseHistoryCommand}" Style="{StaticResource SecondaryButton}" AutomationId="CloseConversationHistory" />
-                    </Grid>
-                    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                        <Button Text="New conversation" Command="{Binding NewConversationCommand}" Style="{StaticResource SecondaryButton}" AutomationId="SheetNewConversation" />
-                        <Button Grid.Column="1" Text="Refresh" Command="{Binding LoadHistoryCommand}" Style="{StaticResource SecondaryButton}" AutomationId="SheetRefreshHistory" />
-                    </Grid>
-                    <VerticalStackLayout Grid.Row="2" Spacing="6">
-                        <ActivityIndicator IsRunning="{Binding IsHistoryLoading}" IsVisible="{Binding IsHistoryLoading}" SemanticProperties.Description="Loading conversation history" />
-                        <Label Text="No saved conversations yet." IsVisible="{Binding HasNoConversations}" HorizontalTextAlignment="Center" TextColor="{StaticResource TextSecondary}" />
-                        <Label Text="{Binding HistoryErrorMessage}" IsVisible="{Binding HasHistoryError}" HorizontalTextAlignment="Center" TextColor="{StaticResource Danger}" />
-                    </VerticalStackLayout>
-                    <CollectionView Grid.Row="3" ItemsSource="{Binding Conversations}" SelectedItem="{Binding SelectedConversation}" SelectionMode="Single" AutomationId="CompactConversationHistory">
+                <Grid IsVisible="{Binding HasMessages}" RowDefinitions="Auto,*" RowSpacing="6">
+                    <Border Style="{StaticResource ContextCard}">
+                        <Border.GestureRecognizers><TapGestureRecognizer Command="{Binding ToggleSettingsCommand}" /></Border.GestureRecognizers>
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <HorizontalStackLayout Spacing="5" VerticalOptions="Center">
+                                <Label Text="Answering with" FontSize="11" TextColor="{StaticResource TextSecondary}" />
+                                <Label Text="{Binding SelectedBackend}" FontSize="11" FontAttributes="Bold" TextColor="{StaticResource InfraNavy}" />
+                                <Label Text="·" FontSize="11" TextColor="{StaticResource TextSecondary}" />
+                                <Label Text="{Binding SelectedModel}" FontSize="11" LineBreakMode="TailTruncation" TextColor="{StaticResource TextSecondary}" />
+                            </HorizontalStackLayout>
+                            <Label Grid.Column="1" Text="Change" TextColor="{StaticResource Primary}" FontAttributes="Bold" FontSize="12" VerticalTextAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <CollectionView x:Name="Transcript" Grid.Row="1" ItemsSource="{Binding Messages}" SelectionMode="None" SemanticProperties.Description="Conversation transcript" AutomationId="ChatTranscript">
+                        <CollectionView.ItemsLayout><LinearItemsLayout Orientation="Vertical" ItemSpacing="8" /></CollectionView.ItemsLayout>
                         <CollectionView.ItemTemplate>
-                            <DataTemplate x:DataType="coreModels:ConversationSummary">
-                                <Grid Padding="10" RowDefinitions="Auto,Auto" MinimumHeightRequest="48" SemanticProperties.Description="{Binding Title}" SemanticProperties.Hint="Opens this conversation">
-                                    <Label Text="{Binding Title}" FontAttributes="Bold" LineBreakMode="TailTruncation" />
-                                    <Label Grid.Row="1" Text="{Binding MessageCount, StringFormat='{0} messages'}" FontSize="11" TextColor="{StaticResource TextSecondary}" />
-                                </Grid>
-                            </DataTemplate>
-                        </CollectionView.ItemTemplate>
-                    </CollectionView>
-                </Grid>
-            </Border>
-        </Grid>
-
-        <Grid Grid.ColumnSpan="2" ZIndex="30" RowDefinitions="*,Auto" IsVisible="{Binding IsEvidenceVisible}" AutomationId="EvidenceSheet">
-            <BoxView Grid.RowSpan="2" BackgroundColor="{StaticResource Overlay}">
-                <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseEvidenceCommand}" /></BoxView.GestureRecognizers>
-            </BoxView>
-            <Border Grid.Row="1" BackgroundColor="{StaticResource Canvas}" Stroke="{StaticResource FieldNavySoft}" StrokeThickness="1" Padding="20" MaximumHeightRequest="680" StrokeShape="RoundRectangle 24,24,0,0">
-                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                        <VerticalStackLayout Spacing="2">
-                            <Label Text="Evidence" Style="{StaticResource SectionTitle}" SemanticProperties.HeadingLevel="Level1" />
-                            <Label Text="Structured results returned by infrastructure data sources" Style="{StaticResource MutedBody}" />
-                        </VerticalStackLayout>
-                        <Button x:Name="CloseEvidenceButton" Grid.Column="1" Text="Close" Command="{Binding CloseEvidenceCommand}" Style="{StaticResource QuietButton}" AutomationId="CloseEvidence" />
-                    </Grid>
-                    <Label Grid.Row="1" Text="External records can change. Open the source before making a project decision." FontSize="12" TextColor="{StaticResource EvidenceAmber}" />
-                    <CollectionView Grid.Row="2" ItemsSource="{Binding SelectedEvidenceMessage.Evidence}" SelectionMode="None" AutomationId="EvidenceItems">
-                        <CollectionView.ItemsLayout><LinearItemsLayout Orientation="Vertical" ItemSpacing="10" /></CollectionView.ItemsLayout>
-                        <CollectionView.ItemTemplate>
-                            <DataTemplate x:DataType="models:EvidenceCardItem">
-                                <Border Style="{StaticResource EvidenceCard}">
+                            <DataTemplate x:DataType="models:ChatMessageItem">
+                                <Border BackgroundColor="Transparent" StrokeThickness="0" Padding="2,10" Margin="0,0,24,0" HorizontalOptions="Fill" MaximumWidthRequest="760">
+                                    <Border.Triggers>
+                                        <DataTrigger TargetType="Border" Binding="{Binding IsUser}" Value="True">
+                                            <Setter Property="BackgroundColor" Value="{StaticResource InfraNavy}" />
+                                            <Setter Property="Padding" Value="14,10" />
+                                            <Setter Property="StrokeShape" Value="RoundRectangle 16,16,4,16" />
+                                            <Setter Property="HorizontalOptions" Value="End" />
+                                            <Setter Property="Margin" Value="48,0,0,0" />
+                                        </DataTrigger>
+                                    </Border.Triggers>
                                     <VerticalStackLayout Spacing="8">
-                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                            <Label Text="{Binding Kind}" Style="{StaticResource Eyebrow}" />
-                                            <Border Grid.Column="1" Style="{StaticResource MetadataPill}"><Label Text="{Binding Source}" FontSize="11" TextColor="{StaticResource FieldNavy}" /></Border>
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <Label Text="{Binding Role}" TextTransform="Uppercase" FontAttributes="Bold" FontSize="10" TextColor="{StaticResource Primary}"><Label.Triggers><DataTrigger TargetType="Label" Binding="{Binding IsUser}" Value="True"><Setter Property="TextColor" Value="White" /></DataTrigger></Label.Triggers></Label>
+                                            <Label Grid.Column="1" Text="{Binding TimestampText}" FontSize="10" TextColor="{StaticResource TextSecondary}"><Label.Triggers><DataTrigger TargetType="Label" Binding="{Binding IsUser}" Value="True"><Setter Property="TextColor" Value="#DCE7F1" /></DataTrigger></Label.Triggers></Label>
                                         </Grid>
-                                        <Label Text="{Binding Title}" FontSize="17" FontAttributes="Bold" />
-                                        <Label Text="{Binding Summary}" IsVisible="{Binding HasSummary}" LineBreakMode="WordWrap" />
-                                        <Label Text="{Binding Agency}" IsVisible="{Binding HasAgency}" FontSize="12" TextColor="{StaticResource TextSecondary}" />
-                                        <FlexLayout Direction="Row" Wrap="Wrap" AlignItems="Center">
-                                            <Label Text="{Binding Location}" IsVisible="{Binding HasLocation}" FontSize="12" TextColor="{StaticResource TextSecondary}" />
-                                            <Label Text="{Binding Deadline}" IsVisible="{Binding HasDeadline}" Margin="8,0,0,0" FontSize="12" TextColor="{StaticResource EvidenceAmber}" FontAttributes="Bold" />
-                                            <Label Text="{Binding Amount}" IsVisible="{Binding HasAmount}" Margin="8,0,0,0" FontSize="12" TextColor="{StaticResource Success}" FontAttributes="Bold" />
-                                        </FlexLayout>
-                                        <Button Text="Open official source" IsVisible="{Binding HasLink}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.OpenEvidenceSourceCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Style="{StaticResource SecondaryButton}" SemanticProperties.Hint="Opens the sanitized official source link in the browser" AutomationId="OpenEvidenceSource" />
+                                        <controls:MarkdownLabel Markdown="{Binding Content}" LineBreakMode="WordWrap"><controls:MarkdownLabel.Triggers><DataTrigger TargetType="controls:MarkdownLabel" Binding="{Binding IsUser}" Value="True"><Setter Property="TextColor" Value="White" /></DataTrigger></controls:MarkdownLabel.Triggers></controls:MarkdownLabel>
+                                        <FlexLayout BindableLayout.ItemsSource="{Binding Attachments}" Direction="Row" Wrap="Wrap" IsVisible="{Binding HasAttachments}"><BindableLayout.ItemTemplate><DataTemplate x:DataType="coreModels:MediaReference"><Border Style="{StaticResource AttachmentChip}" Margin="0,0,6,4"><Label Text="{Binding Kind, StringFormat='Attached {0}'}" FontSize="11" TextColor="{StaticResource Success}" /></Border></DataTemplate></BindableLayout.ItemTemplate></FlexLayout>
+                                        <ScrollView Orientation="Horizontal" HorizontalScrollBarVisibility="Never" IsVisible="{Binding IsAssistant}"><HorizontalStackLayout Spacing="6" BindableLayout.ItemsSource="{Binding Steps}"><BindableLayout.ItemTemplate><DataTemplate x:DataType="models:PipelineStepItem"><Border Style="{StaticResource ProgressPill}"><VerticalStackLayout Spacing="1"><Label Text="{Binding Label}" FontSize="11" FontAttributes="Bold" TextColor="{StaticResource InfraNavy}" /><Label Text="{Binding Status}" FontSize="10" TextColor="{StaticResource TextSecondary}" /></VerticalStackLayout></Border></DataTemplate></BindableLayout.ItemTemplate></HorizontalStackLayout></ScrollView>
+                                        <Grid IsVisible="{Binding IsAssistant}" ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                                            <Button Text="{Binding EvidenceLabel}" IsVisible="{Binding HasEvidence}" Style="{StaticResource EvidenceButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.OpenEvidenceCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Clicked="OnOpenEvidenceClicked" SemanticProperties.Hint="Opens structured evidence returned by data tools" AutomationId="OpenEvidence" />
+                                            <HorizontalStackLayout Grid.Column="1" HorizontalOptions="End" Spacing="2"><Button Text="{Binding CopyLabel}" Style="{StaticResource MessageActionButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.CopyMessageCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" SemanticProperties.Hint="Copies this answer" AutomationId="CopyMessage" /><Button Text="{Binding HelpfulLabel}" IsVisible="{Binding CanFeedback}" IsEnabled="{Binding CanSubmitFeedback}" Style="{StaticResource MessageActionButton}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.PositiveFeedbackCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" SemanticProperties.Hint="Submits a positive feedback signal correlated with this response trace" AutomationId="PositiveFeedback" /><Button Text="{Binding ReportLabel}" IsVisible="{Binding CanFeedback}" IsEnabled="{Binding CanSubmitFeedback}" Style="{StaticResource MessageActionButton}" TextColor="{StaticResource Danger}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.ReportFeedbackCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" SemanticProperties.Hint="Submits a reported feedback signal for observability analysis; this does not create a support ticket" AutomationId="ReportFeedback" /></HorizontalStackLayout>
+                                        </Grid>
+                                        <Label Text="{Binding ActionStatus}" IsVisible="{Binding HasActionStatus}" FontSize="11" TextColor="{StaticResource TextSecondary}" HorizontalTextAlignment="End" />
                                     </VerticalStackLayout>
                                 </Border>
                             </DataTemplate>
                         </CollectionView.ItemTemplate>
+                    </CollectionView>
+                </Grid>
+            </Grid>
+
+            <Border Grid.Row="2" IsVisible="{Binding IsComposerVisible}" Style="{StaticResource ComposerCard}">
+                <VerticalStackLayout Spacing="6">
+                    <ScrollView Orientation="Horizontal" HorizontalScrollBarVisibility="Never"><HorizontalStackLayout BindableLayout.ItemsSource="{Binding Attachments}" Spacing="6"><BindableLayout.ItemTemplate><DataTemplate x:DataType="models:AttachmentItem"><Border Style="{StaticResource AttachmentChip}"><HorizontalStackLayout Spacing="5"><Label Text="{Binding DisplayLabel}" FontSize="11" VerticalTextAlignment="Center" /><Label Text="{Binding State}" FontSize="10" TextColor="{StaticResource TextSecondary}" VerticalTextAlignment="Center" /><ProgressBar Progress="{Binding Progress}" WidthRequest="44" IsVisible="{Binding IsUploading}" SemanticProperties.Description="Attachment upload progress" /><Button Text="Play" IsVisible="{Binding IsAudio}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.PlayAttachmentCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Style="{StaticResource MessageActionButton}" SemanticProperties.Hint="Plays this audio attachment" AutomationId="PlayAttachment" /><Button Text="Retry" IsVisible="{Binding CanRetry}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.RetryAttachmentCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Style="{StaticResource MessageActionButton}" SemanticProperties.Hint="Retries this attachment upload" AutomationId="RetryAttachment" /><Button Text="Remove" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.RemoveAttachmentCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Style="{StaticResource MessageActionButton}" TextColor="{StaticResource Danger}" SemanticProperties.Hint="Removes this attachment" AutomationId="RemoveAttachment" /></HorizontalStackLayout></Border></DataTemplate></BindableLayout.ItemTemplate></HorizontalStackLayout></ScrollView>
+                    <Label Text="{Binding ErrorMessage}" IsVisible="{Binding HasError}" TextColor="{StaticResource Danger}" FontSize="12" SemanticProperties.Description="The most recent chat error" />
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="4">
+                        <ImageButton Source="action_attach.png" Command="{Binding PickAttachmentCommand}" Style="{StaticResource IconImageButton}" SemanticProperties.Description="Add attachment" SemanticProperties.Hint="Choose an infrastructure image or audio file" AutomationId="PickAttachment" />
+                        <Editor Grid.Column="1" Text="{Binding Prompt}" Placeholder="{Binding ComposerPlaceholder}" AutoSize="TextChanges" MinimumHeightRequest="48" MaximumHeightRequest="112" SemanticProperties.Description="Message prompt" SemanticProperties.Hint="Enter a question for InfraAdvisor. Sensitive input is masked in Session Replay" AutomationId="PromptEditor" />
+                        <ImageButton Grid.Column="2" Source="action_mic.png" Command="{Binding RecordAudioCommand}" Style="{StaticResource IconImageButton}" SemanticProperties.Description="{Binding RecordLabel}" SemanticProperties.Hint="Starts or stops an audio recording" AutomationId="RecordAudio" />
+                        <ImageButton Grid.Column="3" Source="action_send.png" Command="{Binding SendCommand}" IsEnabled="{Binding CanSend}" Style="{StaticResource PrimaryIconButton}" SemanticProperties.Description="{Binding SendLabel}" SemanticProperties.Hint="Sends the message and pending attachments" AutomationId="SendPrompt" />
+                    </Grid>
+                    <HorizontalStackLayout Spacing="8" IsVisible="{Binding IsBusy}"><ActivityIndicator IsRunning="{Binding IsBusy}" /><Label Text="{Binding SendLabel}" Style="{StaticResource MutedBody}" VerticalTextAlignment="Center" /><Button Text="Stop" Command="{Binding CancelQueryCommand}" Style="{StaticResource MessageActionButton}" TextColor="{StaticResource Danger}" AutomationId="CancelQuery" /></HorizontalStackLayout>
+                    <HorizontalStackLayout Spacing="8" IsVisible="{Binding IsRecording}"><Label Text="{Binding RecordLabel}" TextColor="{StaticResource Danger}" VerticalTextAlignment="Center" /><Button Text="Cancel recording" Command="{Binding CancelRecordingCommand}" Style="{StaticResource MessageActionButton}" TextColor="{StaticResource Danger}" AutomationId="CancelRecording" /></HorizontalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+        </Grid>
+
+        <Grid ZIndex="25" RowDefinitions="*,Auto" IsVisible="{Binding IsSettingsVisible}" AutomationId="ResponseSettingsSheet">
+            <BoxView Grid.RowSpan="2" BackgroundColor="{StaticResource Overlay}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseSettingsCommand}" /></BoxView.GestureRecognizers></BoxView>
+            <Border Grid.Row="1" BackgroundColor="{StaticResource Surface}" Stroke="{StaticResource Border}" StrokeThickness="1" Padding="20" MaximumHeightRequest="430" StrokeShape="RoundRectangle 24,24,0,0">
+                <VerticalStackLayout Spacing="16">
+                    <Grid ColumnDefinitions="*,Auto"><VerticalStackLayout Spacing="2"><Label Text="Response settings" Style="{StaticResource SectionTitle}" /><Label Text="Choose the API and model for the next answer." Style="{StaticResource MutedBody}" FontSize="12" /></VerticalStackLayout><Button x:Name="CloseResponseSettingsButton" Grid.Column="1" Text="Done" Command="{Binding CloseSettingsCommand}" Style="{StaticResource PrimaryCompactButton}" AutomationId="CloseResponseSettings" /></Grid>
+                    <VerticalStackLayout Spacing="6"><Label Text="Backend API" Style="{StaticResource Eyebrow}" /><Picker Title="Choose a backend" ItemsSource="{Binding Backends}" SelectedItem="{Binding SelectedBackend, Mode=TwoWay}" IsEnabled="{Binding CanChangeBackend}" SemanticProperties.Description="Backend API" SemanticProperties.Hint="Choose the Python or dot net implementation" AutomationId="SettingsBackendSelector" /><Label Text="The backend is fixed after the first message in a conversation." Style="{StaticResource MutedBody}" FontSize="11" /></VerticalStackLayout>
+                    <VerticalStackLayout Spacing="6"><Label Text="AI model" Style="{StaticResource Eyebrow}" /><Picker Title="Choose a model" ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" IsEnabled="{Binding CanChangeModel}" SemanticProperties.Description="AI model" SemanticProperties.Hint="Choose the model used for the next response" AutomationId="SettingsModelPicker" /></VerticalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+        </Grid>
+
+        <Grid ZIndex="30" RowDefinitions="*,Auto" IsVisible="{Binding IsEvidenceVisible}" AutomationId="EvidenceSheet">
+            <BoxView Grid.RowSpan="2" BackgroundColor="{StaticResource Overlay}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseEvidenceCommand}" /></BoxView.GestureRecognizers></BoxView>
+            <Border Grid.Row="1" BackgroundColor="{StaticResource Canvas}" Stroke="{StaticResource InfraNavySoft}" StrokeThickness="1" Padding="20" MaximumHeightRequest="720" StrokeShape="RoundRectangle 24,24,0,0">
+                <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="12">
+                    <Grid ColumnDefinitions="*,Auto"><VerticalStackLayout Spacing="2"><Label Text="Evidence" Style="{StaticResource SectionTitle}" /><Label Text="Structured results from infrastructure data sources" Style="{StaticResource MutedBody}" FontSize="12" /></VerticalStackLayout><Button x:Name="CloseEvidenceButton" Grid.Column="1" Text="Close" Command="{Binding CloseEvidenceCommand}" Style="{StaticResource ToolbarButton}" AutomationId="CloseEvidence" /></Grid>
+                    <Grid Grid.Row="1" ColumnDefinitions="*,*" ColumnSpacing="8"><Border Style="{StaticResource ContextCard}"><VerticalStackLayout Spacing="3"><Label Text="Sources" Style="{StaticResource Eyebrow}" /><Label Text="{Binding SelectedEvidenceMessage.EvidenceLabel}" FontAttributes="Bold" /></VerticalStackLayout></Border><Border Grid.Column="1" Style="{StaticResource ContextCard}" IsVisible="{Binding SelectedEvidenceMessage.HasTrace}"><VerticalStackLayout Spacing="3"><Label Text="Trace" Style="{StaticResource Eyebrow}" /><Label Text="Available in Datadog" FontAttributes="Bold" /></VerticalStackLayout></Border></Grid>
+                    <Label Grid.Row="2" Text="External records can change. Open the official source before making a project decision." FontSize="12" TextColor="{StaticResource EvidenceAmber}" />
+                    <CollectionView Grid.Row="3" ItemsSource="{Binding SelectedEvidenceMessage.Evidence}" SelectionMode="None" AutomationId="EvidenceItems">
+                        <CollectionView.ItemsLayout><LinearItemsLayout Orientation="Vertical" ItemSpacing="10" /></CollectionView.ItemsLayout>
+                        <CollectionView.ItemTemplate><DataTemplate x:DataType="models:EvidenceCardItem"><Border Style="{StaticResource EvidenceCard}"><VerticalStackLayout Spacing="8"><Grid ColumnDefinitions="*,Auto"><Label Text="{Binding Kind}" Style="{StaticResource Eyebrow}" /><Border Grid.Column="1" Style="{StaticResource MetadataPill}"><Label Text="{Binding Source}" FontSize="11" TextColor="{StaticResource InfraNavy}" /></Border></Grid><Label Text="{Binding Title}" FontSize="16" FontAttributes="Bold" /><Label Text="{Binding Summary}" IsVisible="{Binding HasSummary}" LineBreakMode="WordWrap" /><Label Text="{Binding Agency}" IsVisible="{Binding HasAgency}" FontSize="12" TextColor="{StaticResource TextSecondary}" /><FlexLayout Direction="Row" Wrap="Wrap"><Label Text="{Binding Location}" IsVisible="{Binding HasLocation}" FontSize="12" TextColor="{StaticResource TextSecondary}" /><Label Text="{Binding Deadline}" IsVisible="{Binding HasDeadline}" Margin="8,0,0,0" FontSize="12" TextColor="{StaticResource EvidenceAmber}" FontAttributes="Bold" /><Label Text="{Binding Amount}" IsVisible="{Binding HasAmount}" Margin="8,0,0,0" FontSize="12" TextColor="{StaticResource Success}" FontAttributes="Bold" /></FlexLayout><Button Text="Open official source" IsVisible="{Binding HasLink}" Command="{Binding Source={x:Reference ChatRoot}, Path=ViewModel.OpenEvidenceSourceCommand, x:DataType=views:ChatPage}" CommandParameter="{Binding .}" Style="{StaticResource OutlineButton}" SemanticProperties.Hint="Opens the sanitized official source link" AutomationId="OpenEvidenceSource" /></VerticalStackLayout></Border></DataTemplate></CollectionView.ItemTemplate>
                     </CollectionView>
                 </Grid>
             </Border>

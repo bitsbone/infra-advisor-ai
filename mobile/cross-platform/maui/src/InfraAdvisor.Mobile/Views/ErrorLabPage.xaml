@@ -6,11 +6,12 @@
     x:Class="InfraAdvisor.Mobile.Views.ErrorLabPage"
     x:DataType="viewModels:ErrorLabViewModel"
     Title="Errors"
+    IconImageSource="tab_errors.png"
     SafeAreaEdges="Container"
     AutomationId="ErrorLabPage">
     <ScrollView>
         <VerticalStackLayout Padding="20" Spacing="16" MaximumWidthRequest="720">
-            <Label Text="Diagnostics" Style="{StaticResource PageTitle}" />
+            <Label Text="Errors" Style="{StaticResource PageTitle}" />
             <Label Text="Controlled examples for validating Datadog logs, errors, resources, and crash symbolication." TextColor="{StaticResource TextSecondary}" />
             <Border Style="{StaticResource Card}">
                 <VerticalStackLayout Spacing="12">

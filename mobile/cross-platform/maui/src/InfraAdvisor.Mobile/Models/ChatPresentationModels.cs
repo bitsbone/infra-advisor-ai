@@ -8,19 +8,32 @@ public partial class ChatMessageItem : ObservableObject
 {
     public required string Role { get; init; }
     public bool IsUser => Role == "user";
+    public bool IsAssistant => !IsUser;
     [ObservableProperty] private string content = string.Empty;
     [ObservableProperty] private string sourceText = string.Empty;
-    [ObservableProperty] private IReadOnlyList<string> sources = [];
-    [ObservableProperty] private IReadOnlyList<MediaReference> attachments = [];
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasSources))] private IReadOnlyList<string> sources = [];
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasAttachments))] private IReadOnlyList<MediaReference> attachments = [];
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasEvidence)), NotifyPropertyChangedFor(nameof(EvidenceLabel))] private IReadOnlyList<EvidenceCardItem> evidence = [];
     public ObservableCollection<PipelineStepItem> Steps { get; } = [];
     [ObservableProperty] private string metadata = string.Empty;
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.Now;
     public string TimestampText => Timestamp.ToLocalTime().ToString("t");
     public string? MessageId { get; set; }
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanFeedback))] private string? traceId;
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanFeedback))] private string? spanId;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanFeedback)), NotifyPropertyChangedFor(nameof(CanSubmitFeedback)), NotifyPropertyChangedFor(nameof(HasTrace))] private string? traceId;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanFeedback)), NotifyPropertyChangedFor(nameof(CanSubmitFeedback))] private string? spanId;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CopyLabel))] private bool isCopied;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanSubmitFeedback))] private bool isFeedbackSubmitting;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanSubmitFeedback)), NotifyPropertyChangedFor(nameof(HelpfulLabel)), NotifyPropertyChangedFor(nameof(ReportLabel))] private string? submittedFeedback;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasActionStatus))] private string actionStatus = string.Empty;
     public bool CanFeedback => TraceId is not null && SpanId is not null;
+    public bool CanSubmitFeedback => CanFeedback && !IsFeedbackSubmitting && SubmittedFeedback is null;
+    public string CopyLabel => IsCopied ? "Copied ✓" : "Copy";
+    public string HelpfulLabel => SubmittedFeedback == "positive" ? "Helpful ✓" : "Helpful";
+    public string ReportLabel => SubmittedFeedback == "reported" ? "Reported ✓" : "Report";
+    public bool HasActionStatus => !string.IsNullOrWhiteSpace(ActionStatus);
+    public bool HasTrace => TraceId is not null;
+    public bool HasSources => Sources.Count > 0;
+    public bool HasAttachments => Attachments.Count > 0;
     public bool HasEvidence => Evidence.Count > 0;
     public string EvidenceLabel => Evidence.Count == 1 ? "Review 1 evidence item" : $"Review {Evidence.Count} evidence items";
 }

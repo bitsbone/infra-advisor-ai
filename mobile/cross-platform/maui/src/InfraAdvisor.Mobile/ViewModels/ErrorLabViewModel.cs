@@ -59,7 +59,7 @@ public partial class ErrorLabViewModel(InfraAdvisorApiClient api, IObservability
     private void CrashApp()
     {
 #if DEBUG
-        AppTerminator.Crash("Intentional Infra Advisor MAUI Error Lab crash");
+        AppTerminator.Crash("Intentional InfraAdvisor MAUI Error Lab crash");
 #else
         ResultMessage = "Intentional crashes are available only in Debug builds.";
 #endif

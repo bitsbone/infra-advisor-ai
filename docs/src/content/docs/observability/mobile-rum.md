@@ -22,7 +22,7 @@ mobile action → RUM resource → client span → backend request → agent/mod
 
 All clients can observe views, authenticated resources, backend/model selection, media uploads, handled errors, logs, and crashes. They do not add passwords, JWTs, prompts, answers, filenames, signed URLs, or media content to custom telemetry.
 
-Identity is set only after authentication and cleared on logout. A request resource and span must start once and complete once—even when cancellation, streaming, or error paths race.
+Identity is set only after authentication and cleared on logout. The MAUI client stores its authenticated session in iOS Keychain or Android secure storage, restores the same Datadog user when the app restarts, and deletes the protected value during logout. A request resource and span must start once and complete once—even when cancellation, streaming, or error paths race.
 
 ## Implementation comparison
 
@@ -36,13 +36,21 @@ The MAUI client also demonstrates streaming chat, history, structured evidence, 
 
 The MAUI client uses Prism page navigation rather than MAUI Shell. The global Prism navigation event records only navigation type and outcome through the existing sanitized observability facade, while Datadog's automatic view tracking continues to name Login, Chat, History, Errors, and Info. Navigation failures therefore remain observable without adding routes, query parameters, prompts, or account data to custom telemetry.
 
+The authenticated Chat destination opens directly to a compact new-conversation composer. Backend and model use native platform pickers, suggestions appear once and include broad Grants.gov and SAM.gov MCP examples, saved conversations live only in the History tab, and Android uses the same bottom tab placement as iOS. Assistant Markdown is normalized into readable headings and lists; raw citation-button grids are omitted because normalized tool results already appear in the evidence sheet. These UI-only states remain inside the named Chat RUM view so a demo session stays easy to follow without creating noisy view transitions.
+
+Copy and feedback actions show their outcome beside the answer. Successful feedback still emits the sanitized `ai.feedback` operation and API resource, while visible failure text lets the user retry without adding answer content to telemetry.
+
+Helpful sends the categorical value `positive` with a passing assessment; Report sends `reported` with a failing assessment. The .NET backend uses Datadog's Evaluations API at `/api/intake/llm-obs/v2/eval-metric`, retaining `data.type=evaluation_metric` and setting `event_kind=feedback`. Both backends include the authenticated user ID as `submitter.id`, use the response span as the only target, and omit `join_on`. The signal appears in LLM Observability feedback views and can drive analysis or automation, but Report does not create a review queue or support ticket by itself. The Datadog API key remains server-side.
+
+The event contract follows the [Datadog Evaluations API](https://docs.datadoghq.com/llm_observability/instrument/api/?tab=example#evaluations-api) and [end-user feedback requirements](https://docs.datadoghq.com/llm_observability/configure/evaluations/end_user_feedback/).
+
 ## Verify one mobile request
 
-1. Log in and confirm the RUM user contains the intended stable account identity only.
+1. Log in, restart the app, and confirm the protected session restores the intended stable RUM user identity without recording the JWT.
 2. Submit a query and locate one resource with one matching client span.
 3. Follow distributed trace context into the selected backend.
 4. Add media and verify telemetry contains kind/size/duration but not filename, signed URL, or content.
-5. Log out and verify later events no longer carry the prior user identity.
+5. Log out and verify the saved session is removed and later events no longer carry the prior user identity.
 6. Exercise a handled failure and confirm the resource, span, log, and error agree on outcome.
 
 ## Release symbols and test artifacts

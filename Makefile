@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-redis-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm run-dags apply-datadog-agent install-airflow recover-airflow-destructive preflight-airflow-cluster verify-airflow-image upgrade-airflow sync-dags build-airflow-image test-airflow test-airflow-container otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector run-ios run-android help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-redis-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm run-dags apply-datadog-agent install-airflow recover-airflow-destructive preflight-airflow-cluster verify-airflow-image upgrade-airflow sync-dags build-airflow-image test-airflow test-airflow-container otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector run-ios run-android run-prism-ios help
 
 # Load .env for normal local operation. Set SKIP_DOTENV=1 for documentation,
 # static analysis, and dry runs so Make never expands local credentials.
@@ -19,6 +19,16 @@ AIRFLOW_IMAGE_TAG ?= latest
 AIRFLOW_NAMESPACE ?= airflow
 AIRFLOW_DESTRUCTIVE_RECOVERY ?=
 MAUI_PROJECT ?= mobile/cross-platform/maui/src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj
+MAUI_IOS_CONFIGURATION ?= Debug
+MAUI_IOS_RUNTIME_IDENTIFIER ?= iossimulator-arm64
+MAUI_IOS_APP ?= mobile/cross-platform/maui/src/InfraAdvisor.Mobile/bin/$(MAUI_IOS_CONFIGURATION)/net10.0-ios/$(MAUI_IOS_RUNTIME_IDENTIFIER)/InfraAdvisor.Mobile.app
+MAUI_IOS_BUNDLE_ID ?= dev.kyletaylor.infraadvisor.maui
+PRISM_SAMPLE_ROOT ?= _reference/Prism-Samples-Maui
+PRISM_SAMPLE_PROJECT ?= sample-template/PrismSample/PrismSample.csproj
+PRISM_SAMPLE_APP ?= sample-template/PrismSample/bin/Debug/net8.0-ios/iossimulator-arm64/PrismSample.app
+PRISM_XCODE_DEVELOPER_DIR ?= /Applications/Xcode-16.4.0.app/Contents/Developer
+PRISM_IOS_RUNTIME ?= 18.4
+PRISM_IOS_SIMULATOR_UDID ?=
 IOS_SIMULATOR_UDID ?=
 
 help: ## Show this help
@@ -29,7 +39,8 @@ help: ## Show this help
 run-ios: ## Run the MAUI app on the booted iOS simulator (IOS_SIMULATOR_UDID optional)
 	@command -v dotnet >/dev/null || { echo "ERROR: dotnet is not installed"; exit 1; }
 	@command -v xcrun >/dev/null || { echo "ERROR: Xcode command-line tools are not installed"; exit 1; }
-	@SIMULATOR_UDID="$(IOS_SIMULATOR_UDID)"; \
+	@set -e; \
+	SIMULATOR_UDID="$(IOS_SIMULATOR_UDID)"; \
 	if [ -z "$$SIMULATOR_UDID" ]; then \
 		SIMULATOR_UDID="$$(xcrun simctl list devices booted | awk -F '[()]' '/Booted/ { print $$2; exit }')"; \
 	fi; \
@@ -37,12 +48,47 @@ run-ios: ## Run the MAUI app on the booted iOS simulator (IOS_SIMULATOR_UDID opt
 		echo "ERROR: No booted iOS simulator found. Start one or run make run-ios IOS_SIMULATOR_UDID=<UDID>."; \
 		exit 1; \
 	fi; \
-	echo "→ Running MAUI iOS on $$SIMULATOR_UDID"; \
-	dotnet build "$(MAUI_PROJECT)" -f net10.0-ios -t:Run -p:InfraAdvisorBuildPlatform=ios -p:RuntimeIdentifier=iossimulator-arm64 "-p:_DeviceName=:v2:udid=$$SIMULATOR_UDID"
+	SDK_VERSION="$$(xcrun --sdk iphonesimulator --show-sdk-version)"; \
+	if ! xcrun simctl list runtimes available | grep -q "iOS $$SDK_VERSION"; then \
+		echo "ERROR: The selected Xcode provides iOS SDK $$SDK_VERSION, but that simulator runtime is not installed."; \
+		echo "Install iOS $$SDK_VERSION in Xcode → Settings → Components, or select an Xcode whose SDK matches an installed runtime."; \
+		exit 1; \
+	fi; \
+	echo "→ Building current InfraAdvisor sources"; \
+	dotnet build "$(MAUI_PROJECT)" -f net10.0-ios -c "$(MAUI_IOS_CONFIGURATION)" -p:InfraAdvisorBuildPlatform=ios -p:RuntimeIdentifier="$(MAUI_IOS_RUNTIME_IDENTIFIER)"; \
+	echo "→ Replacing InfraAdvisor on $$SIMULATOR_UDID"; \
+	xcrun simctl terminate "$$SIMULATOR_UDID" "$(MAUI_IOS_BUNDLE_ID)" 2>/dev/null || true; \
+	xcrun simctl uninstall "$$SIMULATOR_UDID" "$(MAUI_IOS_BUNDLE_ID)" 2>/dev/null || true; \
+	xcrun simctl install "$$SIMULATOR_UDID" "$(MAUI_IOS_APP)"; \
+	xcrun simctl launch --terminate-running-process "$$SIMULATOR_UDID" "$(MAUI_IOS_BUNDLE_ID)"
 
 run-android: ## Run the MAUI app on the connected Android emulator
 	@command -v dotnet >/dev/null || { echo "ERROR: dotnet is not installed"; exit 1; }
 	@dotnet build "$(MAUI_PROJECT)" -f net10.0-android -t:Run -p:InfraAdvisorBuildPlatform=android
+
+run-prism-ios: ## Run the Prism MAUI reference app on a compatible iOS simulator
+	@command -v dotnet >/dev/null || { echo "ERROR: dotnet is not installed"; exit 1; }
+	@command -v xcrun >/dev/null || { echo "ERROR: Xcode command-line tools are not installed"; exit 1; }
+	@if [ ! -d "$(PRISM_XCODE_DEVELOPER_DIR)" ]; then echo "ERROR: Xcode 16.4 was not found at $(PRISM_XCODE_DEVELOPER_DIR)."; exit 1; fi
+	@SIMULATOR_UDID="$(PRISM_IOS_SIMULATOR_UDID)"; \
+	if [ -z "$$SIMULATOR_UDID" ]; then \
+		SIMULATOR_UDID="$$(DEVELOPER_DIR="$(PRISM_XCODE_DEVELOPER_DIR)" xcrun simctl list devices available | awk -F '[()]' -v runtime="$(PRISM_IOS_RUNTIME)" '$$0 == "-- iOS " runtime " --" { active=1; next } /^-- / { active=0 } active && /Booted/ { print $$2; exit }')"; \
+	fi; \
+	if [ -z "$$SIMULATOR_UDID" ]; then \
+		SIMULATOR_UDID="$$(DEVELOPER_DIR="$(PRISM_XCODE_DEVELOPER_DIR)" xcrun simctl list devices available | awk -F '[()]' -v runtime="$(PRISM_IOS_RUNTIME)" '$$0 == "-- iOS " runtime " --" { active=1; next } /^-- / { active=0 } active && /iPhone/ { print $$2; exit }')"; \
+	fi; \
+	if [ -z "$$SIMULATOR_UDID" ]; then \
+		echo "ERROR: No iOS $(PRISM_IOS_RUNTIME) simulator found. Install that runtime or set PRISM_IOS_SIMULATOR_UDID=<UDID>."; \
+		exit 1; \
+	fi; \
+	DEVELOPER_DIR="$(PRISM_XCODE_DEVELOPER_DIR)" xcrun simctl boot "$$SIMULATOR_UDID" 2>/dev/null || true; \
+	DEVELOPER_DIR="$(PRISM_XCODE_DEVELOPER_DIR)" xcrun simctl bootstatus "$$SIMULATOR_UDID" -b; \
+	open "$(PRISM_XCODE_DEVELOPER_DIR)/Applications/Simulator.app" --args -CurrentDeviceUDID "$$SIMULATOR_UDID"; \
+	echo "→ Running Prism MAUI sample on $$SIMULATOR_UDID"; \
+	cd "$(PRISM_SAMPLE_ROOT)" && \
+	DEVELOPER_DIR="$(PRISM_XCODE_DEVELOPER_DIR)" dotnet build "$(PRISM_SAMPLE_PROJECT)" -f net8.0-ios -c Debug -p:TargetFrameworks=net8.0-ios -p:CheckEolWorkloads=false -p:SkipPrismPreviewAssets=true -p:ValidateXcodeVersion=false -p:RuntimeIdentifier=iossimulator-arm64 && \
+	DEVELOPER_DIR="$(PRISM_XCODE_DEVELOPER_DIR)" xcrun simctl install "$$SIMULATOR_UDID" "$(PRISM_SAMPLE_APP)" && \
+	DEVELOPER_DIR="$(PRISM_XCODE_DEVELOPER_DIR)" xcrun simctl launch --terminate-running-process "$$SIMULATOR_UDID" com.prismlibrary.prismsample
 
 check-env: ## Verify all required env vars are set before deploying
 	@echo "→ Checking required environment variables..."

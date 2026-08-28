@@ -41,7 +41,7 @@ public class SuggestionService
             "Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?"),
         new SuggestionItem(
             "Infrastructure opportunities",
-            "What active federal procurement opportunities exist for infrastructure engineering services on SAM.gov with NAICS codes for civil or environmental work?"),
+            "What active federal procurement opportunities exist for civil engineering, water, transportation, or resilience work?"),
         new SuggestionItem(
             "Disaster risk counties",
             "Which Texas counties have received 5 or more FEMA disaster declarations since 2010, and what hazard types are most frequent?"),
@@ -124,10 +124,10 @@ public class SuggestionService
         "director would ask. Each question maps to get_contract_awards, get_procurement_" +
         "opportunities, or search_web_procurement. Many BD questions are best as the " +
         "PAIR get_contract_awards → get_procurement_opportunities — phrase the suggestion " +
-        "so it naturally invokes both ('find historical TxDOT bridge awards and current " +
-        "open opportunities under NAICS 237310').\n" +
-        "Every question must reference a specific NAICS code, agency, dollar threshold, " +
-        "or geography. No emojis in labels. Labels 2-5 words.\n" +
+        "so it naturally invokes both ('find recent infrastructure awards and related " +
+        "active opportunities').\n" +
+        "Questions may reference an agency, dollar threshold, or geography, but must not " +
+        "require an exact NAICS code. No emojis in labels. Labels 2-5 words.\n" +
         "Return ONLY valid JSON, no markdown:\n" +
         "{\"suggestions\": [{\"label\": \"...\", \"query\": \"...\"}, ... 10 items ...]}",
 
@@ -198,11 +198,11 @@ public class SuggestionService
 
         // Federal procurement — chained tools (the BD golden path)
         new SuggestionItem(
-            "TX highway BD",
-            "Find recent federal contract awards for highway construction in Texas under NAICS 237310, then list open opportunities matching the same NAICS."),
+            "Infrastructure bids",
+            "Find recent federal infrastructure contract awards, then show active opportunities for related civil engineering, water, transportation, or resilience work."),
         new SuggestionItem(
-            "Water engineering RFPs",
-            "Show active federal solicitations for water engineering services (NAICS 541330 or 237110) with bid deadlines in the next 60 days."),
+            "Water infrastructure bids",
+            "Show active federal solicitations for water, wastewater, or utility engineering work with upcoming bid deadlines."),
 
         // Document drafting — chained: knowledge → draft
         new SuggestionItem(

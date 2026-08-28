@@ -1014,7 +1014,7 @@ app.MapGet("/ai-guard/status", (
     });
 });
 
-app.MapPost("/feedback", (FeedbackRequest body) =>
+app.MapPost("/feedback", async (FeedbackRequest body, HttpContext httpContext, DatadogEvalsClient ddEvals, CancellationToken cancellationToken) =>
 {
     var validRatings = new HashSet<string> { "positive", "negative", "reported" };
     if (!validRatings.Contains(body.Rating))
@@ -1024,14 +1024,18 @@ app.MapPost("/feedback", (FeedbackRequest body) =>
             statusCode: 422);
     }
 
-    // Feedback now flows as a tag on the current trace's HTTP span — the
-    // hand-rolled "user-feedback" activity from the old LlmTelemetry helper
-    // is gone. APM picks it up via the AspNetCore instrumentation.
+    var submitterId = httpContext.User.FindFirst("sub")?.Value;
+    if (submitterId is null) return Results.Unauthorized();
+
+    // Keep low-cardinality APM tags and a counter for API operations, then send
+    // the separate LLM Observability feedback event against the response span.
     var current = Activity.Current;
     foreach (var tag in TelemetryPrivacy.SafeFeedbackTags(body.TraceId, body.SpanId, body.Rating, body.SessionId))
         current?.SetTag(tag.Key, tag.Value);
 
     feedbackCounter.Add(1, new KeyValuePair<string, object?>("rating", body.Rating));
+    var submitted = await ddEvals.SubmitFeedbackAsync(body.TraceId, body.SpanId, body.Rating, submitterId, cancellationToken);
+    if (!submitted) return Results.Problem(detail: "Feedback could not be submitted", statusCode: 502);
 
     return Results.StatusCode(204);
 }).RequireAuthorization();

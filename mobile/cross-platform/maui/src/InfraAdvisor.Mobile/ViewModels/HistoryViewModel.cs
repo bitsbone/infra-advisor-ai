@@ -12,11 +12,12 @@ public partial class HistoryViewModel(InfraAdvisorApiClient api, AppSession sess
     public ObservableCollection<ConversationSummary> Conversations { get; } = [];
 
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasError))] private string? errorMessage;
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasNoConversations))] private bool isLoading;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasNoConversations)), NotifyPropertyChangedFor(nameof(CanRefresh))] private bool isLoading;
     [ObservableProperty] private ConversationSummary? selectedConversation;
 
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
     public bool HasNoConversations => !IsLoading && Conversations.Count == 0;
+    public bool CanRefresh => !IsLoading;
 
     partial void OnSelectedConversationChanged(ConversationSummary? value)
     {

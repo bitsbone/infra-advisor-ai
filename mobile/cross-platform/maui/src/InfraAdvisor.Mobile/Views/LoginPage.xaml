@@ -11,18 +11,18 @@
     <ScrollView>
         <Grid Padding="24" RowDefinitions="*,Auto,*" MinimumHeightRequest="700">
             <VerticalStackLayout Grid.Row="1" Spacing="20" MaximumWidthRequest="480">
-                <Image Source="brandmark.png" HeightRequest="72" WidthRequest="72" HorizontalOptions="Start" SemanticProperties.Description="Infra Advisor bridge logo" />
+                <Image Source="brandmark.png" HeightRequest="72" WidthRequest="72" HorizontalOptions="Start" SemanticProperties.Description="InfraAdvisor bridge logo" />
                 <VerticalStackLayout Spacing="6">
-                    <Label Text="Infra Advisor" Style="{StaticResource PageTitle}" />
+                    <Label Text="InfraAdvisor" Style="{StaticResource PageTitle}" />
                     <Label Text="AI guidance for resilient infrastructure, with end-to-end observability built in." TextColor="{StaticResource TextSecondary}" FontSize="16" />
                 </VerticalStackLayout>
                 <Border Style="{StaticResource Card}">
                     <VerticalStackLayout Spacing="14">
                         <Label Text="Sign in" Style="{StaticResource SectionTitle}" />
-                        <Entry x:Name="EmailEntry" Placeholder="Email" Keyboard="Email" Text="{Binding Email}" ReturnType="Next" Completed="OnEmailCompleted" SemanticProperties.Description="Email address" SemanticProperties.Hint="Enter the email address for your Infra Advisor account" AutomationId="LoginEmail" />
+                        <Entry x:Name="EmailEntry" Placeholder="Email" Keyboard="Email" Text="{Binding Email}" ReturnType="Next" Completed="OnEmailCompleted" SemanticProperties.Description="Email address" SemanticProperties.Hint="Enter the email address for your InfraAdvisor account" AutomationId="LoginEmail" />
                         <Entry x:Name="PasswordEntry" Placeholder="Password" IsPassword="True" Text="{Binding Password}" ReturnType="Go" Completed="OnPasswordCompleted" SemanticProperties.Description="Password" SemanticProperties.Hint="Enter your password. This value is masked and is not included in telemetry" AutomationId="LoginPassword" />
                         <Label Text="{Binding ErrorMessage}" TextColor="{StaticResource Danger}" IsVisible="{Binding HasError}" SemanticProperties.Description="Sign-in error" />
-                        <Button Text="{Binding SubmitLabel}" Command="{Binding LoginCommand}" IsEnabled="{Binding CanSubmit}" SemanticProperties.Hint="Signs in and opens Field Advisor" AutomationId="LoginSubmit" />
+                        <Button Text="{Binding SubmitLabel}" Command="{Binding LoginCommand}" IsEnabled="{Binding CanSubmit}" SemanticProperties.Hint="Signs in and opens InfraAdvisor" AutomationId="LoginSubmit" />
                     </VerticalStackLayout>
                 </Border>
                 <Label Text="Credentials and session tokens remain in memory and are never included in telemetry." FontSize="12" TextColor="{StaticResource TextSecondary}" />

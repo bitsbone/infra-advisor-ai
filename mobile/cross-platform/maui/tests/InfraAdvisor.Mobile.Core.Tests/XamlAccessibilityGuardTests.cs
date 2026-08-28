@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 namespace InfraAdvisor.Mobile.Tests;
@@ -34,7 +35,7 @@ public sealed class XamlAccessibilityGuardTests
     [Fact]
     public void InputsHaveSemanticNamesAndAutomationIds()
     {
-        var inputNames = new HashSet<string>(StringComparer.Ordinal) { "Entry", "Editor", "Picker", "BackendSegmentedControl" };
+        var inputNames = new HashSet<string>(StringComparer.Ordinal) { "Entry", "Editor", "Picker" };
 
         foreach (var (path, document) in PageDocuments())
         {
@@ -72,10 +73,59 @@ public sealed class XamlAccessibilityGuardTests
     {
         var chat = XDocument.Load(Path.Combine(MauiRoot(), "src", "InfraAdvisor.Mobile", "Views", "ChatPage.xaml"));
 
-        Assert.Contains(chat.Descendants().Where(element => element.Name.LocalName == "ScrollView"), element => element.Attribute("AutomationId")?.Value == "AdvisorConfigurationScroll");
+        Assert.Contains(chat.Descendants(), element => element.Attribute("AutomationId")?.Value == "AdvisorConfigurationCard");
         Assert.Contains(chat.Descendants().Where(element => element.Name.LocalName == "ScrollView"), element => element.Attribute("AutomationId")?.Value == "EmptyAdvisorScroll");
         Assert.DoesNotContain(chat.Descendants().Where(element => element.Name.LocalName == "HorizontalStackLayout" && element.Attribute("BindableLayout.ItemsSource") is not null), element => element.Ancestors().All(ancestor => ancestor.Name.LocalName != "ScrollView"));
         Assert.Contains(chat.Descendants().Where(element => element.Name.LocalName == "FlexLayout"), element => element.Attribute("Wrap")?.Value == "Wrap");
+    }
+
+    [Fact]
+    public void ChatUsesOneNewConversationSurfaceWithoutADuplicateHistoryDrawerOrCitationButtons()
+    {
+        var chat = XDocument.Load(Path.Combine(MauiRoot(), "src", "InfraAdvisor.Mobile", "Views", "ChatPage.xaml"));
+
+        Assert.Contains(chat.Descendants(), element => element.Attribute("AutomationId")?.Value == "EmptyAdvisorScroll");
+        Assert.DoesNotContain(chat.Descendants(), element => element.Attribute("AutomationId")?.Value == "ConversationHistorySheet");
+        Assert.DoesNotContain(chat.Descendants(), element => element.Attribute("AutomationId")?.Value == "HomeConversationHistory");
+        Assert.DoesNotContain(chat.Descendants(), element => element.Attribute("AutomationId")?.Value == "OpenCitation");
+        Assert.DoesNotContain(chat.Descendants().Attributes("Text"), attribute => attribute.Value.Contains("Evidence-backed infrastructure guidance", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(chat.Descendants(), element => element.Name.LocalName == "BackendSegmentedControl");
+        Assert.Equal(4, chat.Descendants().Count(element => element.Name.LocalName == "Picker" && element.Attribute("AutomationId")?.Value is "BackendSelector" or "ModelPicker" or "SettingsBackendSelector" or "SettingsModelPicker"));
+        Assert.DoesNotContain(chat.Descendants(), element => element.Attribute("Source")?.Value == "dropdown_chevron.png");
+    }
+
+    [Fact]
+    public void AndroidUsesTheSharedBottomTabBar()
+    {
+        var styles = XDocument.Load(Path.Combine(MauiRoot(), "src", "InfraAdvisor.Mobile", "Resources", "Styles", "Styles.xaml"));
+        var tabStyle = styles.Descendants().Single(element => element.Name.LocalName == "Style" && element.Attribute("TargetType")?.Value == "TabbedPage");
+
+        Assert.Contains(tabStyle.Elements(), element => element.Attribute("Property")?.Value == "android:TabbedPage.ToolbarPlacement" && element.Attribute("Value")?.Value == "Bottom");
+    }
+
+    [Fact]
+    public void AndroidManifestDeclaresGeneratedLauncherIcons()
+    {
+        var manifest = XDocument.Load(Path.Combine(MauiRoot(), "src", "InfraAdvisor.Mobile", "Platforms", "Android", "AndroidManifest.xml"));
+        var android = (XNamespace)"http://schemas.android.com/apk/res/android";
+        var application = manifest.Root!.Elements().Single(element => element.Name.LocalName == "application");
+
+        Assert.Equal("@mipmap/appicon", application.Attribute(android + "icon")?.Value);
+        Assert.Equal("@mipmap/appicon_round", application.Attribute(android + "roundIcon")?.Value);
+    }
+
+    [Fact]
+    public void MessageActionsExposeVisibleCompletionState()
+    {
+        var chat = XDocument.Load(Path.Combine(MauiRoot(), "src", "InfraAdvisor.Mobile", "Views", "ChatPage.xaml"));
+
+        Assert.Contains(chat.Descendants(), element => element.Attribute("AutomationId")?.Value == "CopyMessage" && element.Attribute("Text")?.Value == "{Binding CopyLabel}");
+        Assert.Contains(chat.Descendants(), element => element.Attribute("AutomationId")?.Value == "PositiveFeedback" && element.Attribute("Text")?.Value == "{Binding HelpfulLabel}");
+        Assert.Contains(chat.Descendants(), element => element.Attribute("AutomationId")?.Value == "ReportFeedback" && element.Attribute("Text")?.Value == "{Binding ReportLabel}");
+        Assert.Contains(chat.Descendants(), element => element.Attribute("Text")?.Value == "{Binding ActionStatus}");
+        Assert.DoesNotContain(chat.Descendants().Attributes(), attribute => attribute.Name.LocalName == "LiveSetting");
+        var codeBehind = File.ReadAllText(Path.Combine(MauiRoot(), "src", "InfraAdvisor.Mobile", "Views", "ChatPage.xaml.cs"));
+        Assert.Contains("nameof(ChatMessageItem.ActionStatus)", codeBehind, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -91,15 +141,46 @@ public sealed class XamlAccessibilityGuardTests
     }
 
     [Fact]
-    public void ChatSheetsHideTheUnderlyingAdvisorAndExposeStableCloseTargets()
+    public void ChatSheetsHideTheUnderlyingExperienceAndExposeStableCloseTargets()
     {
         var chat = XDocument.Load(Path.Combine(MauiRoot(), "src", "InfraAdvisor.Mobile", "Views", "ChatPage.xaml"));
         var protectedLayers = chat.Descendants().Where(element => element.Attribute("AutomationProperties.ExcludedWithChildren")?.Value == "{Binding IsModalVisible}").ToArray();
 
-        Assert.Equal(2, protectedLayers.Length);
+        Assert.Single(protectedLayers);
         Assert.All(protectedLayers, element => Assert.Equal("{Binding IsModalVisible}", element.Attribute("InputTransparent")?.Value));
-        Assert.Contains(chat.Descendants(), element => element.Attribute(Xaml + "Name")?.Value == "CloseConversationHistoryButton");
+        Assert.Contains(chat.Descendants(), element => element.Attribute(Xaml + "Name")?.Value == "CloseResponseSettingsButton");
         Assert.Contains(chat.Descendants(), element => element.Attribute(Xaml + "Name")?.Value == "CloseEvidenceButton");
+    }
+
+    [Fact]
+    public void ProductTabsUseStableNamesAndVectorIcons()
+    {
+        var expected = new Dictionary<string, (string title, string icon)>
+        {
+            ["ChatPage.xaml"] = ("Chat", "tab_chat.png"),
+            ["HistoryPage.xaml"] = ("History", "tab_history.png"),
+            ["ErrorLabPage.xaml"] = ("Errors", "tab_errors.png"),
+            ["InfoPage.xaml"] = ("Info", "tab_info.png"),
+        };
+
+        foreach (var (file, contract) in expected)
+        {
+            var page = XDocument.Load(Path.Combine(MauiRoot(), "src", "InfraAdvisor.Mobile", "Views", file));
+            Assert.Equal(contract.title, page.Root?.Attribute("Title")?.Value);
+            Assert.Equal(contract.icon, page.Root?.Attribute("IconImageSource")?.Value);
+        }
+
+        Assert.DoesNotContain(AllMauiXaml(), item => item.document.Root?.DescendantsAndSelf().Attributes().Any(attribute => attribute.Value.Contains("Field Advisor", StringComparison.OrdinalIgnoreCase)) == true);
+    }
+
+    [Fact]
+    public void EveryStaticResourceReferenceHasADeclaredKey()
+    {
+        var documents = AllMauiXaml().ToArray();
+        var declared = documents.SelectMany(item => item.document.Root!.DescendantsAndSelf()).Select(element => element.Attribute(Xaml + "Key")?.Value).Where(value => !string.IsNullOrWhiteSpace(value)).ToHashSet(StringComparer.Ordinal);
+        var references = documents.SelectMany(item => item.document.Root!.DescendantsAndSelf().Attributes()).SelectMany(attribute => Regex.Matches(attribute.Value, @"\{StaticResource\s+([^},]+)").Select(match => match.Groups[1].Value.Trim())).Distinct(StringComparer.Ordinal);
+
+        Assert.DoesNotContain(references, key => !declared.Contains(key));
     }
 
     private static XElement Style(XDocument document, string key) => document.Descendants().Single(element => element.Name.LocalName == "Style" && element.Attribute(Xaml + "Key")?.Value == key);

@@ -287,10 +287,10 @@ _SEED_POOL: list[SuggestionItem] = [
     SuggestionItem(label="TxDOT pavement data",
                    query="Find TxDOT Open Data datasets related to pavement condition."),
     # Federal procurement — chained tools (the BD golden path)
-    SuggestionItem(label="TX highway BD",
-                   query="Find recent federal contract awards for highway construction in Texas under NAICS 237310, then list open opportunities matching the same NAICS."),
-    SuggestionItem(label="Water engineering RFPs",
-                   query="Show active federal solicitations for water engineering services (NAICS 541330 or 237110) with bid deadlines in the next 60 days."),
+    SuggestionItem(label="Infrastructure bids",
+                   query="Find recent federal infrastructure contract awards, then show active opportunities for related civil engineering, water, transportation, or resilience work."),
+    SuggestionItem(label="Water infrastructure bids",
+                   query="Show active federal solicitations for water, wastewater, or utility engineering work with upcoming bid deadlines."),
     # Document drafting — chained: knowledge → draft
     SuggestionItem(label="SOW for bridge rehab",
                    query="Pull templates and prior projects for bridge rehabilitation, then draft a scope_of_work for an IH-35 bridge corridor project."),
@@ -351,9 +351,9 @@ Return ONLY valid JSON, no markdown:
 Generate exactly 10 specific opening questions a construction project manager or BD director at an \
 infrastructure consulting firm would ask an AI assistant backed by SAM.gov, USASpending.gov, and state \
 procurement portals.
-Focus on: active federal solicitations, contract award benchmarks by NAICS code, incumbent contractor \
+Focus on: active federal solicitations, contract award benchmarks, incumbent contractor \
 analysis, grant program deadlines, bond election schedules, and price-per-unit benchmarks.
-Every question must reference a specific NAICS code, agency, dollar threshold, or geography. No emojis in labels. Labels 2-5 words.
+Questions may reference an agency, dollar threshold, or geography, but must not require an exact NAICS code. No emojis in labels. Labels 2-5 words.
 Return ONLY valid JSON, no markdown:
 {{"suggestions": [{{"label": "...", "query": "..."}}, ... 10 items ...]}}""",
 
@@ -915,7 +915,7 @@ class FeedbackRequest(BaseModel):
 @app.post("/feedback", status_code=204)
 async def feedback(
     body: FeedbackRequest,
-    _user: dict = Depends(require_auth),
+    user: dict = Depends(require_auth),
 ) -> None:
     """Record user feedback for an agent response in Datadog LLM Observability."""
     if body.rating not in _VALID_RATINGS:
@@ -923,12 +923,13 @@ async def feedback(
             status_code=422,
             detail=f"Invalid rating '{body.rating}'. Must be one of: {sorted(_VALID_RATINGS)}",
         )
-    submit_user_feedback(
-        trace_id=body.trace_id,
+    submitted = await submit_user_feedback(
         span_id=body.span_id,
         rating=body.rating,
-        session_id=body.session_id,
+        submitter_id=str(user["sub"]),
     )
+    if not submitted:
+        raise HTTPException(status_code=502, detail="Feedback could not be submitted")
 
 
 # ─── Conversation endpoints ───────────────────────────────────────────────────

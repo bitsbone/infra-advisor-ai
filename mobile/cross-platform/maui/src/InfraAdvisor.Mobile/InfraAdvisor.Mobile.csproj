@@ -11,7 +11,7 @@
     <!-- Keep Release bindings trim-safe: a missing or mismatched x:DataType is a build failure, not a runtime-only surprise. -->
     <WarningsAsErrors>$(WarningsAsErrors);XC0022;XC0023;XC0025</WarningsAsErrors>
     <SingleProject>true</SingleProject>
-    <ApplicationTitle>Infra Advisor</ApplicationTitle>
+    <ApplicationTitle>InfraAdvisor</ApplicationTitle>
     <ApplicationId>dev.kyletaylor.infraadvisor.maui</ApplicationId>
     <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
     <ApplicationVersion>1</ApplicationVersion>
@@ -62,6 +62,8 @@
     <MauiSplashScreen Include="../../../../../docs/public/favicon.svg" Link="Resources/Splash/splash.svg" Color="#F8FAFC" BaseSize="128,128" />
     <MauiImage Include="../../../../../docs/public/favicon.svg" Link="Resources/Images/brandmark.svg" BaseSize="128,128" />
     <MauiImage Include="Resources/Images/*" />
+    <MauiImage Update="Resources/Images/tab_*.svg" BaseSize="24,24" />
+    <MauiImage Update="Resources/Images/action_refresh.svg" BaseSize="20,20" />
     <MauiFont Include="Resources/Fonts/*" />
     <MauiAsset Include="Resources/Raw/**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
@@ -73,7 +75,7 @@
     <!-- Build-only Source Link metadata maps mobile crash frames to the matching GitHub source revision. -->
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.400" PrivateAssets="all" />
     <PackageReference Include="Plugin.Maui.Audio" Version="4.0.0" />
-    <PackageReference Include="Syncfusion.Maui.Toolkit" Version="1.0.10" />
+    <PackageReference Include="Prism.DryIoc.Maui" Version="9.0.537" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../InfraAdvisor.Mobile.Core/InfraAdvisor.Mobile.Core.csproj" />
