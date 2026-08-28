@@ -64,6 +64,7 @@ jobs:
               - 'k8s/auth-api/**'
             load-generator:
               - 'services/load-generator/**'
+              - 'k8s/load-generator/**'
             ui:
               - 'services/ui/**'
               - 'k8s/ui/**'
@@ -301,6 +302,7 @@ jobs:
           [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && kubectl apply -f k8s/agent-api/
           [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && kubectl apply -f k8s/agent-api-dotnet/
           [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && kubectl apply -f k8s/auth-api/
+          [ "${{ needs.changes.outputs.load-generator }}" == "true" ]     && kubectl apply -f k8s/load-generator/
           [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && kubectl apply -f k8s/ui/
           true  # ensure step always exits 0
 
