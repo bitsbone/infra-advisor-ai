@@ -1,98 +1,75 @@
 ---
-title: LLM Engineering Guide
-description: How to instrument, monitor, evaluate, and operate an LLM application end-to-end with Datadog. InfraAdvisor's Python (ddtrace) and .NET (OpenTelemetry) services are the worked example.
+title: Agent Observability Lab
+description: Learn why Datadog Agent Observability features exist by implementing them in a working application and inspecting the resulting telemetry
+docType: guide
+audience:
+  - application-developer
+  - observability-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+datadogDocs: https://docs.datadoghq.com/llm_observability/
 sidebar:
   order: 1
   label: Overview
 ---
 
-import { CardGrid, LinkCard, Aside } from "@astrojs/starlight/components";
+import { CardGrid, LinkCard, Aside } from '@astrojs/starlight/components';
+import FeatureStatus from '@components/FeatureStatus.astro';
 
-This is the engineering guide for shipping production-grade LLM applications on Datadog. It mirrors the structure of [Datadog's LLM Observability docs](https://docs.datadoghq.com/llm_observability/) and uses InfraAdvisor — a multi-agent infrastructure-consulting app — as the worked example. Every page shows code from a real service, tabbed by language so you can read whichever stack you're shipping on.
+<FeatureStatus status="stable" verifiedOn="2026-08-27" label="Living learning guide" />
 
-InfraAdvisor runs two agent backends in parallel, deliberately:
+This guide uses InfraAdvisor as a working laboratory for Datadog Agent Observability. The goal is not to reproduce Datadog's reference documentation. It is to connect product capabilities to concrete implementation choices, application behavior, and telemetry you can inspect.
 
-- **`agent-api` (Python)** — LangChain + LangGraph; instrumented with `ddtrace.auto` and explicit `LLMObs.*` calls. Showcases the auto-instrumentation path.
-- **`agent-api-dotnet` (.NET)** — Microsoft Agents Framework + Microsoft.Extensions.AI; instrumented with the OpenTelemetry SDK only, exported via OTLP to a Datadog Agent collector. Showcases the pure-OTel path.
+InfraAdvisor deliberately runs two agent backends:
 
-Same product surface, two telemetry pipelines. If you're choosing a stack, the [Instrumentation](./instrumentation/python/) pages are the right place to start.
+- **Python** uses LangChain, LangGraph, `ddtrace.auto`, and explicit `LLMObs` spans.
+- **.NET** uses Microsoft Agents Framework, Microsoft.Extensions.AI, OpenTelemetry, and OTLP export through the Datadog Agent.
 
-## What's in this guide
-
-<CardGrid>
-  <LinkCard
-    title="Quickstart"
-    href="./quickstart/"
-    description="Your first /query showing up in LLM Observability — env vars, deploy, what to click on."
-  />
-  <LinkCard
-    title="Instrumentation"
-    href="./instrumentation/python/"
-    description="ddtrace auto-instrumentation (Python) and pure OpenTelemetry SDK (.NET)."
-  />
-  <LinkCard
-    title="Monitoring"
-    href="./monitoring/spans-and-traces/"
-    description="Querying spans, APM/log/DBM correlation, MCP traces, prompt tracking, metrics."
-  />
-  <LinkCard
-    title="Evaluations"
-    href="./evaluations/managed/"
-    description="Managed evals, LLM-judge, external evals API, annotation queues, export API."
-  />
-  <LinkCard
-    title="Experiments"
-    href="./experiments/"
-    description="Datasets, offline regression testing, prompt optimization. Roadmap item."
-  />
-  <LinkCard
-    title="Datadog MCP server"
-    href="./datadog-mcp/"
-    description="Using DD's MCP server to debug both this app and its observability data."
-  />
-  <LinkCard
-    title="Multimodal input"
-    href="./multimodal/"
-    description="Image + voice chat attachments — the audio cascade design, vision content parts, and tag-based instrumentation given ddtrace's text-only message schema."
-  />
-  <LinkCard
-    title="Data security & RBAC"
-    href="./security-rbac/"
-    description="Sensitive Data Scanner, role-based access to LLMObs spans, prompt sanitization."
-  />
-  <LinkCard
-    title="Glossary"
-    href="./glossary/"
-    description="LLM Observability vocabulary — span kinds, ml_app, joins, sessions."
-  />
-</CardGrid>
-
-## When to use which DD feature
-
-A short decision tree before you commit to a specific tool. Each row links to the page where that feature is wired up against real code:
-
-| You want to know...                     | Use this                                    | Where it lives                                                                           |
-| --------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Did the agent pick the right tool?      | Span tree + `agent` / `tool` span kinds     | [Monitoring → Spans and traces](./monitoring/spans-and-traces/)                          |
-| Is the answer hallucinated?             | External evals (Groundedness, faithfulness) | [Evaluations → External](./evaluations/external/)                                        |
-| Did sentiment / language match?         | Managed evals (DD-built)                    | [Evaluations → Managed](./evaluations/managed/)                                          |
-| How much did this conversation cost?    | Per-trace cost rollup + Cost feature        | [Monitoring → Operations](./monitoring/operations/)                                      |
-| What did a real user actually see?      | Sessions + RUM session replay link          | [Monitoring → Spans and traces](./monitoring/spans-and-traces/#sessions-and-rum-linking) |
-| Why is this trace slow at the DB layer? | APM ↔ DBM correlation                       | [Monitoring → APM correlation](./monitoring/apm-correlation/)                            |
-| Did prompt v2 regress quality?          | Prompt Tracking + per-version eval scores   | [Monitoring → Prompt tracking](./monitoring/prompt-tracking/)                            |
-| Are users frustrated mid-conversation?  | Composed sentiment + feedback signal        | [Monitoring → Metrics](./monitoring/metrics/)                                            |
-| Will my prompt change pass regression?  | Experiments + Datasets                      | [Experiments](./experiments/) (roadmap)                                                  |
+That contrast is useful for instrumentation topics. Other features use the structure that best supports their own question: a guided exercise, an investigation, a design explanation, a reference, or an evolving experiment.
 
 <Aside type="tip">
-  **New to LLMObs?** Read [Quickstart](./quickstart/) →
-  [Instrumentation](./instrumentation/python/) for your language → [Monitoring →
-  Spans and traces](./monitoring/spans-and-traces/). That's the minimum viable
-  loop. Everything else builds on it.
+**New to Agent Observability?** Complete the [Quickstart](./quickstart/), then investigate the resulting [span tree](./monitoring/spans-and-traces/). Use the [instrumentation comparison](./instrumentation/paths/) when you want to understand how the two backends produce that evidence.
 </Aside>
 
-## Conventions used in this guide
+## Choose your question
 
-- **Code samples are tabbed** between Python and .NET. If a feature only exists on one side (e.g., M.E.AI Quality evaluators are .NET-only), the page says so up front and shows only the relevant tab.
-- **File paths are repo-relative**: `services/agent-api/src/...` for Python, `services/agent-api-dotnet/...` for .NET.
-- **Env vars in `UPPER_CASE`** are set in `helm/values.yaml` and propagated to pod env via the chart. Pod restart is needed when they change.
-- **"Wire it up" sections always cite real code**. If a sample doesn't match the file in main, the doc is stale — open an issue.
+<CardGrid>
+  <LinkCard title="How do I get my first trace?" href="./quickstart/" description="Build and verify the minimum viable Agent Observability loop." />
+  <LinkCard title="How do instrumentation paths differ?" href="./instrumentation/paths/" description="Compare native Datadog SDK behavior with OpenTelemetry and OTLP export." />
+  <LinkCard title="What happened during this agent run?" href="./monitoring/spans-and-traces/" description="Read workflows, agents, LLM calls, tools, sessions, and trace relationships." />
+  <LinkCard title="Is the response actually useful?" href="./evaluations/managed/" description="Add quality, safety, and human feedback signals to operational telemetry." />
+  <LinkCard title="How do I debug with AI?" href="./datadog-mcp/" description="Query Datadog from a coding-agent workflow through the Datadog MCP server." />
+  <LinkCard title="How is sensitive content protected?" href="./security-rbac/" description="Understand capture boundaries, redaction, Sensitive Data Scanner, and access control." />
+</CardGrid>
+
+## Follow the Datadog learning loop
+
+### Instrument
+
+Create the spans and attributes that describe the agent's work. Start with automatic coverage, then add explicit meaning where frameworks cannot infer orchestration, business context, privacy decisions, or product-specific operations.
+
+### Investigate
+
+Use traces, metrics, sessions, and APM correlation to explain behavior. The important outcome is not merely that data arrived; it is that the data answers a debugging or operational question.
+
+### Improve
+
+Attach evaluations and feedback so correctness, safety, and usefulness become observable alongside latency, cost, and errors. Use experiments when a change needs evidence before it reaches production.
+
+### Configure and protect
+
+Operate evaluations, prompts, automation, capture policies, and access controls deliberately. Configuration is part of the system's behavior, not an appendix to instrumentation.
+
+## Read feature maturity honestly
+
+Pages may be labeled **Verified**, **Experimental**, **Partial**, **Planned**, or **Deprecated**. A status describes this repository's implementation and verification state, not the availability of the Datadog product itself.
+
+- **Verified** means the documented project behavior has been exercised successfully.
+- **Experimental** means the implementation exists but the pattern is still being evaluated.
+- **Partial** means only some backends, clients, or expected signals are complete.
+- **Planned** means the page records a researched direction, not shipped behavior.
+- **Deprecated** preserves a comparison or migration path that should no longer be copied.
+
+## Use the official docs as the source of truth
+
+Datadog's [Agent Observability documentation](https://docs.datadoghq.com/llm_observability/) is authoritative for supported features, current setup requirements, APIs, and product behavior. This guide supplies the worked application, implementation context, and observations that make those concepts concrete.

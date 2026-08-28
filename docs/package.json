@@ -8,6 +8,8 @@
     "build": "astro build",
     "preview": "astro preview",
     "check-links": "node scripts/check-links.js",
+    "check-content": "node scripts/check-content.js",
+    "check": "npm run build && npm run check-links && npm run check-content",
     "fetch-trace": "node scripts/fetch-trace.js"
   },
   "dependencies": {

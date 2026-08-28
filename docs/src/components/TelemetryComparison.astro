@@ -1,0 +1,40 @@
+---
+interface Row {
+    dimension: string;
+    left: string;
+    right: string;
+}
+
+interface Props {
+    title?: string;
+    leftLabel: string;
+    rightLabel: string;
+    rows: Row[];
+}
+
+const { title = 'Compare what changes', leftLabel, rightLabel, rows } = Astro.props;
+---
+
+<section class="telemetry-comparison not-content">
+    <p class="telemetry-comparison__eyebrow">Side-by-side evidence</p>
+    <h2>{title}</h2>
+    <div class="telemetry-comparison__scroll">
+        <table>
+            <thead><tr><th scope="col">Dimension</th><th scope="col">{leftLabel}</th><th scope="col">{rightLabel}</th></tr></thead>
+            <tbody>{rows.map((row) => <tr><th scope="row">{row.dimension}</th><td>{row.left}</td><td>{row.right}</td></tr>)}</tbody>
+        </table>
+    </div>
+</section>
+
+<style>
+    .telemetry-comparison { margin-block: 2rem; padding: 1.4rem; border: 1px solid var(--sl-color-gray-5); border-radius: 1rem; background: color-mix(in srgb, var(--sl-color-gray-6) 78%, transparent); }
+    .telemetry-comparison__eyebrow { margin: 0 0 0.3rem; color: var(--sl-color-accent-high); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; }
+    .telemetry-comparison h2 { margin: 0 0 1rem; font-size: 1.25rem; }
+    .telemetry-comparison__scroll { overflow-x: auto; }
+    table { width: 100%; min-width: 42rem; border-collapse: separate; border-spacing: 0; font-size: 0.86rem; }
+    th, td { padding: 0.8rem; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: top; }
+    thead th { color: var(--sl-color-white); background: color-mix(in srgb, var(--sl-color-accent) 15%, transparent); }
+    tbody th { width: 19%; color: var(--sl-color-white); font-weight: 650; }
+    tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+    :global([data-theme='light']) thead th, :global([data-theme='light']) tbody th { color: var(--sl-color-black); }
+</style>

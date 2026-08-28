@@ -1,6 +1,7 @@
 ---
 title: Resource Group Migration
 description: Azure resource group constraints and migration plan for InfraAdvisor AI
+docType: runbook
 ---
 
 ## Why there will always be two resource groups

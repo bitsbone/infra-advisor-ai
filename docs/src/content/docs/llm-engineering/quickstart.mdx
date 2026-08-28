@@ -1,11 +1,28 @@
 ---
 title: Quickstart
 description: From "nothing instrumented" to "/query showing up in LLM Observability" — the minimum viable loop, in both Python and .NET.
+docType: lesson
+audience:
+  - application-developer
+  - observability-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+learning:
+  estimatedMinutes: 15
+  objectives:
+    - Produce and verify one complete Agent Observability trace
+    - Recognize the minimum configuration required by each backend
+  prerequisites:
+    - Datadog Agent Observability access
+    - A running InfraAdvisor environment
 sidebar:
   order: 2
 ---
 
 import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import FeatureStatus from '@components/FeatureStatus.astro';
+
+<FeatureStatus status="stable" verifiedOn="2026-08-27" label="Verified in both backends" />
 
 By the end of this page, one HTTP request will produce a complete trace in **DD → LLM Observability → Traces**: workflow → agent → llm → tool, with the prompt, model, token counts, and cost attached. That's the minimum viable loop. Everything else in this guide builds on it.
 

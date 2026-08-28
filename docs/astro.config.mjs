@@ -174,27 +174,33 @@ export default defineConfig({
                     { label: 'Overview', slug: 'llm-engineering' },
                     { label: 'Quickstart', slug: 'llm-engineering/quickstart' },
                     {
-                        label: 'Instrumentation',
+                        label: 'Build with AI',
                         collapsed: true,
                         items: [
-                            { label: 'Python (ddtrace)', slug: 'llm-engineering/instrumentation/python' },
-                            { label: '.NET (OpenTelemetry)', slug: 'llm-engineering/instrumentation/dotnet' },
+                            { label: 'Datadog MCP server', slug: 'llm-engineering/datadog-mcp' },
                         ],
                     },
                     {
-                        label: 'Monitoring',
+                        label: 'Instrument',
+                        collapsed: true,
+                        items: [
+                            { label: 'Compare instrumentation paths', slug: 'llm-engineering/instrumentation/paths' },
+                            { label: 'Python (ddtrace)', slug: 'llm-engineering/instrumentation/python' },
+                            { label: '.NET (OpenTelemetry)', slug: 'llm-engineering/instrumentation/dotnet' },
+                            { label: 'MCP clients', slug: 'llm-engineering/monitoring/mcp-clients' },
+                        ],
+                    },
+                    {
+                        label: 'Investigate',
                         collapsed: true,
                         items: [
                             { label: 'Spans and traces', slug: 'llm-engineering/monitoring/spans-and-traces' },
                             { label: 'APM correlation', slug: 'llm-engineering/monitoring/apm-correlation' },
-                            { label: 'MCP clients', slug: 'llm-engineering/monitoring/mcp-clients' },
-                            { label: 'Prompt tracking', slug: 'llm-engineering/monitoring/prompt-tracking' },
                             { label: 'Metrics', slug: 'llm-engineering/monitoring/metrics' },
-                            { label: 'Operations', slug: 'llm-engineering/monitoring/operations' },
                         ],
                     },
                     {
-                        label: 'Evaluations',
+                        label: 'Improve',
                         collapsed: true,
                         items: [
                             { label: 'Managed', slug: 'llm-engineering/evaluations/managed' },
@@ -203,14 +209,33 @@ export default defineConfig({
                             { label: 'Annotation queues', slug: 'llm-engineering/evaluations/annotation-queues' },
                             { label: 'Export API', slug: 'llm-engineering/evaluations/export-api' },
                             { label: 'Developer guide', slug: 'llm-engineering/evaluations/developer-guide' },
+                            { label: 'Experiments', slug: 'llm-engineering/experiments' },
                         ],
                     },
-                    { label: 'Experiments', slug: 'llm-engineering/experiments' },
-                    { label: 'Datadog MCP server', slug: 'llm-engineering/datadog-mcp' },
-                    { label: 'AI Guard', slug: 'llm-engineering/ai-guard' },
-                    { label: 'Multimodal input', slug: 'llm-engineering/multimodal' },
-                    { label: 'Structured chat artifacts', slug: 'llm-engineering/chat-artifacts' },
-                    { label: 'Data security & RBAC', slug: 'llm-engineering/security-rbac' },
+                    {
+                        label: 'Configure',
+                        collapsed: true,
+                        items: [
+                            { label: 'Prompt tracking', slug: 'llm-engineering/monitoring/prompt-tracking' },
+                            { label: 'Operations', slug: 'llm-engineering/monitoring/operations' },
+                        ],
+                    },
+                    {
+                        label: 'Security',
+                        collapsed: true,
+                        items: [
+                            { label: 'Data privacy & RBAC', slug: 'llm-engineering/security-rbac' },
+                            { label: 'AI Guard', slug: 'llm-engineering/ai-guard' },
+                        ],
+                    },
+                    {
+                        label: 'Innovation lab',
+                        collapsed: true,
+                        items: [
+                            { label: 'Multimodal input', slug: 'llm-engineering/multimodal' },
+                            { label: 'Structured chat artifacts', slug: 'llm-engineering/chat-artifacts' },
+                        ],
+                    },
                     { label: 'Glossary', slug: 'llm-engineering/glossary' },
                 ],
             },
@@ -236,6 +261,7 @@ export default defineConfig({
             {
                 label: 'Agent Guides',
                 items: [
+                    { label: 'Documentation Approach', slug: 'agent-guides/documentation' },
                     { label: 'Project Map', slug: 'agent-guides/project-map' },
                     { label: 'Core Conventions', slug: 'agent-guides/core-conventions' },
                     { label: 'Build, Test & Verify', slug: 'agent-guides/build-test-verify' },

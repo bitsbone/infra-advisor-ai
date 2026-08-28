@@ -1,0 +1,20 @@
+---
+interface Props { title?: string; }
+const { title = 'Observe the result' } = Astro.props;
+---
+
+<aside class="observation-checklist">
+    <div class="observation-checklist__icon" aria-hidden="true">◎</div>
+    <div>
+        <h3>{title}</h3>
+        <div class="observation-checklist__content"><slot /></div>
+    </div>
+</aside>
+
+<style>
+    .observation-checklist { display: grid; grid-template-columns: auto 1fr; gap: 0.9rem; margin-block: 1.5rem; padding: 1.15rem 1.25rem; border-left: 3px solid #22c55e; border-radius: 0 0.8rem 0.8rem 0; background: color-mix(in srgb, #22c55e 8%, var(--sl-color-gray-6)); }
+    .observation-checklist__icon { display: grid; place-items: center; width: 1.75rem; height: 1.75rem; border-radius: 50%; color: #052e16; background: #4ade80; font-weight: 900; }
+    .observation-checklist h3 { margin: 0; font-size: 1rem; }
+    .observation-checklist__content { margin-top: 0.45rem; }
+    .observation-checklist__content :global(ul) { margin-block: 0; }
+</style>

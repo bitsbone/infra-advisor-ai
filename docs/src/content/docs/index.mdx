@@ -1,130 +1,103 @@
 ---
 title: InfraAdvisor AI
-description: AI-powered infrastructure advisory platform for AEC/O&M consulting firms
+description: A hands-on Datadog observability lab for learning how agent, application, and infrastructure telemetry work together
 template: splash
 hero:
-  tagline: Infrastructure advisory at your fingertips. Multi-agent AI for AEC/O&M consulting firms.
+  layout: centered
+  announcement:
+    text: Explore the Agent Observability innovation lab
+    link: /infra-advisor-ai/llm-engineering/
+  tagline: Learn observability by building it. Instrument a real agent application, inspect what Datadog receives, and understand why the signals matter.
   actions:
-    - text: Quickstart
-      link: /infra-advisor-ai/deployment/quickstart/
+    - text: Start the first lab
+      link: /infra-advisor-ai/llm-engineering/quickstart/
       icon: right-arrow
-    - text: Architecture
-      link: /infra-advisor-ai/architecture/
+    - text: Compare instrumentation paths
+      link: /infra-advisor-ai/llm-engineering/instrumentation/paths/
       icon: open-book
       variant: minimal
 ---
 
-import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { LinkCard } from '@astrojs/starlight/components';
 import { ContainerSection } from 'lucode-starlight/components';
-import Mermaid from '../../components/Mermaid.astro';
 
-<ContainerSection>
+<div class="docs-home not-content">
+  <ContainerSection>
+    <section class="home-intro" aria-labelledby="learning-loop-title">
+      <div class="home-section-heading">
+        <p class="home-eyebrow">A working observability laboratory</p>
+        <h2 id="learning-loop-title">Turn implementation choices into visible evidence</h2>
+        <p>InfraAdvisor is both a functioning multi-agent application and an evolving place to investigate Datadog features. Each useful experiment connects code and configuration to the telemetry you can inspect.</p>
+      </div>
+      <ol class="home-learning-loop">
+        <li><span>01</span><strong>Instrument</strong><p>Choose the integration path that fits the question you want to answer.</p></li>
+        <li><span>02</span><strong>Run</strong><p>Exercise a real agent, tool, browser, mobile, or infrastructure workflow.</p></li>
+        <li><span>03</span><strong>Observe</strong><p>Inspect traces, evaluations, metrics, logs, replays, and correlations.</p></li>
+        <li><span>04</span><strong>Understand</strong><p>Connect the resulting signal to the reason the Datadog feature exists.</p></li>
+      </ol>
+    </section>
+  </ContainerSection>
 
-InfraAdvisor AI lets infrastructure consultants ask natural-language questions against real government datasets — bridge conditions, disaster history, energy capacity, water infrastructure, and federal procurement — and receive cited, synthesized answers in seconds.
+  <ContainerSection>
+    <section class="home-paths" aria-labelledby="paths-title">
+      <div class="home-section-heading home-section-heading--compact">
+        <p class="home-eyebrow">One application, multiple perspectives</p>
+        <h2 id="paths-title">See how telemetry reaches Datadog</h2>
+        <p>The project intentionally uses different frameworks and instrumentation paths. Compare them when the contrast is useful; follow a single path when it is not.</p>
+      </div>
+      <div class="home-path-diagram">
+        <article class="home-path-card home-path-card--blue"><span>Python</span><h3>Datadog SDK</h3><p>Automatic integrations plus explicit Agent Observability spans for orchestration.</p></article>
+        <div class="home-path-connector" aria-hidden="true"><span></span><b>observable evidence</b><span></span></div>
+        <article class="home-path-card home-path-card--violet"><span>.NET</span><h3>OpenTelemetry</h3><p>GenAI activities exported through OTLP and translated into Datadog's experience.</p></article>
+      </div>
+      <a class="home-inline-link" href="/infra-advisor-ai/llm-engineering/instrumentation/paths/">Open the instrumentation comparison <span aria-hidden="true">→</span></a>
+    </section>
+  </ContainerSection>
 
-<CardGrid>
-  <Card title="Multi-agent reasoning" icon="rocket">
-    A router LLM routes each query to the right domain specialist. Each specialist works with a curated tool subset to reduce hallucination surface.
-  </Card>
-  <Card title="Live government data" icon="open-book">
-    9 Airflow pipelines ingest 615k+ records weekly from FHWA, FEMA, EIA, EPA, and TWDB into a hybrid vector + BM25 search index.
-  </Card>
-  <Card title="Full-stack observability" icon="magnifier">
-    Every layer instrumented with Datadog — APM, LLM Observability, RUM session replay, Data Streams, Data Jobs, and CSPM.
-  </Card>
-  <Card title="Dual implementations" icon="setting">
-    Python (FastAPI + LangChain + ddtrace) and .NET (ASP.NET Core 10 + OpenTelemetry) stacks run side-by-side. Switch between them in the UI.
-  </Card>
-</CardGrid>
+  <ContainerSection>
+    <section aria-labelledby="featured-title">
+      <div class="home-section-heading home-section-heading--compact">
+        <p class="home-eyebrow">Featured learning paths</p>
+        <h2 id="featured-title">Start with the question you want to answer</h2>
+      </div>
+      <div class="home-card-grid">
+        <LinkCard title="Get a trace into Agent Observability" href="/infra-advisor-ai/llm-engineering/quickstart/" description="Build the minimum viable telemetry loop, then verify the result in Datadog." />
+        <LinkCard title="Investigate an agent run" href="/infra-advisor-ai/llm-engineering/monitoring/spans-and-traces/" description="Read the span tree, follow tool decisions, and connect a trace to the user session." />
+        <LinkCard title="Evaluate response quality" href="/infra-advisor-ai/llm-engineering/evaluations/managed/" description="Move from operational health to quality, safety, and usefulness signals." />
+        <LinkCard title="Trace a real user experience" href="/infra-advisor-ai/observability/rum/" description="Connect browser behavior and session replay to the backend work it triggered." />
+      </div>
+    </section>
+  </ContainerSection>
 
-</ContainerSection>
+  <ContainerSection>
+    <section class="home-innovation" aria-labelledby="innovation-title">
+      <div>
+        <p class="home-eyebrow">Innovation lab</p>
+        <h2 id="innovation-title">A living record of what is new, partial, and proven</h2>
+        <p>New Agent Observability capabilities arrive here as experiments before they become stable examples. Maturity labels distinguish verified behavior from active research and planned work.</p>
+      </div>
+      <div class="home-status-list" aria-label="Feature maturity examples">
+        <span><i class="status-dot status-dot--stable"></i>Verified</span>
+        <span><i class="status-dot status-dot--experimental"></i>Experimental</span>
+        <span><i class="status-dot status-dot--partial"></i>Partial</span>
+        <span><i class="status-dot status-dot--planned"></i>Planned</span>
+      </div>
+    </section>
+  </ContainerSection>
 
-<ContainerSection>
-
-## Architecture at a glance
-
-<Mermaid code={`
-flowchart TD
-    Browser["Browser\\nReact + Datadog RUM"]
-
-    subgraph k8s["AKS · infra-advisor namespace"]
-        Auth["Auth API\\nFastAPI + PostgreSQL + JWT"]
-        AgentPy["Agent API (Python)\\nLangChain ReAct + LangGraph"]
-        AgentDN["Agent API (.NET)\\nASP.NET Core 10 + OTel"]
-        MCPPy["MCP Server (Python)\\n11 tools over MCP HTTP"]
-        MCPNet["MCP Server (.NET)\\n11 tools · .NET port"]
-        Redis["Redis\\nSession memory · 24h TTL"]
-        Kafka["Kafka (Strimzi)\\ninfra.query.events"]
-    end
-
-    subgraph azure["Azure"]
-        Airflow["Airflow · 9 DAGs\\nFHWA · FEMA · EIA · TWDB · Synthetic"]
-        Blob["Blob Storage\\nParquet · date-partitioned"]
-        Search["AI Search\\n615k+ docs · hybrid BM25 + vector"]
-    end
-
-    DD["Datadog Agent\\nAPM · LLM Obs · RUM · DJM · DSM · CSPM"]
-
-    Browser --> Auth
-    Browser --> AgentPy & AgentDN
-    AgentPy --> MCPPy & Redis & Kafka
-    AgentDN --> MCPNet & Redis & Kafka
-    MCPPy & MCPNet --> Search
-    Airflow --> Blob --> Search
-    k8s --> DD
-`} />
-
-</ContainerSection>
-
-<ContainerSection>
-
-## Explore the docs
-
-<CardGrid>
-  <LinkCard title="Architecture" href="/infra-advisor-ai/architecture/" description="System design, service map, and data flow" />
-  <LinkCard title="Services" href="/infra-advisor-ai/services/" description="API reference for each microservice" />
-  <LinkCard title="Data Pipeline" href="/infra-advisor-ai/data-pipeline/" description="Airflow DAGs and ingestion details" />
-  <LinkCard title="Observability" href="/infra-advisor-ai/observability/" description="Datadog instrumentation across every layer" />
-  <LinkCard title="Deployment" href="/infra-advisor-ai/deployment/" description="Prerequisites, secrets, step-by-step deploy" />
-  <LinkCard title="Development" href="/infra-advisor-ai/development/" description="Local setup, testing, conventions" />
-</CardGrid>
-
-</ContainerSection>
-
-<ContainerSection>
-
-## Technology stack
-
-| Layer | Technology |
-|---|---|
-| Cloud | Azure (AKS, OpenAI, AI Search, Blob Storage) |
-| Orchestration | Kubernetes 1.30 on AKS — 3× Standard_D2s_v3 nodes |
-| LLM inference | Azure OpenAI (gpt-4.1-mini, gpt-4.1) |
-| Embeddings | Azure OpenAI text-embedding-3-small |
-| Knowledge base | Azure AI Search (hybrid vector + BM25) |
-| Agent framework | LangChain ReAct + LangGraph |
-| Tool protocol | Model Context Protocol (MCP) over HTTP |
-| Session memory | Redis (K8s Deployment) |
-| Data pipeline | Apache Airflow 3.x (LocalExecutor, Helm chart) |
-| Message bus | Apache Kafka (Strimzi Operator on AKS) |
-| Observability | Datadog (APM, LLM Obs, RUM, DJM, DSM, CSPM) |
-| Auth | FastAPI + PostgreSQL + JWT + bcrypt |
-| Frontend | React 18 + Chakra UI v3 + Vite |
-| IaC | Azure Bicep + Helm + kubectl manifests |
-| CI/CD | GitHub Actions → GHCR → AKS rolling deploy |
-
-</ContainerSection>
-
-<ContainerSection>
-
-## Live environment
-
-| Resource | URL |
-|---|---|
-| Application | `https://infra-advisor-ai.kyletaylor.dev` |
-| Container registry | `ghcr.io/kyletaylored/infra-advisor-ai` |
-
-The Airflow UI and Mailpit inbox are intentionally not listed here.
-Both sit at protected paths (`/airflow`, `/mailpit`) with credentials required, and you should put Cloudflare Access in front of each for defense-in-depth before sharing the URLs.
-
-</ContainerSection>
+  <ContainerSection>
+    <section aria-labelledby="reference-title">
+      <div class="home-section-heading home-section-heading--compact">
+        <p class="home-eyebrow">Understand the system</p>
+        <h2 id="reference-title">Use reference material when you need the machinery</h2>
+        <p>The learning paths stay focused; architecture, service contracts, deployment details, and operations remain available as durable reference.</p>
+      </div>
+      <div class="home-reference-links">
+        <a href="/infra-advisor-ai/architecture/"><strong>Architecture</strong><span>System boundaries and data flow</span></a>
+        <a href="/infra-advisor-ai/services/"><strong>Services</strong><span>APIs, tools, and implementation details</span></a>
+        <a href="/infra-advisor-ai/deployment/"><strong>Deployment</strong><span>Azure, Kubernetes, and operations</span></a>
+        <a href="/infra-advisor-ai/development/"><strong>Development</strong><span>Local setup, testing, and conventions</span></a>
+      </div>
+    </section>
+  </ContainerSection>
+</div>

@@ -1,0 +1,51 @@
+---
+type Status = 'planned' | 'partial' | 'experimental' | 'stable' | 'deprecated';
+
+interface Props {
+    status: Status;
+    verifiedOn?: string;
+    label?: string;
+}
+
+const { status, verifiedOn, label } = Astro.props;
+const labels: Record<Status, string> = {
+    planned: 'Planned',
+    partial: 'Partial',
+    experimental: 'Experimental',
+    stable: 'Verified',
+    deprecated: 'Deprecated',
+};
+---
+
+<div class={`feature-status feature-status--${status}`} role="status">
+    <span class="feature-status__dot" aria-hidden="true"></span>
+    <strong>{label ?? labels[status]}</strong>
+    {verifiedOn && <span>Verified {verifiedOn}</span>}
+</div>
+
+<style>
+    .feature-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        width: fit-content;
+        margin-block: 0 1.5rem;
+        padding: 0.42rem 0.7rem;
+        border: 1px solid var(--sl-color-gray-5);
+        border-radius: 999px;
+        color: var(--sl-color-gray-2);
+        background: color-mix(in srgb, var(--sl-color-gray-6) 78%, transparent);
+        font-size: 0.78rem;
+        line-height: 1;
+    }
+
+    .feature-status strong { color: var(--sl-color-white); }
+    .feature-status__dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--status-color, #60a5fa); }
+    .feature-status--stable { --status-color: #22c55e; }
+    .feature-status--experimental { --status-color: #f59e0b; }
+    .feature-status--partial { --status-color: #a78bfa; }
+    .feature-status--planned { --status-color: #60a5fa; }
+    .feature-status--deprecated { --status-color: #f87171; }
+
+    :global([data-theme='light']) .feature-status strong { color: var(--sl-color-black); }
+</style>

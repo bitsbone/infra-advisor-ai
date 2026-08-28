@@ -251,3 +251,24 @@ The installed local Xcode 26.0.1 cannot create the signed iOS device IPA/dSYM be
 ## Review
 
 - The iOS target passes `_DeviceName` so the .NET launcher uses the selected simulator instead of opening another device.
+
+---
+
+# Documentation learning experience
+
+## Plan
+
+- [x] Replace the one-size-fits-all feature documentation rule with a flexible, outcome-focused authoring contract in `AGENTS.md` and `CLAUDE.md`.
+- [x] Add optional learning, audience, maturity, and verification metadata without requiring every document to use the same structure.
+- [x] Build composable Astro components for objectives, feature maturity, implementation paths, observation checks, comparisons, and takeaways.
+- [x] Refresh the homepage around the learn-by-building loop: instrument, run, observe, and understand.
+- [x] Reorganize the Agent Observability sidebar around Datadog-aligned learner intents while preserving existing URLs.
+- [x] Publish one comparative instrumentation lab as a component-system pilot, not a mandatory template.
+- [x] Add lightweight documentation guardrails and verify the Astro build, internal links, and repository hygiene.
+
+## Review
+
+- Reframed the site as a hands-on Datadog observability lab, refreshed the homepage, and reorganized Agent Observability navigation around Build with AI, Instrument, Investigate, Improve, Configure, Security, and the Innovation Lab while retaining existing routes.
+- Added optional frontmatter for document type, audience, maturity, verification date, Datadog source, and learning metadata; added five composable Astro components and a contributor guide that explicitly treats archetypes as guidance rather than required templates.
+- Added a verified Datadog SDK versus OpenTelemetry comparison experiment as the pilot, enhanced the existing quickstart without restructuring it unnecessarily, and classified selected reference, runbook, maintainer, and planned content.
+- Added `npm run check-content` and the aggregate `npm run check` workflow. The final Astro build produced 66 pages; internal-link validation and content checks completed with zero errors or warnings, and `git diff --check` passed.

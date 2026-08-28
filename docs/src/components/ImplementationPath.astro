@@ -1,0 +1,26 @@
+---
+interface Props {
+    title: string;
+    label?: string;
+    tone?: 'blue' | 'violet' | 'amber' | 'green';
+}
+
+const { title, label, tone = 'blue' } = Astro.props;
+---
+
+<section class={`implementation-path implementation-path--${tone}`}>
+    {label && <p class="implementation-path__label">{label}</p>}
+    <h3>{title}</h3>
+    <div class="implementation-path__content"><slot /></div>
+</section>
+
+<style>
+    .implementation-path { margin-block: 1.4rem; padding: 1.35rem 1.45rem; border: 1px solid var(--path-border); border-radius: 1rem; background: var(--path-bg); }
+    .implementation-path--blue { --path-border: color-mix(in srgb, #3b82f6 40%, var(--sl-color-gray-5)); --path-bg: color-mix(in srgb, #3b82f6 8%, transparent); --path-accent: #60a5fa; }
+    .implementation-path--violet { --path-border: color-mix(in srgb, #8b5cf6 40%, var(--sl-color-gray-5)); --path-bg: color-mix(in srgb, #8b5cf6 8%, transparent); --path-accent: #a78bfa; }
+    .implementation-path--amber { --path-border: color-mix(in srgb, #f59e0b 40%, var(--sl-color-gray-5)); --path-bg: color-mix(in srgb, #f59e0b 8%, transparent); --path-accent: #fbbf24; }
+    .implementation-path--green { --path-border: color-mix(in srgb, #22c55e 40%, var(--sl-color-gray-5)); --path-bg: color-mix(in srgb, #22c55e 8%, transparent); --path-accent: #4ade80; }
+    .implementation-path__label { margin: 0 0 0.35rem; color: var(--path-accent); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; }
+    .implementation-path h3 { margin: 0; font-size: 1.18rem; }
+    .implementation-path__content { margin-top: 0.8rem; }
+</style>

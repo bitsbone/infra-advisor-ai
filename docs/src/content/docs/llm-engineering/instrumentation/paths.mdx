@@ -1,0 +1,141 @@
+---
+title: Datadog SDK and OpenTelemetry paths
+description: A practical comparison of two ways InfraAdvisor sends agent telemetry to Datadog, including implementation patterns, resulting traces, and tradeoffs
+docType: experiment
+audience:
+  - application-developer
+  - observability-engineer
+maturity: stable
+verifiedOn: 2026-08-27
+datadogDocs: https://docs.datadoghq.com/llm_observability/instrumentation/
+learning:
+  estimatedMinutes: 20
+  objectives:
+    - Explain why InfraAdvisor deliberately uses two instrumentation paths
+    - Locate the code and configuration responsible for each path
+    - Compare the resulting Agent Observability traces without treating either path as universally better
+  prerequisites:
+    - Access to a running InfraAdvisor environment
+    - Access to Datadog Agent Observability
+---
+
+import FeatureStatus from '@components/FeatureStatus.astro';
+import LearningObjectives from '@components/LearningObjectives.astro';
+import ImplementationPath from '@components/ImplementationPath.astro';
+import ObservationChecklist from '@components/ObservationChecklist.astro';
+import TelemetryComparison from '@components/TelemetryComparison.astro';
+
+<FeatureStatus status="stable" verifiedOn="2026-08-27" label="Both paths verified" />
+
+InfraAdvisor runs the same agent experience through two backends. The Python service uses Datadog's native SDK and integrations. The .NET service uses OpenTelemetry and exports OTLP data through the Datadog Agent. Keeping both paths makes an otherwise abstract instrumentation decision observable: you can inspect the code, run the same workflow, and compare what reaches Datadog.
+
+This is a comparison because the topic benefits from one. It is not the required structure for every feature in this guide.
+
+<LearningObjectives>
+  <ul>
+    <li>Recognize where automatic instrumentation stops and explicit instrumentation begins.</li>
+    <li>Trace the responsibility for span shape, attributes, transport, and Datadog correlation in each backend.</li>
+    <li>Evaluate the paths by the evidence they produce rather than by setup syntax alone.</li>
+  </ul>
+</LearningObjectives>
+
+## Why two paths exist
+
+Instrumentation is a translation layer between application behavior and an observability product. A native SDK can understand Datadog concepts directly and can automatically patch supported frameworks. OpenTelemetry uses vendor-neutral APIs and semantic conventions, which gives the application more control over its telemetry boundary but places more responsibility on the instrumentation and collector pipeline.
+
+The useful question is not “which path wins?” It is “which behavior is automatic, which behavior must be modeled, and what evidence survives the trip?”
+
+<ImplementationPath label="Python backend" title="Datadog SDK and ddtrace integrations" tone="blue">
+
+The Python Agent API starts under `ddtrace.auto`. Supported LangChain, LangGraph, OpenAI, and MCP operations are captured by integrations, while explicit `LLMObs.workflow`, `LLMObs.agent`, and `LLMObs.task` spans describe orchestration that a library patch cannot infer reliably.
+
+Configuration uses Datadog concepts directly:
+
+```yaml
+DD_LLMOBS_ENABLED: "true"
+DD_LLMOBS_ML_APP: "infra-advisor-ai"
+DD_LLMOBS_AGENTLESS_ENABLED: "false"
+DD_SERVICE: "infra-advisor-agent-api"
+DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"
+```
+
+The application and SDK jointly decide the Agent Observability span kinds and annotations. The Datadog Agent handles transport and preserves correlation with the service's APM trace.
+
+</ImplementationPath>
+
+<ImplementationPath label=".NET backend" title="OpenTelemetry SDK and OTLP export" tone="violet">
+
+The .NET Agent API creates activities through OpenTelemetry instrumentation and OpenInference-compatible GenAI conventions. `TelemetrySetup.Configure(builder)` registers the activity sources, ASP.NET Core and HTTP instrumentation, metrics, and the OTLP exporter.
+
+Configuration describes the transport rather than Datadog's native SDK:
+
+```yaml
+OTEL_SERVICE_NAME: "infra-advisor-agent-api-dotnet"
+OTEL_EXPORTER_OTLP_ENDPOINT: "http://datadog-agent.datadog.svc.cluster.local:4318"
+OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+DD_ENV: "production"
+DD_VERSION: "1.0.0"
+```
+
+The in-cluster collector receives OTLP data and applies the Datadog-specific translation and resource handling needed for Agent Observability. The application remains OTel-native, but semantic-convention coverage and collector configuration now influence the final experience.
+
+</ImplementationPath>
+
+## Run the comparison
+
+1. Open InfraAdvisor and select the **Python** backend.
+2. Send a query that requires at least one tool, such as `Which Texas bridges are in poor condition?`.
+3. Record the returned trace ID, service name, visible span kinds, tool name, and whether the Agent Observability trace links to APM.
+4. Start a new conversation, select the **.NET** backend, and send the same query.
+5. Open both traces in Datadog. Compare structure and metadata before comparing latency; the two requests are separate model executions and will not have identical timings or answers.
+
+<ObservationChecklist title="Evidence to collect in Datadog">
+  <ul>
+    <li>A root workflow or agent operation that represents the full request.</li>
+    <li>Nested LLM and tool work with recognizable names and durations.</li>
+    <li>Model, provider, token, error, service, environment, and version fields where the path supplies them.</li>
+    <li>A trace or span link that continues into the corresponding application APM work.</li>
+    <li>Any fields, span kinds, or correlations present on one path but missing or modeled differently on the other.</li>
+  </ul>
+</ObservationChecklist>
+
+<TelemetryComparison
+  leftLabel="Datadog SDK"
+  rightLabel="OpenTelemetry"
+  rows={[
+    { dimension: 'Primary abstraction', left: 'Datadog Agent Observability spans and integrations', right: 'Activities, GenAI conventions, and OTLP resources' },
+    { dimension: 'Automatic coverage', left: 'Strong when the Python framework is supported by ddtrace', right: 'Depends on the installed OTel/OpenInference instrumentation and emitted conventions' },
+    { dimension: 'Custom orchestration', left: 'Explicit LLMObs workflow, agent, task, and tool annotations', right: 'Explicit activities and semantic attributes' },
+    { dimension: 'Datadog translation', left: 'Mostly handled by the Datadog SDK before export', right: 'Shared between application conventions, the OTel collector, and Datadog ingestion' },
+    { dimension: 'Portability', left: 'Optimized for Datadog concepts and capabilities', right: 'Vendor-neutral telemetry boundary with Datadog-specific export configuration' },
+    { dimension: 'Debugging focus', left: 'SDK enablement, integration support, and Agent reachability', right: 'Activity creation, attribute mapping, exporter protocol, collector processing, and ingestion' },
+  ]}
+/>
+
+## Interpret the differences
+
+A richer trace on one path does not automatically mean the transport is better. First identify where the missing information should have been created:
+
+- If the application never created an orchestration span, changing the exporter will not invent it.
+- If an attribute uses an unsupported convention or version, the activity may arrive without the Agent Observability meaning you expected.
+- If the span appears in APM but not Agent Observability, inspect span-kind classification and semantic attributes.
+- If Agent Observability data appears without the expected APM relationship, inspect context propagation and the selected export path.
+- If automatic coverage differs, check the frameworks each instrumentation library officially supports before adding manual spans.
+
+The goal is to locate responsibility. That mental model transfers to new frameworks and newly released Datadog features better than memorizing one configuration.
+
+## Choose a path for a new service
+
+Start with constraints rather than preference:
+
+- Use the Datadog SDK when the language and framework are supported and you want the shortest path to native Agent Observability behavior.
+- Use OpenTelemetry when the service already has an OTel boundary, portability is important, or the framework produces compatible GenAI telemetry.
+- Use explicit instrumentation on either path for product-specific orchestration, business meaning, privacy decisions, and operations that automatic instrumentation cannot infer.
+- Prototype and inspect the resulting trace before standardizing the choice. Feature parity on paper does not guarantee identical telemetry in your application.
+
+## Continue the experiment
+
+- Follow the [Python instrumentation guide](./python/) to see where automatic and explicit spans are defined.
+- Follow the [.NET instrumentation guide](./dotnet/) to inspect activity sources, semantic attributes, and OTLP export.
+- Use [Spans and traces](../monitoring/spans-and-traces/) to investigate the resulting Agent Observability tree.
+- Use [APM correlation](../monitoring/apm-correlation/) to follow the request beyond its AI-specific spans.
