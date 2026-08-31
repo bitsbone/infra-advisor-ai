@@ -18,7 +18,7 @@ open InfraAdvisorMobile.xcworkspace
 
 Select the `InfraAdvisorMobile` scheme, choose an iPhone simulator, and press Run. Always open the generated `.xcworkspace`, not the `.xcodeproj`, because CocoaPods provides the Datadog frameworks.
 
-The default API is the deployed `https://infra-advisor-ai.kyletaylor.dev`, so a local backend is not required. The Chat tab supports persisted conversation selection, prompt suggestions, live model discovery, and Python/.NET backend selection. Error Lab demonstrates handled RUM errors, an instrumented API error, correlated logs, and a debug-only crash. The Info tab shows the logged-in user and safe Datadog/API configuration without displaying the client token. Logout clears the in-memory JWT and Datadog identity.
+The default API is the deployed `https://infra-advisor-ai.bitsbone.com`, so a local backend is not required. The Chat tab supports persisted conversation selection, prompt suggestions, live model discovery, and Python/.NET backend selection. Error Lab demonstrates handled RUM errors, an instrumented API error, correlated logs, and a debug-only crash. The Info tab shows the logged-in user and safe Datadog/API configuration without displaying the client token. Logout clears the in-memory JWT and Datadog identity.
 
 ## Test from the terminal
 

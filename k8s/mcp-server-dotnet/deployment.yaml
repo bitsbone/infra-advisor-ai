@@ -31,7 +31,7 @@ spec:
         - name: ghcr-pull-secret
       containers:
         - name: mcp-server-dotnet
-          image: ghcr.io/kyletaylored/infra-advisor-ai/mcp-server-dotnet:latest
+          image: ghcr.io/bitsbone/infra-advisor-ai/mcp-server-dotnet:latest
           ports:
             - containerPort: 8000
               name: http

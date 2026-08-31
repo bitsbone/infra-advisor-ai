@@ -22,7 +22,7 @@
     <DatadogUploadSymbols Condition="'$(DatadogUploadSymbols)' == ''">false</DatadogUploadSymbols>
     <DatadogSite>us3.datadoghq.com</DatadogSite>
     <DatadogServiceName>infra-advisor-mobile-maui</DatadogServiceName>
-    <InfraAdvisorApiBaseUrl Condition="'$(InfraAdvisorApiBaseUrl)' == ''">https://infra-advisor-ai.kyletaylor.dev/</InfraAdvisorApiBaseUrl>
+    <InfraAdvisorApiBaseUrl Condition="'$(InfraAdvisorApiBaseUrl)' == ''">https://infra-advisor-ai.bitsbone.com/</InfraAdvisorApiBaseUrl>
     <InfraAdvisorDatadogEnvironment Condition="'$(InfraAdvisorDatadogEnvironment)' == ''">demo</InfraAdvisorDatadogEnvironment>
     <InfraAdvisorDatadogService Condition="'$(InfraAdvisorDatadogService)' == ''">infra-advisor-mobile-maui</InfraAdvisorDatadogService>
     <InfraAdvisorDatadogClientToken Condition="'$(InfraAdvisorDatadogClientToken)' == '' And '$(MAUI_DD_CLIENT_TOKEN)' != ''">$(MAUI_DD_CLIENT_TOKEN)</InfraAdvisorDatadogClientToken>

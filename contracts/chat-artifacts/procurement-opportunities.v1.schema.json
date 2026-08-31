@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://infra-advisor-ai.kyletaylor.dev/contracts/chat-artifacts/procurement-opportunities.v1.schema.json",
+  "$id": "https://infra-advisor-ai.bitsbone.com/contracts/chat-artifacts/procurement-opportunities.v1.schema.json",
   "title": "Procurement opportunities chat artifact",
   "type": "object",
   "additionalProperties": false,

@@ -30,7 +30,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: load-generator
-              image: ghcr.io/kyletaylored/infra-advisor-ai/load-generator:latest
+              image: ghcr.io/bitsbone/infra-advisor-ai/load-generator:latest
               envFrom:
                 - configMapRef:
                     name: load-generator-config

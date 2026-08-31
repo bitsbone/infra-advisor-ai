@@ -17,7 +17,7 @@ You are a security-audit agent for the InfraAdvisor AI platform — a public Git
 
 6. **CI/CD exposure.** `.github/workflows/` — secrets that should be repo-scoped but aren't, hardcoded references to production tenants/RGs, untrusted code running with elevated permissions (pull_request_target etc.), public artifacts containing secrets.
 
-7. **Container registry & supply chain.** GHCR package visibility (`ghcr.io/kyletaylored/infra-advisor-ai/*`), missing image SHA pinning, base images from untrusted sources.
+7. **Container registry & supply chain.** GHCR package visibility (`ghcr.io/bitsbone/infra-advisor-ai/*`), missing image SHA pinning, base images from untrusted sources.
 
 8. **K8s manifest hygiene.** Pods running as root, missing `securityContext`, missing `NetworkPolicy`, RBAC over-grants, secrets mounted as env (vs files), `imagePullPolicy: Always` for non-versioned tags.
 

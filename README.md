@@ -222,7 +222,7 @@ make run-dags     # triggers all Airflow DAGs
 
 ### 5. Access the UI
 
-App is served at `https://infra-advisor-ai.kyletaylor.dev` via Cloudflare → AKS LoadBalancer.
+App is served at `https://infra-advisor-ai.bitsbone.com` via Cloudflare → AKS LoadBalancer.
 
 ```bash
 # Local port-forward
@@ -271,8 +271,24 @@ uv run pytest -x services/auth-api/tests/
 |---|---|---|
 | [CI](.github/workflows/ci.yml) | push / PR | pytest for all Python services |
 | [Build & Push](.github/workflows/build-push.yml) | push to `main` | Docker build → GHCR → `kubectl rollout restart` on AKS + Helm upgrade Airflow + DAG sync |
+| [MAUI Release](.github/workflows/maui-release.yml) | manual / tag | Builds and signs the MAUI mobile app, uploads to App Store Connect and Datadog Synthetics |
 
-Images: `ghcr.io/kyletaylored/infra-advisor-ai/{service}:latest`
+Images: `ghcr.io/bitsbone/infra-advisor-ai/{service}:latest`
+
+### GitHub Actions secrets
+
+Configured on the repo (Settings → Secrets and variables → Actions), not read from `.env` locally:
+
+| Secret | Purpose |
+|---|---|
+| `ACA_UI_USERNAME`, `ACA_UI_PASSWORD` | Basic auth credentials for the Azure Container Apps UI Bicep deployment |
+| `AZURE_CREDENTIALS` | Azure service principal used by `azure/login` for infra/deploy steps |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key for build/deploy steps that need it |
+| `DD_API_KEY`, `DD_APP_KEY` | Datadog API/app keys used by CI (sourcemap upload, Synthetics, etc.) |
+| `VITE_DD_RUM_APP_ID`, `VITE_DD_RUM_CLIENT_TOKEN`, `VITE_DD_RUM_SITE` | Datadog RUM config baked into the UI build |
+| `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_PRIVATE_KEY` | App Store Connect API credentials for MAUI iOS release uploads |
+| `MAUI_IOS_SIGNING_CERTIFICATE_BASE64`, `MAUI_IOS_SIGNING_CERTIFICATE_PASSWORD` | Base64-encoded signing certificate + passphrase for MAUI iOS release builds |
+| `DATADOG_SYNTHETICS_MAUI_ANDROID_APPLICATION_ID`, `DATADOG_SYNTHETICS_MAUI_IOS_APPLICATION_ID` | Datadog Mobile App Testing application IDs for MAUI Android/iOS |
 
 ---
 

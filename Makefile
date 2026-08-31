@@ -12,9 +12,10 @@ AKS_NAME ?= aks-infra-advisor-dev
 LOCATION ?= eastus
 NAMESPACE ?= infra-advisor
 GHCR_PAT ?=
+GHCR_USERNAME ?=
 GITHUB_EMAIL ?=
 AIRFLOW_CHART_VERSION ?= 1.21.0
-AIRFLOW_IMAGE_REPOSITORY ?= ghcr.io/kyletaylored/infra-advisor-ai/airflow
+AIRFLOW_IMAGE_REPOSITORY ?= ghcr.io/bitsbone/infra-advisor-ai/airflow
 AIRFLOW_IMAGE_TAG ?= latest
 AIRFLOW_NAMESPACE ?= airflow
 AIRFLOW_DESTRUCTIVE_RECOVERY ?=
@@ -333,7 +334,7 @@ redeploy-mailpit: ## Apply the Mailpit manifest, evict stuck pods from older Rep
 		echo "  ✗ mailpit endpoint is empty — pod still not Ready"; \
 		exit 1; \
 	fi
-	@echo "✓ Mailpit redeployed. Open https://infra-advisor-ai.kyletaylor.dev/mailpit/ (basic auth: $(MAILPIT_UI_USERNAME))"
+	@echo "✓ Mailpit redeployed. Open https://infra-advisor-ai.bitsbone.com/mailpit/ (basic auth: $(MAILPIT_UI_USERNAME))"
 
 setup-postgres-dbm: ## Create Datadog monitoring user + grants in Postgres (run once after deploy; requires authuser superuser)
 	@if [ -z "$(DD_POSTGRES_PASSWORD)" ]; then echo "ERROR: DD_POSTGRES_PASSWORD is not set"; exit 1; fi
@@ -346,11 +347,12 @@ setup-postgres-dbm: ## Create Datadog monitoring user + grants in Postgres (run 
 
 create-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in infra-advisor namespace
 	@if [ -z "$(GHCR_PAT)" ]; then echo "ERROR: GHCR_PAT is not set"; exit 1; fi
+	@if [ -z "$(GHCR_USERNAME)" ]; then echo "ERROR: GHCR_USERNAME is not set"; exit 1; fi
 	@if [ -z "$(GITHUB_EMAIL)" ]; then echo "ERROR: GITHUB_EMAIL is not set"; exit 1; fi
 	@kubectl create secret docker-registry ghcr-pull-secret \
 		--namespace $(NAMESPACE) \
 		--docker-server=ghcr.io \
-		--docker-username=kyletaylored \
+		--docker-username=$(GHCR_USERNAME) \
 		--docker-password=$(GHCR_PAT) \
 		--docker-email=$(GITHUB_EMAIL) \
 		--dry-run=client -o yaml | kubectl apply -f -
@@ -358,12 +360,13 @@ create-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in infra-advisor names
 
 create-airflow-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in the Airflow namespace
 	@if [ -z "$(GHCR_PAT)" ]; then echo "ERROR: GHCR_PAT is not set"; exit 1; fi
+	@if [ -z "$(GHCR_USERNAME)" ]; then echo "ERROR: GHCR_USERNAME is not set"; exit 1; fi
 	@if [ -z "$(GITHUB_EMAIL)" ]; then echo "ERROR: GITHUB_EMAIL is not set"; exit 1; fi
 	@kubectl create namespace $(AIRFLOW_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl create secret docker-registry ghcr-pull-secret \
 		--namespace $(AIRFLOW_NAMESPACE) \
 		--docker-server=ghcr.io \
-		--docker-username=kyletaylored \
+		--docker-username=$(GHCR_USERNAME) \
 		--docker-password=$(GHCR_PAT) \
 		--docker-email=$(GITHUB_EMAIL) \
 		--dry-run=client -o yaml | kubectl apply -f -
@@ -451,7 +454,7 @@ run-dags: ## Manually trigger the selected Airflow canary DAGs
 	kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger eia_refresh
 	@echo "→ Triggering twdb_water_plan_refresh DAG..."
 	kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger twdb_water_plan_refresh
-	@echo "✓ All DAGs triggered — check Airflow UI at https://infra-advisor-ai.kyletaylor.dev/airflow"
+	@echo "✓ All DAGs triggered — check Airflow UI at https://infra-advisor-ai.bitsbone.com/airflow"
 
 airflow-ui: ## Port-forward Airflow web UI to localhost:8080
 	kubectl port-forward -n airflow svc/airflow-api-server 8080:8080
@@ -556,7 +559,7 @@ test-all: test-mcp test-agent test-load-gen ## Run all service tests
 
 # ─── Docker ───────────────────────────────────────────────────────────────────
 
-GHCR_PREFIX ?= ghcr.io/kyletaylored/infra-advisor-ai
+GHCR_PREFIX ?= ghcr.io/bitsbone/infra-advisor-ai
 IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "local")
 
 docker-build-mcp: ## Build MCP server image

@@ -30,7 +30,7 @@ spec:
         - name: ghcr-pull-secret
       containers:
         - name: agent-api
-          image: ghcr.io/kyletaylored/infra-advisor-ai/agent-api:latest
+          image: ghcr.io/bitsbone/infra-advisor-ai/agent-api:latest
           ports:
             - containerPort: 8001
               name: http

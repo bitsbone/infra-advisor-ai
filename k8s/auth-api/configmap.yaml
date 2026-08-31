@@ -20,9 +20,9 @@ data:
   SMTP_PORT: "1025"
   SMTP_FROM: "infra-advisor-ai@demo.local"
   SMTP_TLS: "false"
-  APP_BASE_URL: "https://infra-advisor-ai.kyletaylor.dev"
+  APP_BASE_URL: "https://infra-advisor-ai.bitsbone.com"
   # CORS allow-list. Comma-separated origins. Browser blocks any request from
   # an origin not in this list.
-  ALLOWED_ORIGINS: "https://infra-advisor-ai.kyletaylor.dev"
+  ALLOWED_ORIGINS: "https://infra-advisor-ai.bitsbone.com"
   # Email domain allowed to register. Change to restrict to a different org.
   ALLOWED_DOMAIN: "@datadoghq.com"

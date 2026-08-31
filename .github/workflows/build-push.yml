@@ -18,7 +18,7 @@ on:
   workflow_dispatch: # manual full rebuild — always builds all services
 
 env:
-  IMAGE_PREFIX: ghcr.io/kyletaylored/infra-advisor-ai
+  IMAGE_PREFIX: ghcr.io/bitsbone/infra-advisor-ai
   REGISTRY: ghcr.io
 
 jobs:
@@ -172,7 +172,7 @@ jobs:
           npx @datadog/datadog-ci sourcemaps upload ./dist \
             --service infra-advisor-ui \
             --release-version "${{ steps.sha.outputs.short }}" \
-            --minified-path-prefix "https://infra-advisor-ai.kyletaylor.dev"
+            --minified-path-prefix "https://infra-advisor-ai.bitsbone.com"
 
       - name: Build and push
         if: matrix.changed == 'true'
@@ -187,7 +187,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
           build-args: |
-            DD_GIT_REPOSITORY_URL=https://github.com/kyletaylored/infra-advisor-ai
+            DD_GIT_REPOSITORY_URL=https://github.com/bitsbone/infra-advisor-ai
             DD_GIT_COMMIT_SHA=${{ github.sha }}
             ${{ steps.ui-args.outputs.args }}
 
@@ -266,13 +266,16 @@ jobs:
       )
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v6
 
       - name: Azure login
         uses: azure/login@v3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set up kubelogin
         uses: azure/use-kubelogin@v1.3
@@ -381,13 +384,16 @@ jobs:
       )
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v6
 
       - name: Azure login
         uses: azure/login@v3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy ACA agentic POC
         # acaContainerImage/acaRevisionSuffix are left at their Bicep
@@ -420,13 +426,16 @@ jobs:
       needs.build-airflow.result == 'success'
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v6
 
       - name: Azure login
         uses: azure/login@v3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set up kubelogin
         uses: azure/use-kubelogin@v1.3
@@ -476,13 +485,16 @@ jobs:
       needs.changes.outputs.datadog == 'true'
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v6
 
       - name: Azure login
         uses: azure/login@v3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Set up kubelogin
         uses: azure/use-kubelogin@v1.3

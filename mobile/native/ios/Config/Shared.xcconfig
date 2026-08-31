@@ -1,4 +1,4 @@
-API_BASE_URL = https:/$()/infra-advisor-ai.kyletaylor.dev
+API_BASE_URL = https:/$()/infra-advisor-ai.bitsbone.com
 DD_SITE = us3
 DD_ENV = demo
 DD_SERVICE = infra-advisor-mobile-ios

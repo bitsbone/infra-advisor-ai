@@ -44,7 +44,7 @@ param aksNodeVmSize string = 'Standard_D2s_v3'
 param acaLocation string = 'eastus2'
 
 @description('Container image reference for the ACA agentic POC apps (services/aca-agentic-poc-dotnet) — defaults to the :latest tag pushed by build-push.yml on every merge to main')
-param acaContainerImage string = 'ghcr.io/kyletaylored/infra-advisor-ai/aca-agentic-poc-dotnet:latest'
+param acaContainerImage string = 'ghcr.io/bitsbone/infra-advisor-ai/aca-agentic-poc-dotnet:latest'
 
 @description('Revision suffix for both ACA agentic POC Container Apps. Defaults to a fresh timestamp on every deployment — needed because :latest is a fixed string, so without a changing suffix ACA sees no diff in the container template and skips creating a new revision (confirmed: az containerapp update --image ...:latest alone did not roll a new revision), leaving the OLD image running even after a new one is pushed.')
 param acaRevisionSuffix string = utcNow('yyyyMMddHHmmss')

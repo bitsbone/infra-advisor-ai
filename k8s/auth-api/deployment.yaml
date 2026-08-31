@@ -27,7 +27,7 @@ spec:
         - name: ghcr-pull-secret
       containers:
         - name: auth-api
-          image: ghcr.io/kyletaylored/infra-advisor-ai/auth-api:latest
+          image: ghcr.io/bitsbone/infra-advisor-ai/auth-api:latest
           ports:
             - containerPort: 8002
               name: http

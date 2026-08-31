@@ -1,3 +1,3 @@
 # NOTE: With a LoadBalancer service, this Ingress is not needed for basic access.
 # Keep it only if you later add an ingress controller for multi-service routing.
-# The active hostname is infra-advisor-ai.kyletaylor.dev → ui LoadBalancer IP.
+# The active hostname is infra-advisor-ai.bitsbone.com → ui LoadBalancer IP.

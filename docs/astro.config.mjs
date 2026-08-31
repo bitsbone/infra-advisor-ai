@@ -6,7 +6,7 @@ import mdx from '@astrojs/mdx';
 import react from '@astrojs/react';
 
 export default defineConfig({
-    site: 'https://kyletaylored.github.io',
+    site: 'https://bitsbone.github.io',
     base: '/infra-advisor-ai',
     integrations: [react(), starlight({
         title: 'InfraAdvisor AI',
@@ -24,7 +24,7 @@ export default defineConfig({
             {
                 icon: 'github',
                 label: 'GitHub',
-                href: 'https://github.com/kyletaylored/infra-advisor-ai',
+                href: 'https://github.com/bitsbone/infra-advisor-ai',
             },
         ],
         lastUpdated: true,
@@ -44,11 +44,11 @@ export default defineConfig({
             // Open Graph + Twitter Card meta — docs links unfurl with the
             // InfraAdvisor banner in Slack, Twitter, GitHub previews, etc.
             { tag: 'meta', attrs: { property: 'og:type', content: 'website' } },
-            { tag: 'meta', attrs: { property: 'og:image', content: 'https://kyletaylored.github.io/infra-advisor-ai/og-image.png' } },
+            { tag: 'meta', attrs: { property: 'og:image', content: 'https://bitsbone.github.io/infra-advisor-ai/og-image.png' } },
             { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
             { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
             { tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
-            { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://kyletaylored.github.io/infra-advisor-ai/og-image.png' } },
+            { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://bitsbone.github.io/infra-advisor-ai/og-image.png' } },
 
             {
                 // Sidebar scroll behaviour with ClientRouter (SPA navigation):
@@ -113,7 +113,7 @@ export default defineConfig({
                     { label: 'Deployment', link: '/deployment/' },
                     {
                         label: 'GitHub',
-                        link: 'https://github.com/kyletaylored/infra-advisor-ai',
+                        link: 'https://github.com/bitsbone/infra-advisor-ai',
                         attrs: { target: '_blank', rel: 'noopener noreferrer' },
                     },
                 ],

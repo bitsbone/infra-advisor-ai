@@ -7,7 +7,7 @@ namespace InfraAdvisor.Mobile.Configuration;
 /// </summary>
 public static class AppConfiguration
 {
-    public static string ApiBaseUrl => Get("InfraAdvisorApiBaseUrl", "https://infra-advisor-ai.kyletaylor.dev/");
+    public static string ApiBaseUrl => Get("InfraAdvisorApiBaseUrl", "https://infra-advisor-ai.bitsbone.com/");
     public static string ApiFirstPartyHost
     {
         get

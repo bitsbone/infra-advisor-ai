@@ -96,7 +96,7 @@ final class APIClientTests: XCTestCase {
             delegateQueue: nil
         )
         client = APIClient(
-            baseURL: URL(string: "https://infra-advisor-ai.kyletaylor.dev")!,
+            baseURL: URL(string: "https://infra-advisor-ai.bitsbone.com")!,
             session: instrumentedSession
         )
         URLProtocolStub.handler = { request in

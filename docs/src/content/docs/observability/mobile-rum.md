@@ -61,8 +61,8 @@ Build-only workflows should remain useful without signing or Datadog write crede
 
 <span id="source-guides"></span>
 
-- [Native iOS source and run guide](https://github.com/kyletaylored/infra-advisor-ai/tree/main/mobile/native/ios)
-- [Native Android source and run guide](https://github.com/kyletaylored/infra-advisor-ai/tree/main/mobile/native/android)
-- [.NET MAUI source and run guide](https://github.com/kyletaylored/infra-advisor-ai/tree/main/mobile/cross-platform/maui)
+- [Native iOS source and run guide](https://github.com/bitsbone/infra-advisor-ai/tree/main/mobile/native/ios)
+- [Native Android source and run guide](https://github.com/bitsbone/infra-advisor-ai/tree/main/mobile/native/android)
+- [.NET MAUI source and run guide](https://github.com/bitsbone/infra-advisor-ai/tree/main/mobile/cross-platform/maui)
 
 Continue to [Browser RUM](../rum/) to compare the web path or [Multimodal input](/infra-advisor-ai/llm-engineering/multimodal/) for the backend media boundary.

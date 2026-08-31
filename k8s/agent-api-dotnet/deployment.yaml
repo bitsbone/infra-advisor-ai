@@ -38,7 +38,7 @@ spec:
         - name: ghcr-pull-secret
       containers:
         - name: agent-api-dotnet
-          image: ghcr.io/kyletaylored/infra-advisor-ai/agent-api-dotnet:latest
+          image: ghcr.io/bitsbone/infra-advisor-ai/agent-api-dotnet:latest
           ports:
             - containerPort: 8001
               name: http

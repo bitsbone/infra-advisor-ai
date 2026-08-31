@@ -20,9 +20,9 @@ airflowVersion: "3.2.1"
 #                                  construct UI URLs embedded in OL events
 env:
   - name: AIRFLOW__API__BASE_URL
-    value: "https://infra-advisor-ai.kyletaylor.dev/airflow"
+    value: "https://infra-advisor-ai.bitsbone.com/airflow"
   - name: AIRFLOW__WEBSERVER__BASE_URL
-    value: "https://infra-advisor-ai.kyletaylor.dev/airflow"
+    value: "https://infra-advisor-ai.bitsbone.com/airflow"
   - name: AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION
     value: "true"
   - name: AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC
@@ -141,7 +141,7 @@ migrateDatabaseJob:
 # CI overrides this tag with the immutable Git commit SHA before deployment.
 images:
   airflow:
-    repository: ghcr.io/kyletaylored/infra-advisor-ai/airflow
+    repository: ghcr.io/bitsbone/infra-advisor-ai/airflow
     tag: latest
     pullPolicy: Always
   migrationsWaitTimeout: 300

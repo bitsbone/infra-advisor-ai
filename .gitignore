@@ -22,6 +22,9 @@ graphify-out/
 # Bits AI local settings
 .bits/
 
+# Azure
+azure.json
+
 # Python
 __pycache__/
 *.pyc

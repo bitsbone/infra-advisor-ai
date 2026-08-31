@@ -45,7 +45,7 @@ import { useAuth } from "../hooks/useAuth";
 type Suggestion = SuggestionItem;
 
 const VERSION = import.meta.env.VITE_APP_VERSION as string | undefined;
-const REPO_URL = "https://github.com/kyletaylored/infra-advisor-ai";
+const REPO_URL = "https://github.com/bitsbone/infra-advisor-ai";
 
 // One live step in the agent loop — shown as a ToolStepChip above the
 // message content. The id is stable across the running → ok/error
