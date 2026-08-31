@@ -1,5 +1,9 @@
 FROM python:3.12-slim
 
+LABEL org.opencontainers.image.title="auth-api" \
+      org.opencontainers.image.description="Auth API for InfraAdvisor AI — owns user identity and bearer token issuance/validation." \
+      org.opencontainers.image.source="https://github.com/bitsbone/infra-advisor-ai"
+
 WORKDIR /app
 
 RUN pip install uv

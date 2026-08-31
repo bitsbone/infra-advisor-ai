@@ -13,6 +13,10 @@ RUN dotnet publish -c Release -o /app/publish --no-restore
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-resolute AS runtime
 WORKDIR /app
 
+LABEL org.opencontainers.image.title="mcp-server-dotnet" \
+      org.opencontainers.image.description=".NET MCP server implementing the same 11 infrastructure-data tools as the Python MCP server, with .NET provider adapters and OpenTelemetry." \
+      org.opencontainers.image.source="https://github.com/bitsbone/infra-advisor-ai"
+
 ARG DD_GIT_REPOSITORY_URL
 ARG DD_GIT_COMMIT_SHA
 ENV DD_GIT_REPOSITORY_URL=${DD_GIT_REPOSITORY_URL}

@@ -10,6 +10,10 @@ RUN dotnet publish -c Release -o /app/publish --no-restore
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
 
+LABEL org.opencontainers.image.title="aca-agentic-poc-dotnet" \
+      org.opencontainers.image.description=".NET proof-of-concept agent service for Azure Container Apps identity/telemetry experiments (managed vs. sidecar patterns)." \
+      org.opencontainers.image.source="https://github.com/bitsbone/infra-advisor-ai"
+
 # Port + ASPNETCORE_URLS match infra/bicep/modules/aca-agentic-poc.bicep's
 # targetPort: 8080 / ASPNETCORE_URLS env var for both Container Apps.
 ENV ASPNETCORE_URLS=http://+:8080

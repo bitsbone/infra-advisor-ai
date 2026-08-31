@@ -1,5 +1,9 @@
 FROM python:3.12-slim
 
+LABEL org.opencontainers.image.title="load-generator" \
+      org.opencontainers.image.description="Kubernetes CronJob that samples a checked-in query corpus and publishes synthetic load to InfraAdvisor's agent API for testing and evaluation." \
+      org.opencontainers.image.source="https://github.com/bitsbone/infra-advisor-ai"
+
 RUN pip install --no-cache-dir uv==0.4.18
 
 WORKDIR /app

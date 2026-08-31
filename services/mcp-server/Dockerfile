@@ -1,5 +1,9 @@
 FROM python:3.12-slim
 
+LABEL org.opencontainers.image.title="mcp-server" \
+      org.opencontainers.image.description="Python MCP server exposing InfraAdvisor's infrastructure-data tools (NBI, EIA, FEMA, TWDB, ERCOT, knowledge base) over the Model Context Protocol." \
+      org.opencontainers.image.source="https://github.com/bitsbone/infra-advisor-ai"
+
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 

@@ -5,6 +5,10 @@
 # same change so the scheduler, migration job, and DAG parser cannot drift.
 FROM apache/airflow:3.2.1-python3.12
 
+LABEL org.opencontainers.image.title="airflow" \
+      org.opencontainers.image.description="Custom Apache Airflow image bundling InfraAdvisor's data-ingestion DAGs and their locked Python dependencies." \
+      org.opencontainers.image.source="https://github.com/bitsbone/infra-advisor-ai"
+
 ARG UV_VERSION=0.11.7
 
 USER airflow
