@@ -80,13 +80,13 @@ def index_prepared_records(prepared_records: list[dict]) -> int:
                 "source_url": record.get("source_url") or "",
             })
             if len(docs_to_upsert) >= _UPSERT_BATCH_SIZE:
-                search_client.upsert_documents(documents=docs_to_upsert)
+                search_client.merge_or_upload_documents(documents=docs_to_upsert)
                 total_docs += len(docs_to_upsert)
                 logger.info("Upserted batch of %d documents", len(docs_to_upsert))
                 docs_to_upsert = []
 
     if docs_to_upsert:
-        search_client.upsert_documents(documents=docs_to_upsert)
+        search_client.merge_or_upload_documents(documents=docs_to_upsert)
         total_docs += len(docs_to_upsert)
         logger.info("Upserted final batch of %d documents", len(docs_to_upsert))
 

@@ -102,6 +102,9 @@ param deployAcaAgenticPoc bool = false
 @secure()
 param eiaApiKey string = ''
 
+@description('Azure region for the ADF Function App\'s underlying App Service Plan — deliberately separate from the shared `location` param. This subscription reported SubscriptionIsOverQuotaForSku (0 VM quota) for the Consumption/Dynamic SKU in eastus on first deploy attempt; same class of regional-capacity issue as acaLocation/whisperLocation above, same mitigation. Data Factory itself (a fully PaaS resource with no VM-quota dependency) stays in the shared `location`.')
+param adfFunctionsLocation string = 'eastus2'
+
 @description('Deploy the ADF migration module (Data Factory + Function App) — false by default so a routine `make deploy-infra` run does not stand up new billable resources until explicitly requested; set true when ready to provision.')
 param deployAdfMigration bool = false
 
@@ -230,7 +233,7 @@ module adfFunctions 'modules/adf-functions.bicep' = if (deployAdfMigration) {
   name: 'deploy-adf-functions'
   scope: resourceGroup
   params: {
-    location: location
+    location: adfFunctionsLocation
     environment: environment
     storageConnectionString: storage.outputs.primaryConnectionString
     searchEndpoint: search.outputs.endpoint

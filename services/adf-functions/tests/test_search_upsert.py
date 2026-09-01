@@ -30,8 +30,8 @@ def test_indexes_all_records_when_embeddings_succeed(mock_get_oai, mock_get_sear
     count = search_upsert.index_prepared_records([_prepared("a"), _prepared("b")])
 
     assert count == 2
-    mock_search.upsert_documents.assert_called_once()
-    docs = mock_search.upsert_documents.call_args.kwargs["documents"]
+    mock_search.merge_or_upload_documents.assert_called_once()
+    docs = mock_search.merge_or_upload_documents.call_args.kwargs["documents"]
     assert {d["id"] for d in docs} == {"a_0", "b_0"}
 
 
@@ -50,7 +50,7 @@ def test_one_embedding_failure_does_not_abort_the_batch(mock_get_oai, mock_get_s
     count = search_upsert.index_prepared_records([_prepared("failing"), _prepared("ok")])
 
     assert count == 1
-    docs = mock_search.upsert_documents.call_args.kwargs["documents"]
+    docs = mock_search.merge_or_upload_documents.call_args.kwargs["documents"]
     assert docs[0]["id"] == "ok_0"
 
 
