@@ -190,8 +190,6 @@ jobs:
             DD_GIT_COMMIT_SHA=${{ github.sha }}
             ${{ steps.ui-args.outputs.args }}
 
-  # Airflow uses a custom image containing locked dependencies, DAGs, and the
-  # helper scripts imported by knowledge_base_init and public_docs_ingestion.
   # ── Rolling restart on AKS (only if a deployable service was rebuilt) ──────
   deploy:
     needs: [changes, build]
@@ -363,7 +361,6 @@ jobs:
             --parameters acaDdRumClientToken="${{ secrets.VITE_DD_RUM_CLIENT_TOKEN }}" \
             --parameters acaDdRumSite="${{ secrets.VITE_DD_RUM_SITE }}"
 
-  # ── Airflow Helm upgrade (values.yaml or ingestion DAG changes) ─────────────
   # ── Apply DatadogAgent CR (datadog/datadog-agent.yaml changes) ─────────────
   apply-datadog-agent:
     needs: [changes]

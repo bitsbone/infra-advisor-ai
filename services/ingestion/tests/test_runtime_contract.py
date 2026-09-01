@@ -94,8 +94,12 @@ def test_helm_values_use_custom_image_without_runtime_install_or_dag_pvc():
 
 
 def test_airflow_secret_and_upgrade_fail_closed():
+    # Airflow's build/upgrade jobs live in their own deploy-airflow.yml —
+    # split out of build-push.yml so Airflow's independent CI failures stop
+    # making every service-build run show red (see deploy-airflow.yml's
+    # header comment for the full rationale).
     makefile = (REPO_ROOT / "Makefile").read_text()
-    workflow = (REPO_ROOT / ".github" / "workflows" / "build-push.yml").read_text()
+    workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-airflow.yml").read_text()
     preflight = (PROJECT_ROOT / "scripts" / "cluster_preflight.sh").read_text()
 
     assert 'AccountName=placeholder' not in makefile
@@ -111,7 +115,7 @@ def test_airflow_secret_and_upgrade_fail_closed():
 
 def test_airflow_delivery_is_verified_and_routine_install_is_non_destructive():
     makefile = (REPO_ROOT / "Makefile").read_text()
-    workflow = (REPO_ROOT / ".github" / "workflows" / "build-push.yml").read_text()
+    workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-airflow.yml").read_text()
 
     install_block = makefile.split("install-airflow:", 1)[1].split(
         "recover-airflow-destructive:", 1
@@ -136,7 +140,10 @@ def test_airflow_delivery_is_verified_and_routine_install_is_non_destructive():
     publish_step = workflow.index("Publish verified Airflow image")
     deploy_job = workflow.index("upgrade-airflow:")
     assert verify_step < publish_step < deploy_job
-    assert "needs: [changes, build-airflow]" in workflow[deploy_job:]
+    # deploy-airflow.yml is its own standalone workflow — no "changes"
+    # detection job exists here (unlike build-push.yml's matrix build), so
+    # upgrade-airflow depends only on build-airflow.
+    assert "needs: build-airflow" in workflow[deploy_job:]
 
 
 def test_make_dry_runs_can_disable_local_dotenv_expansion():
