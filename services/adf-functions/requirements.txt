@@ -8,3 +8,5 @@ pyarrow>=21.0.0
 openai>=2.32.0
 requests>=2.32.0
 httpx>=0.28.1
+ddtrace>=4.14.0
+datadog-serverless-compat

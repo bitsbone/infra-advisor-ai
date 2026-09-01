@@ -9,15 +9,34 @@ pipeline (see infra/bicep/modules/data-factory.bicep for the pipeline
 definitions).
 """
 
+# Consumption-plan Python Azure Functions have no agent sidecar to send
+# traces to — Datadog's serverless compat layer submits directly to
+# Datadog's intake instead. Must start before ddtrace.auto, which itself
+# must be the first import that touches any instrumented library (requests,
+# httpx, azure-storage-blob, azure-search-documents, openai). DD_AGENT_HOST
+# is deliberately never set for this service — see DD_SITE/DD_API_KEY in
+# infra/bicep/modules/adf-functions.bicep instead.
+from datadog_serverless_compat import start
+
+start()
+
+import ddtrace.auto  # noqa: E402, F401
+
 import json
 import logging
 
 import azure.functions as func
+from ddtrace.llmobs import LLMObs
 
 from shared.blob_io import PREPARED_CONTAINER, read_json_records
 from shared.search_upsert import index_prepared_records
 
 logger = logging.getLogger(__name__)
+
+try:
+    LLMObs.enable(ml_app="infra-advisor-ai", agentless_enabled=True)
+except Exception:
+    logger.warning("LLMObs.enable() failed (non-fatal)", exc_info=True)
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 

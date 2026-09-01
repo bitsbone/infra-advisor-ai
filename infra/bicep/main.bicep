@@ -102,6 +102,13 @@ param deployAcaAgenticPoc bool = false
 @secure()
 param eiaApiKey string = ''
 
+@description('Datadog API key for the ADF Function App\'s agentless APM/LLM Observability submission — pass via CLI --parameters, never commit. Leave empty to deploy without Datadog instrumentation.')
+@secure()
+param datadogApiKey string = ''
+
+@description('Datadog site for the ADF Function App')
+param datadogSite string = 'us3.datadoghq.com'
+
 @description('Azure region for the ADF Function App\'s underlying App Service Plan — deliberately separate from the shared `location` param. This subscription reported SubscriptionIsOverQuotaForSku (0 VM quota) for the Consumption/Dynamic SKU in eastus on first deploy attempt; same class of regional-capacity issue as acaLocation/whisperLocation above, same mitigation. Data Factory itself (a fully PaaS resource with no VM-quota dependency) stays in the shared `location`.')
 param adfFunctionsLocation string = 'eastus2'
 
@@ -241,6 +248,8 @@ module adfFunctions 'modules/adf-functions.bicep' = if (deployAdfMigration) {
     openAiEndpoint: openAi.outputs.endpoint
     openAiApiKey: openAi.outputs.apiKey
     eiaApiKey: eiaApiKey
+    datadogApiKey: datadogApiKey
+    datadogSite: datadogSite
   }
 }
 

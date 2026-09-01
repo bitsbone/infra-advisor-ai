@@ -13,6 +13,8 @@ dependencies = [
     "openai>=2.32.0",
     "requests>=2.32.0",
     "httpx>=0.28.1",
+    "ddtrace>=4.14.0",
+    "datadog-serverless-compat",
 ]
 
 [project.optional-dependencies]

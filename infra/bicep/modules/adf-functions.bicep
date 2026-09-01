@@ -43,6 +43,13 @@ param openAiEmbeddingDeployment string = 'text-embedding-3-small'
 @secure()
 param eiaApiKey string = ''
 
+@description('Datadog API key — Consumption-plan Functions have no agent sidecar, so traces/LLM Observability submit directly to Datadog intake (the "serverless compat" agentless model). Never pair with DD_AGENT_HOST.')
+@secure()
+param datadogApiKey string = ''
+
+@description('Datadog site (e.g. us3.datadoghq.com)')
+param datadogSite string = 'us3.datadoghq.com'
+
 var functionAppName = 'func-adf-infra-advisor-${environment}'
 var appServicePlanName = 'plan-adf-infra-advisor-${environment}'
 
@@ -91,6 +98,13 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'AZURE_OPENAI_API_KEY', value: openAiApiKey }
         { name: 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT', value: openAiEmbeddingDeployment }
         { name: 'EIA_API_KEY', value: eiaApiKey }
+        { name: 'DD_API_KEY', value: datadogApiKey }
+        { name: 'DD_SITE', value: datadogSite }
+        { name: 'DD_ENV', value: environment }
+        { name: 'DD_SERVICE', value: 'infra-advisor-adf-functions' }
+        { name: 'DD_VERSION', value: 'latest' }
+        { name: 'DD_LLMOBS_ENABLED', value: 'true' }
+        { name: 'DD_LLMOBS_ML_APP', value: 'infra-advisor-ai' }
       ]
     }
   }

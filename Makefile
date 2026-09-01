@@ -121,6 +121,7 @@ deploy-infra: ## Deploy Azure Bicep IaC (AKS, AI Search, OpenAI, etc.)
 		--location $(LOCATION) \
 		--template-file infra/bicep/main.bicep \
 		--parameters infra/bicep/parameters/dev.bicepparam \
+		--parameters datadogApiKey=$(DD_API_KEY) datadogSite=$(DD_SITE) \
 		--verbose
 	@echo "✓ Azure infrastructure deployed"
 

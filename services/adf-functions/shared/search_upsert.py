@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
+from ddtrace.llmobs import LLMObs
 from openai import AzureOpenAI
 
 from .chunking import chunk_text
@@ -43,6 +44,17 @@ def _get_openai_client() -> AzureOpenAI:
     )
 
 
+def _safe_annotate(span, **kwargs) -> None:
+    """LLMObs.annotate() raises if LLMObs.enable() was never called in-process
+    (true for unit tests importing this module directly, not via
+    function_app.py) — telemetry must never break indexing. Matches
+    agent-api's tag_agent_run try/except convention."""
+    try:
+        LLMObs.annotate(span=span, **kwargs)
+    except Exception:
+        logger.debug("LLMObs.annotate() failed (non-fatal)", exc_info=True)
+
+
 def index_prepared_records(prepared_records: list[dict]) -> int:
     """Chunk, embed, and upsert every prepared record. Returns document count."""
     if not prepared_records:
@@ -59,15 +71,23 @@ def index_prepared_records(prepared_records: list[dict]) -> int:
     for record in prepared_records:
         chunks = chunk_text(record["narrative"])
         for chunk_idx, chunk_text_value in enumerate(chunks):
-            try:
-                embedding_resp = oai_client.embeddings.create(model=embedding_deployment, input=chunk_text_value)
-                vector = embedding_resp.data[0].embedding
-            except Exception as exc:
-                # One record's embedding failure should never abort the whole
-                # batch — log and skip, matching the resilience the original
-                # census_market_intelligence_refresh DAG had per-record.
-                logger.warning("Embedding failed for doc_id_prefix=%s: %s", record.get("doc_id_prefix"), exc)
-                continue
+            with LLMObs.embedding(model_name=embedding_deployment, model_provider="azure", name="embed-chunk") as embed_span:
+                try:
+                    embedding_resp = oai_client.embeddings.create(model=embedding_deployment, input=chunk_text_value)
+                    vector = embedding_resp.data[0].embedding
+                except Exception as exc:
+                    # One record's embedding failure should never abort the whole
+                    # batch — log and skip, matching the resilience the original
+                    # census_market_intelligence_refresh DAG had per-record.
+                    logger.warning("Embedding failed for doc_id_prefix=%s: %s", record.get("doc_id_prefix"), exc)
+                    _safe_annotate(embed_span, tags={"error": "true", "error.type": type(exc).__name__})
+                    continue
+                # Chunk count only — raw narrative text is provider input, never
+                # copied into custom telemetry (matches agent-api's convention).
+                _safe_annotate(
+                    embed_span,
+                    tags={"chunk.characters": str(len(chunk_text_value)), "vector.dimensions": str(len(vector))},
+                )
             docs_to_upsert.append({
                 "id": f"{record['doc_id_prefix']}_{chunk_idx}",
                 "content": chunk_text_value,
