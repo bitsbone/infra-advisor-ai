@@ -23,7 +23,7 @@ InfraAdvisor is a multi-runtime repository. Begin by identifying the contract yo
 | `services/auth-api` | Users, authentication, reset and admin workflows |
 | `services/ui` | React web application and browser RUM |
 | `mobile` | Native iOS, native Android, and .NET MAUI clients |
-| `services/ingestion` | Airflow image, DAGs, helpers, and data contracts |
+| `services/adf-functions` | Azure Functions ingestion app, domain modules, and data contracts |
 | `contracts` | Versioned cross-service payload schemas and fixtures |
 | `infra/bicep` | Azure infrastructure source of truth |
 | `k8s` | Runtime configuration and workload manifests |

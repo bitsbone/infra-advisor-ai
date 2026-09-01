@@ -98,7 +98,7 @@ infra-advisor-ai/
 │   ├── namespace.yaml
 │   ├── kafka/                         # Strimzi CRDs + KafkaCluster
 │   ├── redis/                         # Redis deployment
-│   ├── airflow/                       # Airflow deployment (values.yaml for Helm)
+│   │                                   # (ingestion moved to Azure Data Factory + Functions — not a k8s workload, see services/adf-functions/ below)
 │   ├── mcp-server/                    # InfraTools MCP deployment
 │   ├── agent-api/                     # FastAPI agent service deployment
 │   ├── load-generator/                # CronJob for synthetic load
@@ -136,15 +136,16 @@ infra-advisor-ai/
 │   │   │       ├── llm_obs.py         # DD LLM Observability callbacks
 │   │   │       └── tracing.py
 │   │   └── tests/
-│   ├── ingestion/
-│   │   ├── dags/                      # Airflow DAGs
-│   │   │   ├── nbi_refresh.py         # FHWA NBI data pull + index
-│   │   │   ├── fema_refresh.py        # OpenFEMA data pull + index
-│   │   │   ├── eia_refresh.py         # EIA data pull + index
-│   │   │   ├── twdb_water_plan_refresh.py  # TWDB water plan projects + EPA SDWIS water systems
-│   │   │   └── knowledge_base_init.py # Synthetic doc generation + index
-│   │   └── scripts/
-│   │       └── generate_synthetic_docs.py
+│   ├── adf-functions/                 # Azure Functions app triggered by ADF pipelines (replaces Airflow)
+│   │   ├── domains/
+│   │   │   ├── nbi.py                 # FHWA NBI data pull + index
+│   │   │   ├── fema.py                # OpenFEMA data pull + index
+│   │   │   ├── eia.py                 # EIA data pull + index
+│   │   │   ├── samgov.py              # SAM.gov/USASpending awards pull + index
+│   │   │   ├── census.py              # Census population/permits fan-in + index
+│   │   │   └── public_docs.py         # Public-docs report builder
+│   │   └── shared/                    # chunking, blob I/O, search upsert — reused by every domain
+│   │                                   # (TWDB and synthetic knowledge-base init were retired, not migrated — see migration notes)
 │   ├── load-generator/
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
@@ -194,7 +195,7 @@ All decisions below are resolved. Implementation agents must follow them exactly
 | MCP transport | Streamable HTTP (SSE fallback) | Clean containerized service behind APIM |
 | Message broker | Kafka via Strimzi on AKS | Required for DSM; self-hosted per constraint |
 | Cache / session memory | Redis (single AKS deployment) | LangChain memory backend + cache layer |
-| Orchestration (ingestion) | Airflow via Helm on AKS | Required for DJM story |
+| Orchestration (ingestion) | Azure Data Factory + Azure Functions (Consumption) | Required for DJM story — migrated off self-hosted Airflow-on-AKS once Datadog DJM added native ADF support; no persistent orchestrator to operate |
 | Secrets management | `.env` files + K8s Secrets | Simple — Key Vault deferred |
 | IaC | Azure Bicep | Native Azure, no Terraform state complexity |
 | Container registry | GitHub Container Registry (GHCR) | Free, co-located with source repo, no service principal needed |
@@ -226,9 +227,9 @@ All external data sources are free, require no API key unless noted, and are con
 | OpenFEMA | Disaster declarations, PA grants, NFIP claims | REST API `https://www.fema.gov/api/open/v2/` | No auth, no key |
 | EIA Open Data | State energy infrastructure, grid investment | REST API — requires free API key (`EIA_API_KEY` env var) | Key in `.env.example` |
 | EPA ECHO / SDWIS | 160k+ public water systems — violations, enforcement actions, compliance history since 1993 | Envirofacts REST API `https://enviro.epa.gov/enviro/efservice/` | No auth. Filter by state (`TX`), system type (CWS), violation status |
-| TWDB 2026 State Water Plan | 3,000 recommended water projects across 16 TX planning regions — type, cost, region, water user group, supply strategy | Excel workbook download (annual) + interactive app | No auth. Batch ingestion only — no real-time API. Indexed into Azure AI Search at init |
+| TWDB 2026 State Water Plan | 3,000 recommended water projects across 16 TX planning regions — type, cost, region, water user group, supply strategy | Excel workbook download (annual) + interactive app | **Retired during the ADF migration, not migrated** — already-indexed documents remain queryable but no longer refresh. No auth. Batch ingestion only — no real-time API |
 | Texas Water Data Hub | Groundwater database, reservoir conditions, aquifer data, driller reports (updated nightly) | REST/GIS services at `txwaterdatahub.org` | No auth. GeoJSON + tabular formats |
-| Synthetic knowledge base | Firm project close-outs, proposals, cost guides | Azure AI Search index | Generated once at init; refreshed by Airflow DAG |
+| Synthetic knowledge base | Firm project close-outs, proposals, cost guides | Azure AI Search index | Generated once at init; **retired during the ADF migration, not migrated** — no automated refresh path today |
 
 **NBI ArcGIS endpoint:**  
 `https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/services/National_Bridge_Inventory/FeatureServer/0/query`
@@ -277,7 +278,7 @@ Datadog instrumentation is a first-class requirement — not optional, not defer
 | AKS nodes | Infrastructure monitoring | Node CPU, memory, disk, network |
 | All pods | Container monitoring | Pod health, restart count, OOM events |
 | Kafka (Strimzi) | Kafka integration (JMX) + DSM | Broker metrics, consumer lag, throughput |
-| Airflow | Data Jobs Monitoring | DAG run duration, failure rate, last success |
+| Azure Data Factory | Data Jobs Monitoring for ADF (pull-based Azure integration) | Pipeline/activity run duration, failure rate, last success |
 | Redis | Redis integration + DBM | Ops/sec, latency, memory, keyspace |
 | MCP server | APM (ddtrace auto-instrument) + custom metrics | Tool call counts, latency, external API health |
 | Agent API | LLM Observability + APM | Full span tree per query, token counts, cost |
@@ -352,7 +353,7 @@ The project is implemented in five sequential phases. Each phase has its own spe
 
 ### Phase 1 — Foundation: Infrastructure and data pipeline
 
-**Goal:** Azure resource group provisioned; AKS cluster running with Datadog; Kafka, Redis, Airflow deployed; all ingestion DAGs working; Azure AI Search index populated with NBI, FEMA, and synthetic knowledge base data.
+**Goal:** Azure resource group provisioned; AKS cluster running with Datadog; Kafka, Redis deployed; Azure Data Factory + Functions ingestion pipelines working; Azure AI Search index populated with NBI, FEMA, and synthetic knowledge base data.
 
 **Duration estimate:** Implement first, measure actual.
 
@@ -392,7 +393,7 @@ Makefile                                (targets: deploy-infra, deploy-k8s, run-
 - Enable OIDC issuer and workload identity
 - Image pulls from GHCR via `ghcr-pull-secret` K8s Secret (see GHCR section below) — no ACR attachment needed
 - Kubernetes version: 1.30+
-- Note: at 3× 8 GB = 24 GB total RAM this cluster is sized for lab use. If nodes show memory pressure, the first mitigation is switching Airflow executor to `LocalExecutor` (eliminates separate worker pods).
+- Note: at 3× 8 GB = 24 GB total RAM this cluster is sized for lab use. Ingestion no longer runs on AKS (Azure Data Factory + Consumption-plan Functions), so cluster memory pressure has one fewer workload class to consider than the original Airflow-on-AKS design.
 
 **GitHub Container Registry (GHCR):**
 
@@ -517,24 +518,12 @@ Note: GHCR packages are private by default when the repo is private. If the repo
   ad.datadoghq.com/redis.instances: '[{"host":"%%host%%","port":"6379"}]'
   ```
 
-**Airflow:**
-- Deploy via official Helm chart (`apache-airflow/airflow`) into `airflow` namespace
-- Executor: `LocalExecutor` (runs tasks in the scheduler process — eliminates separate worker pods, appropriate for lab scale with 5 DAGs)
-- Metadata database: built-in Postgres sidecar via Helm (`postgresql.enabled: true`)
-- DAG persistence via PVC
-- Extra pip packages (set via `_PIP_ADDITIONAL_REQUIREMENTS` or `extraPipPackages` in Helm values):
-  - `apache-airflow-providers-openlineage` — emits OpenLineage events for Datadog DJM dataset lineage
-  - `apache-airflow-providers-http` — for external API DAG operators
-  - `azure-storage-blob` — for Blob Storage writes
-  - `azure-search-documents` — for AI Search upserts
-  - `azure-identity` — DefaultAzureCredential for Azure service auth
-  - `tiktoken` — for document chunking
-  - `openpyxl` — for parsing TWDB State Water Plan Excel workbook
-  - `pandas` — for tabular data transformation (NBI CSV, TWDB workbook, FEMA/EIA records)
-  - `openai` — for synthetic document generation via Azure OpenAI in `knowledge_base_init` DAG
-  - `ddtrace` — for APM span instrumentation within DAG tasks
-- Datadog Data Jobs Monitoring: install a current Airflow OpenLineage provider and configure the Datadog transport on scheduler and task-running pods with `OPENLINEAGE__TRANSPORT__TYPE=datadog`, `OPENLINEAGE_NAMESPACE`, `DD_SITE`, and `DD_API_KEY`
-- OpenLineage transport: configure `OPENLINEAGE_URL` to point to DD Agent OpenLineage endpoint (`http://datadog-agent.datadog.svc.cluster.local:8126/api/v2/openlineage`)
+**Azure Data Factory + Functions** (replaces a self-hosted Airflow-on-AKS deployment this project originally used — see the [migration notes](../docs/src/content/docs/agent-guides/airflow-to-adf-migration.md) for why):
+- Data Factory: system-assigned managed identity, Azure-managed Integration Runtime (no Self-Hosted IR — everything is cloud-based Function/Web/Lookup activities), one Schedule Trigger + two-activity pipeline per source
+- Azure Functions: one Function App (`func-adf-infra-advisor-<env>`), Linux, Python 3.12, **Consumption plan** — no persistent orchestrator process to operate
+- Function App dependencies: `azure-storage-blob`, `azure-search-documents`, `azure-identity`, `tiktoken` (document chunking, standardized to 512 tokens / 64-token overlap across every domain), `pandas`/`pyarrow` (Parquet snapshots), `openai`, `ddtrace` + `datadog-serverless-compat` (agentless APM — Consumption Functions have no Agent sidecar)
+- Datadog Data Jobs Monitoring for ADF: a pull-based Azure integration (polls the ARM API for pipeline/activity/trigger run status), not OpenLineage — see `ops/azure/README.md` for the one-time setup (custom least-privilege role + Datadog UI configuration)
+- Scope note: TWDB water plan refresh and synthetic knowledge-base initialization were retired rather than migrated (see migration notes) — their previously-indexed documents remain queryable but no longer refresh
 
 **Datadog DaemonSet:**
 - Deploy DD Agent as DaemonSet into `datadog` namespace
@@ -578,47 +567,35 @@ Each synthetic document must be 500–2,000 words, domain-realistic, and referen
 
 Water-specific documents must reference real Texas context where appropriate: the 16 TWDB planning regions (A–P), the $174B funding gap identified in the 2026 State Water Plan, SWIFT loan program parameters, and Corpus Christi / Rio Grande Valley / Panhandle water stress scenarios as illustrative examples.
 
-**NBI ingestion DAG:**
-- Pull Texas NBI data as pilot (state code 48) — full national pull is out of scope for Phase 1
-- Filter to records with `SUFFICIENCY_RATING IS NOT NULL`
-- Store raw data as parquet in Azure Blob Storage (`infra-advisor-raw` container)
-- Index 500-character text chunks per bridge record into Azure AI Search under `domain: "transportation"`, `document_type: "asset_record"`
-- Schedule: weekly at 03:00 UTC Sunday
-- Instrumented for Data Jobs Monitoring through the Airflow OpenLineage provider and Datadog transport
+> The sections below describe the current Azure Data Factory + Functions implementation. TWDB water plan and synthetic knowledge-base initialization were retired during the migration rather than ported — see the [migration notes](../docs/src/content/docs/agent-guides/airflow-to-adf-migration.md) for what that means for their previously-indexed data.
 
-**FEMA ingestion DAG:**
+**NBI ingestion pipeline (`pl-nbi-refresh`):**
+- Pull Texas NBI data as pilot (state code 48) — full national pull is out of scope
+- Filter to records with `SUFFICIENCY_RATING IS NOT NULL`
+- Store raw data as Parquet in Azure Blob Storage (`raw-data` container)
+- Index tiktoken-chunked (512 tokens / 64-token overlap) text per bridge record into Azure AI Search under `domain: "transportation"`, `document_type: "asset_record"`
+- Schedule: weekly at 03:00 UTC Sunday
+- Pipeline/activity run status visible via Datadog Data Jobs Monitoring for ADF
+
+**FEMA ingestion pipeline (`pl-fema-refresh`):**
 - Pull `DisasterDeclarationsSummaries` endpoint for all records since 2010
-- Store raw as parquet in Blob Storage
+- Store raw as Parquet in Blob Storage
 - Index as text chunks into Azure AI Search under `domain: "environmental"`, `document_type: "disaster_declaration"`
 - Schedule: daily at 02:00 UTC
 
-**EIA ingestion DAG:**
+**EIA ingestion pipeline (`pl-eia-refresh`):**
 - Pull state-level electricity generation capacity for southeastern states (FL, GA, AL, MS, LA, TX, AR, TN, SC, NC, VA)
 - API endpoint: `https://api.eia.gov/v2/electricity/electric-power-operational-data/data/`
-- Store as parquet, index into Azure AI Search
+- Store as Parquet, index into Azure AI Search
 - Schedule: weekly at 04:00 UTC Sunday
 
-**TWDB water plan ingestion DAG:**
-- Download the TWDB 2026 State Water Plan data summary workbook (Excel) from `https://www.twdb.texas.gov/waterplanning/data/rwp-database/index.asp`
-- Parse all project records (3,000 recommended strategies across 16 planning regions A–P)
-- Key fields to extract: project name, county, planning region code, water user group, strategy type, project sponsor, estimated cost by decade (2030/2040/2050/2060/2070/2080), water supply volume added
-- Convert each project to a text narrative chunk: "TWDB 2026 Water Plan — Region {X}: {project_name} in {county} County, sponsored by {entity}. Strategy type: {type}. Estimated cost: ${cost}M (decade of need: {decade}). Adds {volume} acre-feet/year of {supply_type} water supply."
-- Index into Azure AI Search under `domain: "water"`, `document_type: "water_plan_project"`, `source: "TWDB_2026_State_Water_Plan"`
-- Also index the EPA SDWIS Texas community water system summary (bulk CSV download from Envirofacts) under `domain: "water"`, `document_type: "water_system_record"`
-- Schedule: monthly at 05:00 UTC 1st of month (plan updates are infrequent; monthly check is sufficient)
-- Instrumented for Data Jobs Monitoring through the Airflow OpenLineage provider and Datadog transport
+**TWDB water plan ingestion — retired, not migrated:**
+- Originally: download the TWDB 2026 State Water Plan data summary workbook (Excel), parse ~3,000 recommended strategies across 16 planning regions A–P, index as `domain: "water"`, `document_type: "water_plan_project"`, plus an EPA SDWIS Texas community water system summary as `document_type: "water_system_record"`, monthly.
+- This was the most complex of the original DAGs (zip-bomb/path-traversal/encryption validation before parsing) and was judged not worth reimplementing for a demo environment. No ADF pipeline exists for it. Previously-indexed `water_plan_project`/`water_system_record` documents remain queryable but no longer refresh.
 
-**Knowledge base init DAG (`knowledge_base_init`):**
-- Calls `services/ingestion/scripts/generate_synthetic_docs.py` as a BashOperator task
-- Script generates all 80 synthetic documents using Azure OpenAI gpt-4.1-mini with structured prompts per document type
-- Generation is idempotent: script checks `AZURE_SEARCH_INDEX_NAME` for existing documents by `source: "synthetic"` before generating; skips if count ≥ 80
-- Each document generated by prompting gpt-4.1-mini with: document type, domain, required standards to reference, target word count (500–2,000), and Texas/infrastructure context
-- After generation, script chunks each document at 512 tokens with 64-token overlap using `tiktoken` (`cl100k_base` encoding), embeds each chunk via Azure OpenAI `text-embedding-3-small`, and upserts into Azure AI Search
-- `generate_synthetic_docs.py` requires: `openai`, `azure-identity`, `azure-search-documents`, `tiktoken` — all available via Airflow `extraPipPackages`
-- Chunk ID format: `synthetic_{document_slug}_{chunk_index}` — deterministic, enables idempotent upserts
-- Run manually once at initial deployment; re-run manually when document corpus needs refreshing
-- Schedule: `None` (manual trigger only — no cron schedule)
-- Instrumented for Data Jobs Monitoring through the Airflow OpenLineage provider and Datadog transport
+**Synthetic knowledge base initialization — retired, not migrated:**
+- Originally: a manually-triggered one-time job generating 80 synthetic documents (proposals, lessons learned, cost guides, risk frameworks) via Azure OpenAI, chunked at 512 tokens / 64-token overlap and indexed under `source: "synthetic"`.
+- Already a one-time bootstrap by design (idempotent, skipped once the corpus existed) — a natural one to drop rather than migrate. No ADF pipeline or other automated regeneration path exists. Previously-generated synthetic documents remain queryable via `search_project_knowledge`.
 
 **Phase 1 acceptance criteria:**
 - [ ] `az aks get-credentials` works; `kubectl get nodes` shows 3 Ready nodes
@@ -626,13 +603,11 @@ Water-specific documents must reference real Texas context where appropriate: th
 - [ ] Datadog infrastructure map shows AKS nodes with correct tags
 - [ ] Kafka broker pod Running; topic `infra.query.events` exists
 - [ ] Redis pod Running; `redis-cli ping` returns PONG
-- [ ] Airflow UI accessible; all 5 DAGs visible
-- [ ] Manual trigger of `knowledge_base_init` DAG succeeds; Azure AI Search index has ≥80 documents
-- [ ] Manual trigger of `nbi_refresh` DAG succeeds; index has NBI records for Texas bridges
-- [ ] Manual trigger of `fema_refresh` DAG succeeds; index has FEMA disaster records
-- [ ] Manual trigger of `twdb_water_plan_refresh` DAG succeeds; index has ≥20 TWDB water plan project records tagged `document_type: "water_plan_project"` and ≥10 EPA SDWIS water system records
-- [ ] Datadog DJM shows all 5 DAG runs with duration and status
-- [ ] GitHub Actions `ci.yml` workflow runs green on a test push (all 3 service test suites pass)
+- [ ] Azure Data Factory pipelines visible in the ADF portal; Function App deployed and responding
+- [ ] Manual run of `pl-nbi-refresh` succeeds; index has NBI records for Texas bridges
+- [ ] Manual run of `pl-fema-refresh` succeeds; index has FEMA disaster records
+- [ ] Datadog DJM for ADF shows pipeline runs with duration and status
+- [ ] GitHub Actions `ci.yml` workflow runs green on a test push (all service test suites pass)
 - [ ] `make create-ghcr-secret` runs without error; `kubectl get secret ghcr-pull-secret -n infra-advisor` exists
 
 ---
@@ -1214,7 +1189,7 @@ All dashboards must be created as JSON exports compatible with the Datadog dashb
 1. **infra-overview.json** — AKS node health, pod counts by namespace, Kafka broker metrics, Redis ops/sec, container restarts
 2. **llm-observability.json** — Query volume, token usage, cost/day, faithfulness score trend, AI Guard violations, latency P50/P95/P99
 3. **mcp-server.json** — Tool call rate by tool, tool latency heatmap, external API latency by source, error rate by source
-4. **pipeline-health.json** — Kafka consumer lag on both topics, DSM topology map embed, Airflow DAG success rate, Azure AI Search index document count
+4. **pipeline-health.json** — Kafka consumer lag on both topics, DSM topology map embed, Azure AI Search index document count (the Airflow-era DAG-success widget was removed; an ADF pipeline-health widget hasn't been authored yet)
 
 **Monitors (3 required):**
 
@@ -1371,7 +1346,7 @@ Global infrastructure consulting firm AI assistant. See @docs/agent-guides/proje
 - `import ddtrace.auto` must be the first import in every Python service entrypoint
 - Never hardcode secrets — use `os.environ["VAR_NAME"]` and fail fast if missing
 - Do not modify NBI field names — use exact names from PRD section 3
-- All K8s resources go in namespace `infra-advisor` (except Kafka→`kafka`, Airflow→`airflow`, DD→`datadog`)
+- All K8s resources go in namespace `infra-advisor` (except Kafka→`kafka`, DD→`datadog`)
 - All Deployment manifests must include `imagePullSecrets: [{name: ghcr-pull-secret}]`
 - Container images are at `ghcr.io/kyletaylored/infra-advisor-ai/<service>:latest`
 
@@ -1385,7 +1360,7 @@ Implement phases sequentially. Check @specs/ for current phase task list.
 ```yaml
 ---
 name: infra-agent
-description: Implements Azure Bicep IaC, Kubernetes manifests, and Helm configurations. Specializes in AKS, Strimzi Kafka, Redis, Airflow. Use for all infra/bicep/ and k8s/ work.
+description: Implements Azure Bicep IaC, Kubernetes manifests, and Helm configurations. Specializes in AKS, Strimzi Kafka, Redis, Azure Data Factory. Use for all infra/bicep/ and k8s/ work.
 model: claude-sonnet-4-6
 tools:
   - Read
@@ -1521,13 +1496,12 @@ The orchestrator agent (you, the root Claude Code session) must follow this exec
 3. [parallel] infra-agent: write all Bicep modules + main.bicep
                infra-agent: write k8s/namespace.yaml, k8s/datadog/, k8s/kafka/, k8s/redis/
                infra-agent: write .github/workflows/ci.yml and .github/workflows/build-push.yml
-4. [serial]   infra-agent: write k8s/airflow/ (depends on namespace)
-5. [serial]   infra-agent: write k8s/secrets/ghcr-pull-secret.yaml (template with placeholders)
-6. [serial]   infra-agent: write Makefile with deploy-infra, deploy-k8s, create-ghcr-secret targets
-7. [parallel] implementation-agent: write all 5 Airflow DAGs (nbi_refresh, fema_refresh, eia_refresh, twdb_water_plan_refresh, knowledge_base_init)
-               implementation-agent: write generate_synthetic_docs.py (80 documents, water domain expanded)
-8. [serial]   test-agent: write tests for DAGs (mock external APIs)
-9. [serial]   reviewer: review Phase 1 deliverables against PRD
+4. [serial]   infra-agent: write k8s/secrets/ghcr-pull-secret.yaml (template with placeholders)
+5. [serial]   infra-agent: write Makefile with deploy-infra, deploy-k8s, create-ghcr-secret targets
+6. [parallel] implementation-agent: write Azure Data Factory pipelines + Azure Functions ingestion domains (nbi, fema, eia, samgov, census, public_docs)
+               (historical note: Phase 1 as originally executed built this as 5 Airflow DAGs on AKS, later migrated to ADF + Functions — see the migration notes)
+7. [serial]   test-agent: write tests for the ingestion Functions (mock external APIs)
+8. [serial]   reviewer: review Phase 1 deliverables against PRD
 ```
 
 **Phase 2 execution:**
@@ -1670,7 +1644,7 @@ These are pre-resolved design decisions that implementation agents must respect.
 
 **LangChain MCP adapter:** `langchain-mcp-adapters` requires an async context to initialize the MCP client. Wrap initialization in `asynccontextmanager` for FastAPI lifespan.
 
-**Airflow Data Jobs Monitoring:** Airflow 3 emits job runs and dataset lineage through `apache-airflow-providers-openlineage`. InfraAdvisor uses the recommended Datadog transport with `OPENLINEAGE__TRANSPORT__TYPE=datadog`, `OPENLINEAGE_NAMESPACE`, `DD_SITE`, and a Kubernetes-secret-backed `DD_API_KEY` on the scheduler and other OpenLineage-emitting pods. With `LocalExecutor`, task processes inherit the scheduler environment; there is no separate worker Deployment. `DD_DATA_JOBS_ENABLED` applies to tracer-instrumented data jobs such as Spark and is not required for this Airflow OpenLineage transport.
+**Data Jobs Monitoring for Azure Data Factory:** unlike the OpenLineage-based approach Airflow required, Datadog's ADF integration is a pull-based Azure integration — it polls the ARM API for pipeline, activity, and trigger run status rather than requiring instrumentation inside the running job. Setup is a manual `az`/Datadog-UI process (custom least-privilege role assignment, then enabling the integration for the target Data Factory in Datadog's Data Observability UI) — see `ops/azure/README.md` for the exact steps. It is a **preview** feature; dataset lineage only resolves for a specific connector allow-list that does not include Azure AI Search/OpenAI, so pipeline/activity status monitoring works fully but lineage graphs won't appear for the custom Function steps — expected, not a bug to chase.
 
 **Redis session keys:** Use `EXPIRE` with TTL on every session write. LangChain's Redis memory does not set TTL by default — wrap with a custom memory class that calls `redis_client.expire(key, 86400)` after every write.
 

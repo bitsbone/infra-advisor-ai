@@ -265,6 +265,7 @@ export default defineConfig({
                     { label: 'Project Map', slug: 'agent-guides/project-map' },
                     { label: 'Maintainer Invariants', slug: 'agent-guides/core-conventions' },
                     { label: 'Build, Test, and Verify', slug: 'agent-guides/build-test-verify' },
+                    { label: 'Airflow → ADF Migration', slug: 'agent-guides/airflow-to-adf-migration' },
                 ],
             },
             { label: 'AKS Resource Group Boundaries', slug: 'resource-group-migration' },

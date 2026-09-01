@@ -51,9 +51,9 @@ Workloads use the correct namespace, a stable application label, Unified Service
 
 Use immutable image identity for releases. A literal `latest` tag is not a useful version attribute and can prevent platforms from recognizing an update.
 
-## Airflow files remain parseable
+## Ingestion Functions stay domain-scoped
 
-DAG modules use Airflow 3's `schedule=` form, disable catchup unless backfill is an explicit requirement, and keep expensive or task-only third-party imports inside task functions. The real DagBag and built-image contract—not a lightweight import stub—decide whether a DAG is deployable.
+Each `services/adf-functions/domains/*.py` module owns exactly one source's `fetch_and_store` logic; shared chunking/embedding/upsert logic lives in `shared/` and is never duplicated per-domain. Provider-specific validation and field mapping stay in the domain module — `function_app.py` only wires HTTP routes to domain functions, it never contains fetch logic itself.
 
 ## Metrics stay bounded
 

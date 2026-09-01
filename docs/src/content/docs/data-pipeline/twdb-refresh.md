@@ -1,38 +1,26 @@
 ---
 title: Refresh Texas water planning data
-description: Ingest a reviewed TWDB workbook and EPA water-system records through separate validated branches
+description: Retired during the Airflow-to-ADF migration — no automated ingestion for this source exists today
 docType: reference
 audience:
   - data-engineer
   - security-engineer
-maturity: stable
-verifiedOn: 2026-08-27
+maturity: deprecated
+verifiedOn: 2026-09-01
 sidebar:
   label: TWDB & EPA water refresh
 ---
 
-**DAG:** `twdb_water_plan_refresh` · **Schedule:** monthly, day 1 at 05:00 UTC
+**Status:** retired, not migrated. This DAG (`twdb_water_plan_refresh`, monthly) does not exist in the Azure Data Factory pipelines that replaced Airflow. See the [migration notes](/agent-guides/airflow-to-adf-migration/) for why.
 
-The DAG combines two independent evidence sources: a configured TWDB planning workbook and EPA SDWIS Texas water-system data. They converge in the water Search domain but retain separate manifests, source identities, and document types.
+## What this covered
 
-## TWDB file boundary
+The original DAG combined two independent evidence sources: a configured TWDB planning workbook (reviewed direct HTTPS ZIP URL, with zip-bomb/path-traversal/encryption validation before parsing) and EPA SDWIS Texas water-system data. They converged in the `water` Search domain as `water_plan_project` and `water_system_record` documents respectively.
 
-The deployment points to a reviewed direct HTTPS ZIP URL. The fetch validates host/redirect, content type and size, archive entry count and paths, compression ratio, encryption state, and the nested XLSX package before storing the raw source.
+This was the most complex of the original DAGs — the validation graph alone (host/redirect checks, archive entry count and paths, compression ratio, encryption state, nested XLSX package inspection) was judged not worth reimplementing for a demo environment during the migration to Azure Data Factory.
 
-The parser searches only a bounded number of header rows for a recognized project-name schema, then maps the reviewed infrastructure-project worksheet into stable fields such as project name, sponsor, region, recommendation, components, capital cost, and online decade.
+## Current state
 
-If the workbook contains no recognized project records, the task fails before publishing a normalized manifest or updating Search. Missing county, volume, or decade-specific data remains absent; the narrative does not invent it.
-
-## EPA branch
-
-The SDWIS branch retrieves Texas community water-system records, stages normalized JSON Lines and Parquet independently, and builds `water_system_record` documents from identity, type, population, activity, source-water, and available violation fields.
-
-## Fan-in and verification
-
-- Each branch has its own source-qualified manifest and checksum.
-- A TWDB failure does not become a fabricated EPA result, or vice versa.
-- Search documents retain `water_plan_project` versus `water_system_record` identity.
-- Sampled narratives contain only populated source fields and correct units.
-- Logs record delivery shape, bytes, sheets, counts, and storage operations—not workbook rows, response bodies, or credentials.
-
-The direct workbook URL is configuration, not discovered by scraping the landing page at runtime. Review it whenever TWDB changes its publication format.
+- **No pipeline refreshes this data going forward.** Neither the TWDB workbook parsing nor the EPA SDWIS fetch has an Azure Data Factory / Azure Functions equivalent.
+- **Previously-indexed documents remain in Azure AI Search untouched** — `water_plan_project` and `water_system_record` documents from the last Airflow run are still queryable; they simply stop being refreshed.
+- If this data needs to come back, it would be a new `services/adf-functions` domain module + Data Factory pipeline, built the same way the six migrated domains were (see the [pipeline architecture](/data-pipeline/)) — not a restoration of the old DAG's code, which depended on Airflow-specific patterns (XCom manifest, DagBag scheduling) that no longer exist in this repo.

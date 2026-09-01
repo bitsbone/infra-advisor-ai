@@ -21,8 +21,8 @@ The `datadog` directory stores JSON definitions for observability assets. A chec
 | Infrastructure Overview dashboard | Are cluster and shared data services healthy? | Kubernetes, Kafka, Redis, and host metrics |
 | LLM Observability dashboard | How are agent volume, latency, tools, feedback, and quality trending? | Agent spans, evaluations, and custom metrics |
 | MCP Server dashboard | Which tools or providers are slow or failing? | MCP spans, logs, and metrics |
-| Pipeline Health dashboard | Did scheduled ingestion complete and publish data? | Airflow/Data Jobs and custom task spans |
-| Blob Storage dashboard | Are source snapshots uploading successfully? | `azure.blob.upload` spans |
+| Pipeline Health dashboard | Did scheduled ingestion complete and publish data? | Azure AI Search index document count (Kafka/DSM widgets only — the Airflow-era DAG-health widget was removed, no ADF equivalent authored yet) |
+| Blob Storage dashboard | Are source snapshots uploading successfully? | Stale — built around Airflow's custom `azure.blob.upload` span, which `services/adf-functions` doesn't emit; needs a rebuild against the ingestion Functions' auto-instrumented spans |
 | Faithfulness monitor | Has the Python faithfulness gauge degraded? | `eval.faithfulness_score` |
 | Kafka lag monitor | Is the synthetic consumer falling behind? | consumer lag |
 | MCP provider-error monitor | Are provider failures elevated? | MCP error metric |

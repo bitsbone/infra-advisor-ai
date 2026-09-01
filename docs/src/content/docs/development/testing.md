@@ -24,7 +24,7 @@ Test counts and durations change continuously. Select verification from the beha
 | Auth or persistence | API tests; PostgreSQL integration test when SQL changes | service suite |
 | UI | TypeScript check and production build | exercised browser workflow |
 | MAUI/native mobile | relevant unit/view-model tests | platform Debug/Release build and device acceptance |
-| Airflow DAG/helper | focused ingestion test | real DagBag plus built-image contract |
+| Ingestion Function | focused domain/shared unit test | `uv run pytest` in `services/adf-functions` |
 | Kubernetes/AppSec | executable manifest contract test | rendered/apply validation in a disposable environment |
 | Documentation | docs build, internal links, content rules | visual review at narrow and wide widths |
 
@@ -35,8 +35,13 @@ make test-mcp
 make test-agent
 make test-load-gen
 make test-all
-make test-airflow
-make test-airflow-container
+```
+
+For the ingestion Functions:
+
+```bash
+cd services/adf-functions
+uv run pytest
 ```
 
 Run .NET tests from their explicit test projects so production and test directories do not get confused. Use `dotnet test ... --filter <expression>` for a focused case, then a Release build/test before changing deployment code.
@@ -57,7 +62,7 @@ Agent tests should exercise routing, streaming event order, memory isolation, ar
 
 ## Preserve the real runtime gate
 
-Lightweight unit tests cannot prove an Airflow image contains its packages or that a DAG parses under the deployed version. The ingestion CI job runs tests under the lock, builds the image, and executes its embedded verification script.
+Lightweight unit tests cannot prove an Azure Function App is correctly deployed and configured. Validate a real pipeline run (`az datafactory pipeline create-run`) against a temporary or validation search index before trusting a code change against production data.
 
 Likewise, a mocked repository cannot prove PostgreSQL JSONB round trips. CI includes a real PostgreSQL integration case for conversation artifacts.
 

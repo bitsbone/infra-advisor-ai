@@ -17,9 +17,10 @@ sidebar:
 | Namespace | Owner and contents |
 |---|---|
 | `infra-advisor` | Product APIs, both MCP servers, UI, Redis, PostgreSQL, Mailpit, and synthetic load |
-| `airflow` | Airflow scheduler, API, DAG processor, triggerer, metadata database, and logs |
 | `kafka` | Strimzi operator resources, Kafka cluster, and topics |
 | `datadog` | Datadog Agent and Cluster Agent managed through the Operator |
+
+Ingestion (Azure Data Factory + Azure Functions) is not a Kubernetes workload — see the [data pipeline overview](/data-pipeline/) for that architecture instead.
 
 Replica counts, images, ports, probes, resource requests, and schedules change frequently. Inspect `k8s/<workload>` and the live object rather than copying a table from documentation.
 
@@ -27,13 +28,7 @@ Replica counts, images, ports, probes, resource requests, and schedules change f
 
 The public UI service routes to `auth-api`, `agent-api`, and `agent-api-dotnet`. Each agent calls its language-matched MCP service. Redis supplies ephemeral memory, PostgreSQL supplies durable identity/conversation state, and the load-generator CronJob publishes synthetic queries to Kafka.
 
-Secrets are split by responsibility: registry pull, each service's external credentials, PostgreSQL, Redis, Datadog DBM, Airflow, and Mailpit. All GHCR workloads reference the namespace-local `ghcr-pull-secret`.
-
-## Airflow namespace
-
-The Helm release uses an immutable application image containing DAGs and helpers. DAG persistence and git-sync are disabled. Airflow's registry secret must exist in its own namespace and apply to scheduler, processor, API, triggerer, migration, and hook workloads.
-
-Use `make preflight-airflow-cluster` before upgrades and the image verification target before Helm mutation.
+Secrets are split by responsibility: registry pull, each service's external credentials, PostgreSQL, Redis, Datadog DBM, and Mailpit. All GHCR workloads reference the namespace-local `ghcr-pull-secret`.
 
 ## Kafka namespace
 

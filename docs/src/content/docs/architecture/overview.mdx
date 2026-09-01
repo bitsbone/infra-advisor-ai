@@ -30,7 +30,7 @@ The UI reverse proxy routes `/api/*` to Python, `/api-dotnet/*` to .NET, and `/a
 | Redis | Ephemeral agent memory, model selection, and suggestion pools |
 | PostgreSQL | Users, conversations, messages, attachments, and artifacts |
 | Kafka | Synthetic query and result streams with Data Streams Monitoring |
-| Airflow | Scheduled source refresh and search indexing |
+| Azure Data Factory + Functions | Scheduled source refresh and search indexing |
 | Datadog Agent | APM, logs, metrics, OTLP ingestion, RUM correlation, and infrastructure telemetry |
 
 ## Kubernetes namespaces
@@ -38,7 +38,6 @@ The UI reverse proxy routes `/api/*` to Python, `/api-dotnet/*` to .NET, and `/a
 | Namespace | Primary contents |
 |---|---|
 | `infra-advisor` | Product services, UI, Redis, PostgreSQL, mail testing, and synthetic load |
-| `airflow` | Scheduler and Airflow support workloads |
 | `kafka` | Strimzi and Kafka resources |
 | `datadog` | Datadog Agent and Cluster Agent |
 

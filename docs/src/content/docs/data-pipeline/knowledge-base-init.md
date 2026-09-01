@@ -1,41 +1,25 @@
 ---
 title: Initialize the synthetic knowledge corpus
-description: Seed the learning environment with clearly labeled fictional firm documents
+description: Retired during the Airflow-to-ADF migration — the synthetic corpus already indexed has no automated regeneration path today
 docType: guide
 audience:
   - data-engineer
   - maintainer
-maturity: stable
-verifiedOn: 2026-08-27
+maturity: deprecated
+verifiedOn: 2026-09-01
 sidebar:
   label: Knowledge base init
 ---
 
-**DAG:** `knowledge_base_init` · **Schedule:** manual only
+**Status:** retired, not migrated. This DAG (`knowledge_base_init`, manual trigger only) does not exist in the Azure Data Factory pipelines that replaced Airflow. See the [migration notes](/agent-guides/airflow-to-adf-migration/) for why.
 
-This DAG runs one image-bundled generation script that creates a synthetic firm knowledge corpus and indexes it into Azure AI Search. It exists to demonstrate retrieval over internal-style knowledge without publishing real consulting documents.
+## What this covered
 
-## What it creates
+The original DAG ran an image-bundled generation script (`generate_synthetic_docs.py`) that created a fictional firm knowledge corpus — proposals, lessons learned, cost benchmarks, risk frameworks, and funding guides — and indexed it into Azure AI Search, purely to demonstrate retrieval over internal-style knowledge without publishing real consulting documents. It was already a one-time bootstrap by design (idempotent — skipped paid regeneration once the expected corpus existed), not a routine scheduled ingestion, which made it a natural one to drop rather than migrate.
 
-The generator produces fictional examples such as proposals, lessons learned, cost benchmarks, risk frameworks, and funding guides. Every downstream explanation should identify this material as synthetic; it is not evidence of actual project experience, costs, or policy.
+## Current state
 
-The script is idempotent at its current threshold: when the expected synthetic corpus already exists, it can skip paid generation work. Re-running is a corpus refresh decision, not a routine scheduled ingestion.
-
-## Trigger and verify
-
-```bash
-kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- \
-  airflow dags trigger knowledge_base_init
-```
-
-`make run-dags` also triggers this DAG alongside selected source canaries. Use the direct command when only synthetic initialization is intended.
-
-Verify that:
-
-- the immutable Airflow image contains `generate_synthetic_docs` and its dependencies;
-- generated documents carry the synthetic source/domain label;
-- the Search index contains the intended corpus without duplicate expansion;
-- `search_project_knowledge` can retrieve a known synthetic example;
-- prompts and generated document bodies are not copied into operational logs.
-
-If the Search index or schema is missing, fix infrastructure/index initialization before retrying generation. Do not turn a non-retriable schema error into an uncontrolled model loop.
+- **No pipeline regenerates or expands this corpus.** `generate_synthetic_docs.py` was removed along with the rest of `services/ingestion/`; there is no Azure Functions equivalent.
+- **The synthetic documents already indexed from the last Airflow run remain in Azure AI Search** and are still retrievable via `search_project_knowledge` — every downstream explanation should still identify this material as synthetic, not evidence of actual project experience, costs, or policy.
+- If the Azure AI Search index or schema is missing entirely (not just this corpus), that's a separate infrastructure problem — see `services/adf-functions/scripts/create_search_index.py`, which creates the index schema (but does not generate any synthetic documents).
+- Regenerating or expanding the synthetic corpus today requires a manual one-off script run against Azure AI Search directly; there is no scheduled or triggerable pipeline for it.

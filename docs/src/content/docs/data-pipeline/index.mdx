@@ -1,12 +1,12 @@
 ---
 title: Data pipeline
-description: Understand how Airflow moves governed source data through private storage into a derived search index
+description: Understand how Azure Data Factory and Azure Functions move governed source data through private storage into a derived search index
 docType: concept
 audience:
   - data-engineer
   - application-developer
 maturity: stable
-verifiedOn: 2026-08-27
+verifiedOn: 2026-09-01
 sidebar:
   order: 7
 ---
@@ -14,60 +14,52 @@ sidebar:
 import FlowExplorer from '@components/FlowExplorer.jsx';
 import { pipelineFlows } from '../../../data/platform-flows.js';
 
-Airflow refreshes public infrastructure data, preserves source snapshots in private Blob Storage, and builds documents for Azure AI Search. The search index is a serving layer; the staged source data and manifests make each run explainable and reproducible.
+Azure Data Factory refreshes public infrastructure data, preserves source snapshots in private Blob Storage, and builds documents for Azure AI Search. The search index is a serving layer; the staged source data makes each run explainable and reproducible. This replaced a self-hosted Airflow-on-AKS deployment — see the [migration notes](/agent-guides/airflow-to-adf-migration/) for why and what changed.
 
 ## Shared ingestion pattern
 
-<FlowExplorer client:visible title="Inspect the manifest boundary" flows={pipelineFlows} />
+<FlowExplorer client:visible title="Inspect the pipeline boundary" flows={pipelineFlows} />
 
-Bulk records do not travel through Airflow's metadata database. XCom carries only control metadata: container, object path, source, run ID, count, checksum, content type, and schema version.
-
-## Why the manifest matters
-
-`_blob_manifest.py` gives task boundaries a verifiable contract. Consumers reject unknown versions or fields, URLs and query strings, source mismatches, unsupported encodings, checksum failures, and record-count failures. Blob paths are deterministic per run, so retries overwrite the same staging object rather than creating unlimited duplicates.
-
-The manifest contains no connection string, SAS token, or provider body. Logs can identify the run and object without exposing credentials.
+Each pipeline is two Azure Function Activities: `fetch-and-store-<domain>` fetches and validates records, then `index-search-shared` (one shared activity reused by every domain) chunks, embeds, and upserts them into Azure AI Search. Blob paths pass between activities as plain pipeline parameters — Function Activity outputs have no equivalent to Airflow XCom's metadata-DB size limit, so the manifest/checksum verification layer the old DAGs needed doesn't exist here.
 
 ## Enabled source families
 
-| DAG | Cadence in source | Serving domain |
+| Pipeline | Cadence | Serving domain |
 |---|---|---|
-| `fema_refresh` | Daily | environmental |
-| `nbi_refresh` | Weekly | transportation |
-| `eia_refresh` | Weekly | energy |
-| `twdb_water_plan_refresh` | Monthly | water |
-| `samgov_awards_refresh` | Weekly | business development |
-| `census_market_intelligence_refresh` | Monthly | business development |
-| `public_docs_ingestion` | Weekly | knowledge corpus |
-| `knowledge_base_init` | Manual | synthetic demonstration corpus |
+| `pl-fema-refresh` | Daily | environmental |
+| `pl-nbi-refresh` | Weekly | transportation |
+| `pl-eia-refresh` | Weekly | energy |
+| `pl-samgov-awards-refresh` | Weekly | business development |
+| `pl-census-market-intelligence-refresh` | Monthly | business development |
+| `pl-public-docs-ingestion` | Weekly | knowledge corpus |
 
-`spark_feature_engineering.py` remains outside the deployed DagBag until it has an explicit compatible runtime or replacement. A file in the DAG directory is not automatically a shipped pipeline.
+Two source families from the original Airflow deployment were retired during the migration rather than ported, since neither carries its weight in a demo environment — see the [migration notes](/agent-guides/airflow-to-adf-migration/) for what this means for their previously-indexed data:
 
-## Reproducible Airflow runtime
+- **TWDB water plan refresh** (`water` domain) — the most complex of the original DAGs (zip-bomb/path-traversal validation, fan-in/fan-out graph); has no ADF pipeline.
+- **Synthetic knowledge-base initialization** — a one-time bootstrap (~80 sequential LLM calls generating synthetic docs), already run at least once; has no ADF pipeline or other automated regeneration path.
 
-DAGs and helper scripts ship inside one immutable Airflow image. The scheduler, DAG processor, API server, task processes, migrations, and hooks must agree on that image and metadata schema. Runtime package installation, git-sync, and copying DAGs into pods are intentionally disabled.
+## Reproducible Functions runtime
 
-Verification has two gates:
+Every pipeline's Function Activities run inside one Azure Functions app (`services/adf-functions/`, Python 3.12, Linux Consumption plan) deployed via `func azure functionapp publish` — a single deploy updates every domain's fetch and indexing logic at once, the same "one image, many jobs" model the Airflow deployment used.
+
+Verify locally before publishing:
 
 ```bash
-make test-airflow
-make test-airflow-container
+cd services/adf-functions
+uv run pytest
 ```
-
-The first runs ingestion tests and a real DagBag. The second proves the built image contains its dependencies, helpers, and enabled DAGs. Cluster upgrade targets pull and verify the exact immutable image before Helm mutation.
 
 ## Datadog evidence
 
-OpenLineage sends DAG/task lifecycle to Data Jobs Monitoring. Task processes emit trace-correlated JSON logs. `_dd_blob.py` creates `azure.blob.upload` spans with bounded container, object, DAG, and size fields.
+Datadog's Data Jobs Monitoring for Azure Data Factory (a pull-based Azure integration, not OpenLineage) tracks pipeline and activity run status, duration, and failure rate — see [`ops/azure/README.md`](https://github.com/bitsbone/infra-advisor-ai/blob/main/ops/azure/README.md) for the one-time setup. Function code itself is instrumented with `ddtrace.auto` (agentless — Consumption-plan Functions have no agent sidecar) for APM, plus LLM Observability spans around the embedding calls in `index-search-shared`.
 
 Operational telemetry must not serialize record arrays, workbook rows, provider bodies, connection strings, SAS tokens, or source query parameters.
 
 ## Investigate a run
 
-1. Find the DAG run and failing task in Data Jobs Monitoring or Airflow.
-2. Follow its trace-correlated logs.
-3. Locate the manifest object and verify schema, source, count, and checksum.
-4. Confirm the Parquet snapshot and Search upsert belong to the same run.
-5. Compare indexed document counts and sample narratives without logging full source data.
+1. Find the pipeline/activity run in Datadog's ADF Data Jobs Monitoring view, or `az datafactory pipeline-run query-by-factory`.
+2. Follow the corresponding Function Activity's APM trace.
+3. Confirm the `raw-data/` Parquet snapshot and `prepared-data/` JSON Lines object exist for that run.
+4. Compare indexed document counts and sample narratives in Azure AI Search without logging full source data.
 
-Continue to the source-specific pages for NBI, FEMA, EIA, TWDB/EPA, and synthetic initialization.
+Continue to the source-specific pages for NBI, FEMA, EIA, and business-development ingestion.

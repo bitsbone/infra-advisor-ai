@@ -26,7 +26,7 @@ The interactive flow is the only path that directly serves a user's answer. Pyth
 
 The Kafka loop is synthetic background work. Data Streams Monitoring observes its producer, topic, consumer, and result path; it does not turn the result topic into a durable evaluation system. The result event's `faithfulness_score` is currently `null` because the Python faithfulness task completes independently.
 
-The ingestion pipeline is another lifecycle entirely. Raw snapshots remain recoverable in private storage while Azure AI Search is a derived serving layer. A request trace can show retrieval from that layer, but it should not be expected to contain the earlier Airflow run. See [Data pipeline](/infra-advisor-ai/data-pipeline/) for per-source behavior.
+The ingestion pipeline is another lifecycle entirely. Raw snapshots remain recoverable in private storage while Azure AI Search is a derived serving layer. A request trace can show retrieval from that layer, but it should not be expected to contain the earlier ingestion pipeline run. See [Data pipeline](/infra-advisor-ai/data-pipeline/) for per-source behavior.
 
 PostgreSQL and Redis also encode different promises. PostgreSQL owns durable conversation records. Redis owns replaceable tenant-scoped hot memory and model choice with a TTL. The suggestion pool is separate shared Redis state maintained by background work; it reduces page-load inference latency and does not belong to an individual conversation.
 

@@ -17,7 +17,7 @@ Azure resources are defined in `infra/bicep` and deployed from the subscription-
 
 | Resource | Responsibility | Source |
 |---|---|---|
-| AKS | Runs application, data, Kafka, Airflow, and Datadog workloads | `modules/aks.bicep` |
+| AKS | Runs application, data, Kafka, and Datadog workloads | `modules/aks.bicep` |
 | Azure OpenAI | Chat, embedding, evaluation, and transcription models | `modules/azure-openai.bicep` |
 | Azure AI Search | Hybrid retrieval over the project knowledge index | `modules/azure-ai-search.bicep` |
 | Blob Storage | Raw/processed pipeline data, knowledge documents, and private chat media | `modules/azure-storage.bicep` |
@@ -28,7 +28,7 @@ Azure resources are defined in `infra/bicep` and deployed from the subscription-
 
 The development cluster uses three fixed `Standard_D2s_v3` system nodes, Azure CNI, Azure RBAC, OIDC, and Workload Identity. Kubernetes version and node settings are pinned in Bicep rather than repeated as an operational promise here.
 
-Redis and the application PostgreSQL database run in the cluster. Redis is intentionally ephemeral because it holds replaceable session memory. PostgreSQL uses a persistent volume for users, conversations, and messages. Airflow has a separate metadata database managed with its deployment.
+Redis and the application PostgreSQL database run in the cluster. Redis is intentionally ephemeral because it holds replaceable session memory. PostgreSQL uses a persistent volume for users, conversations, and messages.
 
 This topology is appropriate for a learning environment, not a general production recommendation. Availability, backups, autoscaling, and managed data services require a separate design decision.
 
@@ -46,7 +46,7 @@ Application configuration selects deployments by name. When adding or replacing 
 
 Azure AI Search provides hybrid vector and keyword retrieval. The `infra-advisor-knowledge` index stores chunk content, a 1,536-dimension embedding, source, domain, document type, state, county, and source-specific metadata.
 
-The index is a derived serving layer. Airflow or initialization jobs rebuild it from governed source data; application services should not treat it as the system of record.
+The index is a derived serving layer. Azure Data Factory pipelines rebuild it from governed source data; application services should not treat it as the system of record.
 
 ## Storage boundaries
 

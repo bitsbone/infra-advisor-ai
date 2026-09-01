@@ -11,24 +11,24 @@ sidebar:
   order: 5
 ---
 
-InfraAdvisor deploys in layers. Azure Bicep creates managed resources and AKS; Kubernetes manifests and Helm install workloads; Airflow initializes derived data; verification proves each boundary independently.
+InfraAdvisor deploys in layers. Azure Bicep creates managed resources, AKS, and (opt-in) the Data Factory/Functions ingestion stack; Kubernetes manifests install workloads; ingestion pipelines initialize derived data; verification proves each boundary independently.
 
 ## Deployment flow
 
 ```text
 environment preflight
       │
-      ├─ Bicep → Azure resources and AKS
+      ├─ Bicep → Azure resources, AKS, and (opt-in) ADF + Functions
       │
       ├─ cluster access + operators
       │
       ├─ namespace-scoped secrets
       │
-      ├─ Kubernetes manifests + Airflow Helm release
+      ├─ Kubernetes manifests
       │
       ├─ DatadogAgent custom resource
       │
-      └─ selected ingestion canaries → application acceptance
+      └─ ADF pipeline runs → application acceptance
 ```
 
 Do not collapse these into one “deployment succeeded” signal. A successful Bicep deployment says nothing about image pulls; ready pods say nothing about a populated search index; a reachable UI says nothing about Datadog correlation.
@@ -41,19 +41,14 @@ Do not collapse these into one “deployment succeeded” signal. A successful B
 | Provision Azure | `make deploy-infra` |
 | Configure kube context | `make get-credentials` |
 | Create all application secrets | `make create-secrets` |
-| Apply workloads and Airflow | `make deploy-k8s` |
+| Apply workloads | `make deploy-k8s` |
 | Apply DatadogAgent CR | `make apply-datadog-agent` |
 | Wait for selected rollouts | `make rollout-status` |
 | Inspect pods | `make check-pods` |
-| Trigger approved ingestion canaries | `make run-dags` |
+| Deploy ingestion Functions | `func azure functionapp publish` (see [data pipeline](/data-pipeline/)) |
+| Trigger an ingestion pipeline | `az datafactory pipeline create-run` |
 
 The Makefile is executable documentation. Run `make help` for the current target catalog rather than copying a long list from this page.
-
-## Airflow safety boundary
-
-Airflow DAGs ship inside an immutable application image. Install and upgrade targets verify the exact image contract before Helm changes the cluster. The destructive recovery target requires an explicit acknowledgement because removing the release or namespace can discard metadata and logs.
-
-Never copy changed DAG files into a running pod or persistent volume. Build, verify, publish, and upgrade the image.
 
 ## Release identity
 

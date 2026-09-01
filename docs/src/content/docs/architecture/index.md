@@ -11,7 +11,7 @@ sidebar:
   order: 2
 ---
 
-InfraAdvisor is a learning system built from replaceable boundaries rather than one agent process. A web or mobile client talks to one of two agent backends; each agent uses a language-matched MCP server for external data. PostgreSQL, Redis, Kafka, Airflow, Azure services, and Datadog support durable state, synthetic work, ingestion, models, retrieval, and observation.
+InfraAdvisor is a learning system built from replaceable boundaries rather than one agent process. A web or mobile client talks to one of two agent backends; each agent uses a language-matched MCP server for external data. PostgreSQL, Redis, Kafka, Azure Data Factory/Functions, Azure services, and Datadog support durable state, synthetic work, ingestion, models, retrieval, and observation.
 
 ## Read the architecture by responsibility
 

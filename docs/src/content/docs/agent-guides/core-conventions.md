@@ -56,7 +56,7 @@ The Python and .NET paths intentionally differ. See [Instrumentation paths](/inf
 
 ## Respect deployment ownership
 
-- Application workloads use the `infra-advisor` namespace; Kafka, Airflow, and Datadog have dedicated namespaces.
+- Application workloads use the `infra-advisor` namespace; Kafka and Datadog have dedicated namespaces.
 - Application deployments that pull private images require the repository's GHCR pull secret.
 - `make deploy-k8s` and the Datadog Operator workflow have separate ownership. Do not assume one installs the other.
 - Azure owns the resources inside the AKS node resource group. Change their desired behavior through AKS, Bicep, or Kubernetes—not by editing node resources directly.

@@ -42,7 +42,8 @@ Before authorizing a replacement, inventory:
 
 - Kubernetes Secrets and the system that can recreate them
 - Persistent volumes and any data that is not rebuilt from an external source
-- Operators and Helm releases, including Datadog and Airflow
+- Operators and Helm releases, including Datadog
+- Azure Data Factory pipelines/triggers and the Azure Functions ingestion app
 - Public LoadBalancer addresses and DNS dependencies
 - Workload identities, role assignments, and external allowlists
 - The order used to restore namespaces, infrastructure controllers, data services, and application workloads

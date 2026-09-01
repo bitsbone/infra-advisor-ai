@@ -29,7 +29,7 @@ The [Services](/infra-advisor-ai/services/) section explains each runtime's purp
 
 | Area | Primary location | Source of truth |
 |---|---|---|
-| Data ingestion | `services/ingestion/dags` | DAG definitions, task code, schedules, and dataset scope |
+| Data ingestion | `services/adf-functions/domains`, `infra/bicep/modules/data-factory.bicep` | Function domain modules, ADF pipeline definitions, schedules, and dataset scope |
 | Kubernetes | `k8s` | Namespaces, Services, Deployments, configuration, operators |
 | Azure resources | `infra/bicep` | Resource definitions, parameters, and module outputs |
 | Local dependencies | `docker-compose.yml` | Services and host mappings available during local development |
@@ -58,6 +58,6 @@ Changes often have more than one owner:
 - A new MCP tool can affect the tool schema, both agent clients, tests, observability, and the tool-selection lesson.
 - A new public route can affect the upstream service, nginx, authentication, streaming behavior, and deployment checks.
 - A telemetry change can affect runtime instrumentation, Datadog configuration, privacy behavior, dashboards, and the verification instructions.
-- A dataset change can affect a DAG, storage or search schemas, MCP behavior, examples, and claims about geographic or temporal scope.
+- A dataset change can affect an ingestion Function, storage or search schemas, MCP behavior, examples, and claims about geographic or temporal scope.
 
 Start at the user-visible behavior, follow its call path, and update only the sources whose contracts or learning outcomes actually changed.

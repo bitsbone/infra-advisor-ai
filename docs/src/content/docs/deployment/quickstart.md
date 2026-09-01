@@ -55,7 +55,7 @@ make rollout-status
 make check-pods
 ```
 
-The deployment target creates namespace-local registry and application secrets, installs or safely upgrades Airflow, applies data services, then applies both Python and .NET application paths.
+The deployment target creates namespace-local registry and application secrets, applies data services, then applies both Python and .NET application paths.
 
 Do not accept `Running` alone. Check readiness, restart counts, image tags/digests, and recent events:
 
@@ -66,11 +66,15 @@ kubectl get events -A --sort-by=.lastTimestamp
 
 ## 5. Initialize derived data
 
+Deploy the ingestion Function App and trigger each Azure Data Factory pipeline once (they run stopped by default after infra deploy):
+
 ```bash
-make run-dags
+cd services/adf-functions && func azure functionapp publish func-adf-infra-advisor-<env>
+az datafactory pipeline create-run --factory-name adf-infra-advisor-<env> --resource-group <rg> --name pl-fema-refresh
+# repeat for pl-nbi-refresh, pl-eia-refresh, pl-samgov-awards-refresh, pl-census-market-intelligence-refresh, pl-public-docs-ingestion
 ```
 
-This triggers the approved canary DAGs, including knowledge-base initialization and selected source refreshes. Confirm task success and search-index output before testing retrieval-dependent questions.
+Confirm pipeline-run success (`az datafactory pipeline-run query-by-factory` or Datadog's ADF Data Jobs Monitoring) and search-index output before testing retrieval-dependent questions. See the [data pipeline overview](/data-pipeline/) for what each pipeline does and which two source families were retired rather than migrated.
 
 ## 6. Verify the product loop
 
@@ -83,12 +87,10 @@ This triggers the approved canary DAGs, including knowledge-base initialization 
 
 ## Upgrade safely
 
-CI deploys changed services with immutable commit tags after merges to `main`. For Airflow, publish the immutable image and use:
+CI deploys changed services with immutable commit tags after merges to `main`. The ADF Function App is not yet wired into that CI path — redeploy it manually after a code change:
 
 ```bash
-make upgrade-airflow AIRFLOW_IMAGE_TAG=<commit-sha>
+cd services/adf-functions && func azure functionapp publish func-adf-infra-advisor-<env>
 ```
-
-Resolve a failed preflight instead of deleting the release. Use destructive recovery only after accepting the documented data-loss boundary.
 
 Continue to [Kubernetes resources](../kubernetes/) for ownership and common inspection commands.

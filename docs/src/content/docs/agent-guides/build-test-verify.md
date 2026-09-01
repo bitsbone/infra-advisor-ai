@@ -48,7 +48,7 @@ A passing unit test is necessary evidence, but it may not prove an observability
 | A trace is correlated | Matching service, trace, and session attributes in Datadog |
 | A metric is emitted | A recent tagged point in Metrics Explorer |
 | A stream works through ingress | Incremental events from the public route, not only localhost |
-| A data refresh works | Successful DAG task output, manifest, and indexed sample |
+| A data refresh works | Successful pipeline/activity run output and indexed sample |
 | A deployment is healthy | Rollout status, readiness, and one representative request |
 
 For the specific signals this project emits, use [Observability](/infra-advisor-ai/observability/) and [Agent Observability monitoring](/infra-advisor-ai/llm-engineering/monitoring/spans-and-traces/).
@@ -66,7 +66,6 @@ Important boundaries:
 - `make deploy-k8s` applies the application's manifest groups but does not install the Datadog Operator configuration; use the dedicated Datadog target documented in [Kubernetes deployment](/infra-advisor-ai/deployment/kubernetes/).
 - Secret targets read local environment values and create Kubernetes Secrets. Never paste secret values into a command transcript, issue, or documentation page.
 - Bicep compilation and Kubernetes dry runs are validation steps; deployment targets are not.
-- Airflow recovery targets may be destructive. Follow the prerequisites and warnings in the Makefile rather than treating a copied command as permission to run it.
 
 After a rollout, check the affected workload's rollout status, recent logs, and one representative user flow. A green pod alone does not prove its upstream dependencies or telemetry path work.
 

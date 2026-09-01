@@ -12,7 +12,7 @@ sidebar:
   label: APM & tracing
 ---
 
-APM records the application work surrounding an agent run: HTTP requests, Redis and PostgreSQL access, Kafka operations, MCP calls, provider requests, and Airflow tasks. Agent Observability adds AI-specific meaning; it does not replace this application trace.
+APM records the application work surrounding an agent run: HTTP requests, Redis and PostgreSQL access, Kafka operations, MCP calls, provider requests, and ingestion Function executions. Agent Observability adds AI-specific meaning; it does not replace this application trace.
 
 ## Know who creates each span
 
@@ -20,7 +20,7 @@ APM records the application work surrounding an agent run: HTTP requests, Redis 
 |---|---|---|---|
 | Python services | FastAPI, HTTP clients, Redis, PostgreSQL, Kafka, supported AI libraries | Load-generator run, Blob upload, and application orchestration | `ddtrace` through Datadog Agent |
 | .NET services | ASP.NET Core, HTTP clients, Npgsql, Microsoft AI decorators | Redis, agent-specific tasks, security HTTP checks, and project operations | OpenTelemetry OTLP HTTP through Datadog Agent |
-| Airflow task processes | HTTP, Azure/OpenAI integrations where supported | Blob and pipeline operations | `ddtrace` initialized in each task process |
+| Ingestion Functions (`services/adf-functions`) | HTTP, Blob, Azure AI Search, OpenAI (`ddtrace.auto`) | Embedding spans (LLM Observability) | `ddtrace` agentless (`datadog-serverless-compat`) — no Agent sidecar on Consumption plan |
 
 Do not infer coverage from a package reference. Verify that the instrumentation is registered, the operation executes, export succeeds, and the span is classified as expected.
 
@@ -28,7 +28,7 @@ The .NET AI path sets `EnableSensitiveData=false`. Model and agent spans should 
 
 ## Correlate structured logs
 
-Logs emitted while a span is active include `dd.trace_id` and `dd.span_id`. Python uses Datadog log injection; .NET uses a Serilog enricher that converts W3C activity identifiers to Datadog-compatible decimal fields. Airflow configures a JSON formatter and initializes tracing inside LocalExecutor task subprocesses.
+Logs emitted while a span is active include `dd.trace_id` and `dd.span_id`. Python uses Datadog log injection; .NET uses a Serilog enricher that converts W3C activity identifiers to Datadog-compatible decimal fields.
 
 Verify correlation from the trace's Logs pivot. A log in the same time window is not sufficient—it must carry the matching trace identity and service context.
 
