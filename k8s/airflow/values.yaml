@@ -169,6 +169,15 @@ dags:
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 scheduler:
+  # The chart's default wait-for-migrations init check (airflow db
+  # check-migrations) times out against this metadata DB even when the
+  # applied alembic head matches the source code head exactly (confirmed
+  # 2026-08-31 via direct psql query against the airflow-postgresql pod) —
+  # a check_migrations bug/quirk in this Airflow version, not an actual
+  # unapplied migration. Disabled here to unblock the scheduler/triggerer
+  # crash loop; migrations are still applied by the chart's migrateDatabaseJob.
+  waitForMigrations:
+    enabled: false
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
@@ -301,6 +310,8 @@ scheduler:
 
 # ── Triggerer ─────────────────────────────────────────────────────────────────
 triggerer:
+  waitForMigrations:
+    enabled: false
   env:
     - name: PYTHONPATH
       value: "/opt/airflow/dags"
