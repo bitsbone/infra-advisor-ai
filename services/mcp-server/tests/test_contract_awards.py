@@ -25,6 +25,7 @@ from unittest.mock import patch
 
 import respx
 from httpx import Response
+from pydantic import ValidationError
 
 from tools.contract_awards import (
     ContractAwardsInput,
@@ -125,6 +126,15 @@ async def test_successful_award_results():
     assert second["award_amount_usd"] == 2_000_000.0
     assert second["_source"] == "USASpending.gov"
     assert "CONT_AWD_002" in second["usaspending_permalink"]
+
+
+def test_query_remains_required_for_contract_awards_input():
+    try:
+        ContractAwardsInput()
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("ContractAwardsInput must require query")
 
 
 async def test_geography_filter_narrows_results():

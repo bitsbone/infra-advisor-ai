@@ -378,6 +378,10 @@ async def get_contract_awards(
     naics_codes common AEC values: ['237310'] highway, ['237110'] water/sewer line,
     ['237990'] other heavy civil (bridges/dams), ['541330'] engineering, ['541310'] architecture.
     date_from / date_to: ISO date strings (default: past 2 years through today).
+
+    query is REQUIRED and must be a concise, non-empty search phrase. Always provide it even when
+    using optional filters such as geography, naics_codes, or limit. Example:
+    get_contract_awards(query='heavy civil construction contracts', geography='Texas', naics_codes=['237990']).
     """
     return await _get_contract_awards(
         ContractAwardsInput(

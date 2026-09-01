@@ -21,7 +21,7 @@ from media import transcribe_audio
 from memory import load_history
 from observability.ai_guard import check_query
 from observability.llm_obs import schedule_faithfulness_score, tag_agent_run
-from observability.prompts import fetch_prompt
+from observability.prompts import content_version, fetch_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,12 @@ _TOOL_PARTITIONS: dict[str, list[str] | None] = {
 
 # ─── Specialist system prompts ─────────────────────────────────────────────────
 
+_BUSINESS_DEVELOPMENT_TOOL_GUIDANCE = """Tool-calling contract for get_contract_awards:
+- `query` is REQUIRED and must always be a concise, non-empty search phrase derived from the user's request.
+- Always include `query`, even when also providing `geography`, `naics_codes`, or `limit` filters.
+- Example: get_contract_awards(query="heavy civil construction contracts", geography="Texas", naics_codes=["237990"], limit=10)
+- Never call get_contract_awards with only optional filters; those filters do not replace `query`."""
+
 _SPECIALIST_SYSTEM_PROMPTS: dict[str, str] = {
     "engineering": """You are InfraAdvisor Engineering Specialist, an expert in civil, structural, \
 and environmental infrastructure analysis supporting AEC/O&M (Architecture, Engineering, Construction / \
@@ -153,7 +159,9 @@ extractions explicitly so users can verify before acting
 7. Keep competitive intelligence summaries actionable — focus on win themes and differentiators
 8. NEVER ask the user to specify a date range for SAM.gov or USASpending queries — the tools \
 always default to the last 12 months automatically. If the tool returns a date-range error, \
-report that SAM.gov data is temporarily unavailable rather than asking the user for dates""",
+report that SAM.gov data is temporarily unavailable rather than asking the user for dates
+
+""" + _BUSINESS_DEVELOPMENT_TOOL_GUIDANCE,
 
     "document": """You are InfraAdvisor Advisory Specialist, an expert in drafting consulting \
 deliverables across AEC/O&M (Architecture, Engineering, Construction / Operations & Maintenance) \
@@ -198,6 +206,28 @@ Guidelines:
 10. When search_web_procurement returns results, flag medium-confidence extractions explicitly
 11. NEVER ask the user for a date range — procurement tools default to the last 12 months automatically""",
 }
+
+
+def _resolve_specialist_prompt(specialist_name: str) -> tuple[str, dict[str, Any]]:
+    """Resolve a specialist prompt and preserve critical tool-call guidance.
+
+    Prompt Registry entries can predate the local fallback. Keep the required
+    contract in the effective prompt even when an older managed prompt is returned.
+    """
+    system_prompt, prompt_meta = fetch_prompt(
+        f"specialist-{specialist_name}", _SPECIALIST_SYSTEM_PROMPTS[specialist_name]
+    )
+    if (
+        specialist_name == "business_development"
+        and _BUSINESS_DEVELOPMENT_TOOL_GUIDANCE not in system_prompt
+    ):
+        system_prompt = f"{system_prompt}\n\n{_BUSINESS_DEVELOPMENT_TOOL_GUIDANCE}"
+        prompt_meta = {
+            **prompt_meta,
+            "template": system_prompt,
+            "version": content_version(system_prompt),
+        }
+    return system_prompt, prompt_meta
 
 # ─── Router prompt ─────────────────────────────────────────────────────────────
 
@@ -653,9 +683,7 @@ async def run_agent(
         else:
             specialist_tools = list(all_tools)
 
-        system_prompt, specialist_prompt_meta = fetch_prompt(
-            f"specialist-{specialist_name}", _SPECIALIST_SYSTEM_PROMPTS[specialist_name]
-        )
+        system_prompt, specialist_prompt_meta = _resolve_specialist_prompt(specialist_name)
 
         # Inject handoff context as a strategy hint when router added useful context
         if decision.handoff_context and decision.handoff_context != effective_query:
@@ -893,9 +921,7 @@ async def run_agent_stream(
             else:
                 specialist_tools = list(all_tools)
 
-            system_prompt, specialist_prompt_meta = fetch_prompt(
-                f"specialist-{specialist_name}", _SPECIALIST_SYSTEM_PROMPTS[specialist_name]
-            )
+            system_prompt, specialist_prompt_meta = _resolve_specialist_prompt(specialist_name)
             if decision.handoff_context and decision.handoff_context != effective_query:
                 system_prompt = f"{system_prompt}\n\n[Routing context]: {decision.handoff_context}"
                 specialist_prompt_meta = {

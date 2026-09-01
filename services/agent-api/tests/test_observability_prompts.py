@@ -56,3 +56,27 @@ def test_content_version_is_stable_and_short():
     assert v1 == v2
     assert v1 != v3
     assert len(v1) == 8
+
+
+def test_business_development_prompt_requires_contract_awards_query():
+    from agent import _BUSINESS_DEVELOPMENT_TOOL_GUIDANCE, _SPECIALIST_SYSTEM_PROMPTS
+
+    prompt = _SPECIALIST_SYSTEM_PROMPTS["business_development"]
+
+    assert _BUSINESS_DEVELOPMENT_TOOL_GUIDANCE in prompt
+    assert "query=\"heavy civil construction contracts\"" in prompt
+    assert "Never call get_contract_awards with only optional filters" in prompt
+
+
+def test_business_development_guidance_is_added_to_stale_managed_prompt():
+    from agent import _BUSINESS_DEVELOPMENT_TOOL_GUIDANCE, _resolve_specialist_prompt
+
+    with patch(
+        "agent.fetch_prompt",
+        return_value=("stale managed business-development prompt", {"id": "specialist-business_development"}),
+    ):
+        prompt, meta = _resolve_specialist_prompt("business_development")
+
+    assert prompt == f"stale managed business-development prompt\n\n{_BUSINESS_DEVELOPMENT_TOOL_GUIDANCE}"
+    assert meta["template"] == prompt
+    assert len(meta["version"]) == 8

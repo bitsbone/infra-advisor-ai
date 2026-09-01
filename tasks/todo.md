@@ -3,6 +3,15 @@
 Full plan: see approved plan (clean cutover, docs → bitsbone.github.io, origin remote repointed).
 Superseded an earlier unauthorized draft of this file that assumed a dual-domain transition — disregard any prior revision.
 
+## Business-development contract-awards tool-call incident
+- [x] Confirm the call path and required `query` validation boundary.
+- [x] Add explicit required-parameter guidance to the specialist and MCP tool descriptions.
+- [x] Preserve the guidance when Prompt Registry returns an older managed prompt.
+- [x] Add regression coverage for the prompt contract and required input schema.
+
+### Review
+The Azure OpenAI call omitted `query` while supplying only optional filters, so MCP adapter validation failed before the tool implementation ran. The effective business-development prompt now explicitly requires and demonstrates `query`, including when managed prompts are enabled, while the MCP schema remains correctly strict.
+
 ## Phase 2 — GHCR image references
 - [ ] `.env`, `.env.example`
 - [ ] `Makefile` (AIRFLOW_IMAGE_REPOSITORY, GHCR_PREFIX, --docker-username x2)
