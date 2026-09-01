@@ -58,3 +58,9 @@ data:
   # IResponseEvaluator implementations and POSTed to DD's eval-metric API).
   # Set to "0" to disable, "1" to score every call. 0.1 = 10% sampling.
   EVAL_SAMPLE_RATE: "0.1"
+  # Fetch the system prompt from DD's (preview) Prompt Registry at startup
+  # instead of the hardcoded AgentSystemPrompt constant in Program.cs. Off by
+  # default — the registry API is still "unstable"/preview status, and the
+  # hardcoded constant always remains the fail-open fallback either way. See
+  # Services/DatadogPromptManagementClient.cs.
+  DD_PROMPT_MANAGEMENT_ENABLED: "false"

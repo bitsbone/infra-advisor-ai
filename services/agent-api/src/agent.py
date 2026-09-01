@@ -21,6 +21,7 @@ from media import transcribe_audio
 from memory import load_history
 from observability.ai_guard import check_query
 from observability.llm_obs import schedule_faithfulness_score, tag_agent_run
+from observability.prompts import fetch_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -200,22 +201,18 @@ Guidelines:
 
 # ─── Router prompt ─────────────────────────────────────────────────────────────
 
-_ROUTER_PROMPT = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        "You are a routing assistant for an infrastructure consulting AI system. "
-        "Given a user query, select the most appropriate specialist agent to handle it. "
-        "The firm serves AEC/O&M (Architecture, Engineering, Construction / Operations & Maintenance) practice areas.\n\n"
-        "- engineering: civil/structural infrastructure data — bridges (NBI), transportation (TxDOT), water systems "
-        "(SDWIS/TWDB), energy (EIA/ERCOT), disaster impacts, structural assessments, resilience analysis\n"
-        "- water_energy: focused water/MEP/environmental queries — SDWIS compliance, TWDB supply plans, EIA generation data, ERCOT grid storage\n"
-        "- business_development: AEC procurement intelligence — SAM.gov opportunities, grants.gov, USASpending.gov awards, state/local RFPs, competitive analysis\n"
-        "- document: deliverable drafting — SOWs, basis-of-design reports, risk summaries, cost estimates, funding memos, O&M plans\n"
-        "- general: multi-domain, unclear scope, or queries spanning more than two AEC/O&M practice areas\n\n"
-        "Provide a brief handoff_context (1-2 sentences) summarizing the key focus for the specialist.",
-    ),
-    ("human", "{query}"),
-])
+_ROUTER_SYSTEM_TEXT = (
+    "You are a routing assistant for an infrastructure consulting AI system. "
+    "Given a user query, select the most appropriate specialist agent to handle it. "
+    "The firm serves AEC/O&M (Architecture, Engineering, Construction / Operations & Maintenance) practice areas.\n\n"
+    "- engineering: civil/structural infrastructure data — bridges (NBI), transportation (TxDOT), water systems "
+    "(SDWIS/TWDB), energy (EIA/ERCOT), disaster impacts, structural assessments, resilience analysis\n"
+    "- water_energy: focused water/MEP/environmental queries — SDWIS compliance, TWDB supply plans, EIA generation data, ERCOT grid storage\n"
+    "- business_development: AEC procurement intelligence — SAM.gov opportunities, grants.gov, USASpending.gov awards, state/local RFPs, competitive analysis\n"
+    "- document: deliverable drafting — SOWs, basis-of-design reports, risk summaries, cost estimates, funding memos, O&M plans\n"
+    "- general: multi-domain, unclear scope, or queries spanning more than two AEC/O&M practice areas\n\n"
+    "Provide a brief handoff_context (1-2 sentences) summarizing the key focus for the specialist."
+)
 
 # ─── Domain classifier (kept for tags/metadata) ────────────────────────────────
 
@@ -286,9 +283,12 @@ async def _run_router(query: str, llm: AzureChatOpenAI) -> _RouteDecision:
     BasePromptTemplate.ainvoke + chat_model.ainvoke inside this chain.
     Wrapped in LLMObs.agent("router") so it appears as a distinct node.
     """
-    router_chain = _ROUTER_PROMPT | llm.with_structured_output(_RouteDecision)
+    router_text, router_prompt_meta = fetch_prompt("router", _ROUTER_SYSTEM_TEXT)
+    router_prompt = ChatPromptTemplate.from_messages([("system", router_text), ("human", "{query}")])
+    router_chain = router_prompt | llm.with_structured_output(_RouteDecision)
     try:
-        decision = await router_chain.ainvoke({"query": query})
+        with LLMObs.annotation_context(prompt=router_prompt_meta):
+            decision = await router_chain.ainvoke({"query": query})
         return decision
     except Exception as exc:
         logger.warning("router failed (non-fatal) error_type=%s", type(exc).__name__)
@@ -467,10 +467,12 @@ _IMAGE_DESCRIPTION_PROMPT = (
 
 async def _describe_image_and_annotate(image_attachment: dict[str, Any], llm: AzureChatOpenAI) -> str:
     """Describe an image and expose only safe type/size/status telemetry."""
+    image_prompt_text, image_prompt_meta = fetch_prompt("describe-image", _IMAGE_DESCRIPTION_PROMPT)
     with LLMObs.llm(model_name=llm.deployment_name, model_provider="azure", name="describe-image") as vision_span:
+        LLMObs.annotate(span=vision_span, prompt=image_prompt_meta)
         try:
             vision_message = HumanMessage(content=[
-                {"type": "text", "text": _IMAGE_DESCRIPTION_PROMPT},
+                {"type": "text", "text": image_prompt_text},
                 {"type": "image_url", "image_url": {"url": image_attachment["url"]}},
             ])
             response = await llm.ainvoke([vision_message])
@@ -651,7 +653,9 @@ async def run_agent(
         else:
             specialist_tools = list(all_tools)
 
-        system_prompt = _SPECIALIST_SYSTEM_PROMPTS[specialist_name]
+        system_prompt, specialist_prompt_meta = fetch_prompt(
+            f"specialist-{specialist_name}", _SPECIALIST_SYSTEM_PROMPTS[specialist_name]
+        )
 
         # Inject handoff context as a strategy hint when router added useful context
         if decision.handoff_context and decision.handoff_context != effective_query:
@@ -659,6 +663,10 @@ async def run_agent(
                 f"{system_prompt}\n\n"
                 f"[Routing context]: {decision.handoff_context}"
             )
+            specialist_prompt_meta = {
+                **specialist_prompt_meta,
+                "variables": {"handoff_context": decision.handoff_context},
+            }
 
         # Build the specialist prompt template — ddtrace auto-instruments
         # BasePromptTemplate.ainvoke() so this call produces a prompt span automatically
@@ -678,10 +686,11 @@ async def run_agent(
         )
 
         with LLMObs.agent(f"specialist-{specialist_name}") as agent_span:
-            # Explicitly invoke specialist_prompt so ddtrace captures the
-            # BasePromptTemplate.ainvoke span with system prompt + messages
-            formatted = await specialist_prompt.ainvoke({"messages": input_messages})
-            result = await executor.ainvoke({"messages": input_messages})
+            with LLMObs.annotation_context(prompt=specialist_prompt_meta):
+                # Explicitly invoke specialist_prompt so ddtrace captures the
+                # BasePromptTemplate.ainvoke span with system prompt + messages
+                formatted = await specialist_prompt.ainvoke({"messages": input_messages})
+                result = await executor.ainvoke({"messages": input_messages})
 
             answer, tools_called = _extract_answer_and_tools(result)
             all_messages = result.get("messages", [])
@@ -884,9 +893,15 @@ async def run_agent_stream(
             else:
                 specialist_tools = list(all_tools)
 
-            system_prompt = _SPECIALIST_SYSTEM_PROMPTS[specialist_name]
+            system_prompt, specialist_prompt_meta = fetch_prompt(
+                f"specialist-{specialist_name}", _SPECIALIST_SYSTEM_PROMPTS[specialist_name]
+            )
             if decision.handoff_context and decision.handoff_context != effective_query:
                 system_prompt = f"{system_prompt}\n\n[Routing context]: {decision.handoff_context}"
+                specialist_prompt_meta = {
+                    **specialist_prompt_meta,
+                    "variables": {"handoff_context": decision.handoff_context},
+                }
 
             specialist_prompt = ChatPromptTemplate.from_messages([
                 ("system", system_prompt),
@@ -908,7 +923,8 @@ async def run_agent_stream(
             tool_starts: dict[str, float] = {}
             tool_inputs_by_run: dict[str, Any] = {}
 
-            with LLMObs.agent(f"specialist-{specialist_name}") as agent_span:
+            with LLMObs.agent(f"specialist-{specialist_name}") as agent_span, \
+                 LLMObs.annotation_context(prompt=specialist_prompt_meta):
                 # Explicitly invoke specialist_prompt so ddtrace captures the
                 # BasePromptTemplate.ainvoke span, same as run_agent does.
                 await specialist_prompt.ainvoke({"messages": input_messages})

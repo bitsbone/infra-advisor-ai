@@ -42,6 +42,12 @@ data:
   # both satisfied). Patches BaseTool.invoke/ainvoke + chat model calls with no
   # code changes. DD_APP_KEY (required by the integration) lives in agent-api-secret.
   DD_AI_GUARD_ENABLED: "true"
+  # Fetch prompts from DD's (preview) Prompt Registry at call time instead of
+  # the hardcoded strings in agent.py/observability/llm_obs.py. Off by
+  # default — the registry API is still "unstable"/preview status, and the
+  # hardcoded strings always remain the fail-open fallback either way. See
+  # observability/prompts.py and scripts/seed_prompt_registry.py.
+  DD_PROMPT_MANAGEMENT_ENABLED: "false"
   AZURE_OPENAI_DEPLOYMENT: "gpt-5.4-mini"
   # Honor Azure Retry-After responses before surfacing a retryable chat error.
   AZURE_OPENAI_MAX_RETRIES: "5"

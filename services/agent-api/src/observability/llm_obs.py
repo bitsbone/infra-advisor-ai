@@ -19,6 +19,8 @@ from typing import Any
 import httpx
 from ddtrace.llmobs import LLMObs
 
+from observability.prompts import fetch_prompt
+
 logger = logging.getLogger(__name__)
 
 # DogStatsD client for faithfulness gauge metric
@@ -123,14 +125,19 @@ async def _compute_faithfulness(
             f"Answer: {answer}"
         )
 
+        eval_prompt_text, eval_prompt_meta = fetch_prompt("faithfulness-eval", _EVAL_SYSTEM_PROMPT)
+
         # LLMObs.task() wraps the eval without conflicting with the auto-instrumented
         # OpenAI span — the AsyncAzureOpenAI call inside produces its own child LLM span
         # automatically, with token counts, model name, and i/o messages captured.
-        with LLMObs.task("faithfulness-eval") as eval_span:
+        # annotation_context tags that child span with prompt metadata since we
+        # don't hold a direct handle to it (it's created inside the auto-instrumented
+        # chat.completions.create() call, not by us).
+        with LLMObs.task("faithfulness-eval") as eval_span, LLMObs.annotation_context(prompt=eval_prompt_meta):
             response = await client.chat.completions.create(
                 model=eval_model,
                 messages=[
-                    {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
+                    {"role": "system", "content": eval_prompt_text},
                     {"role": "user", "content": user_content},
                 ],
                 temperature=0,

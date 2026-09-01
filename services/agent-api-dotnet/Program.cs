@@ -14,6 +14,7 @@ using InfraAdvisor.AgentApi.Services.Evaluators;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.Tokens;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
@@ -272,6 +273,19 @@ const string AgentSystemPrompt =
     "  (data_series=\"fuel_mix\" returns % share by fuel — what \"renewable share\" means. " +
     "Use \"generation\" for raw MWh, \"capacity\" for installed MW.)";
 
+// ── Prompt management: fetch system prompt from DD's Prompt Registry ───────
+// One-shot startup fetch (AgentSystemPrompt is loaded once per process, not
+// per-request) with fail-open fallback to the hardcoded constant above. This
+// runs before builder.Build(), so DatadogPromptManagementClient is
+// constructed directly here rather than resolved from DI — see the class's
+// header comment for the exact registry endpoint/response shape.
+using var promptBootstrapHttp = new HttpClient();
+var promptManagementClient = new DatadogPromptManagementClient(
+    promptBootstrapHttp, NullLogger<DatadogPromptManagementClient>.Instance);
+var promptFetch = await promptManagementClient.GetPromptTemplateAsync(
+    "infra-advisor-system-prompt", fallback: AgentSystemPrompt);
+var EffectiveSystemPrompt = promptFetch.Template;
+
 // AgentHolder builds (and rebuilds) the ChatClientAgent against the current
 // McpClientHolder tool list. ChatClientAgent's ChatOptions.Tools is captured
 // at construction, so the agent must be rebuilt after each MCP reconnect to
@@ -280,15 +294,19 @@ const string AgentSystemPrompt =
 builder.Services.AddSingleton(sp => new AgentHolder(
     chatClient:     sp.GetRequiredService<IChatClient>(),
     mcpHolder:      sp.GetRequiredService<McpClientHolder>(),
-    systemPrompt:   AgentSystemPrompt,
+    systemPrompt:   EffectiveSystemPrompt,
     agentName:      "infra-advisor",
     otelSourceName: TelemetrySetup.ActivitySourceName));
 
-// ── Prompt-version + agent-span capture ─────────────────────────────────
-// One ActivityListener does two jobs:
+// ── Prompt-version/tracking + agent-span capture ────────────────────────
+// One ActivityListener does three jobs:
 //   1. Stamps a content-derived prompt version on chat + invoke_agent spans
 //      without exporting the prompt template itself.
-//   2. Captures the invoke_agent span's (trace_id, span_id) into an
+//   2. Stamps DD LLM Observability's prompt-tracking attribute (the
+//      OTel-path equivalent of ddtrace Python's LLMObs.annotate(prompt=...))
+//      so the LLM Obs UI shows which prompt template/version produced the
+//      span, and whether it came from the registry or the local fallback.
+//   3. Captures the invoke_agent span's (trace_id, span_id) into an
 //      AsyncLocal so AgentService can attach external-eval scores to the
 //      AGENT span (not the HTTP root) — DD requires both IDs on the
 //      eval-metric API's join_on.span field.
@@ -298,7 +316,16 @@ static string ShortContentHash(string text)
     return Convert.ToHexString(bytes).Substring(0, 8).ToLowerInvariant();
 }
 
-var promptVersion = "v1-" + ShortContentHash(AgentSystemPrompt);
+var promptVersion = promptFetch.Source == "registry"
+    ? $"registry-{promptFetch.Version}"
+    : "v1-" + ShortContentHash(EffectiveSystemPrompt);
+var promptTrackingJson = JsonSerializer.Serialize(new
+{
+    id = "infra-advisor-system-prompt",
+    version = promptVersion,
+    template = EffectiveSystemPrompt,
+    source = promptFetch.Source,
+});
 ActivitySource.AddActivityListener(new ActivityListener
 {
     ShouldListenTo = source =>
@@ -311,6 +338,7 @@ ActivitySource.AddActivityListener(new ActivityListener
             // A content hash preserves prompt-version correlation without
             // copying the system prompt into exported span attributes.
             activity.SetTag("prompt.version", promptVersion);
+            activity.SetTag("_dd.ml_obs.prompt_tracking", promptTrackingJson);
         }
         if (activity.OperationName == "invoke_agent")
             AgentSpanContext.Capture(activity);
@@ -324,8 +352,8 @@ ActivitySource.AddActivityListener(new ActivityListener
     },
     Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
 });
-Console.WriteLine($"[prompt-tracking] registered system prompt {promptVersion} " +
-                  $"({AgentSystemPrompt.Length} chars)");
+Console.WriteLine($"[prompt-management] system prompt source={promptFetch.Source} " +
+                  $"version={promptVersion} ({EffectiveSystemPrompt.Length} chars)");
 
 // ── Business metrics meter ────────────────────────────────────────────────────
 // Shared meter for endpoint-level counters (conversation + tool counters
