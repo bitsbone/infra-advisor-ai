@@ -35,6 +35,9 @@ env:
 # ── API server (Airflow 3.x) ──────────────────────────────────────────────────
 # Serve the UI at /airflow so it's accessible via the existing nginx reverse proxy.
 apiServer:
+  # See scheduler.waitForMigrations above for why this is disabled.
+  waitForMigrations:
+    enabled: false
   # --proxy-headers: trust X-Forwarded-Proto/For/Port headers from nginx
   args: ["bash", "-c", "exec airflow api-server --proxy-headers"]
   env:
@@ -337,6 +340,9 @@ triggerer:
 
 # ── DAG Processor (Airflow 3 only) ────────────────────────────────────────────
 dagProcessor:
+  # See scheduler.waitForMigrations above for why this is disabled.
+  waitForMigrations:
+    enabled: false
   env:
     - name: PYTHONPATH
       value: "/opt/airflow/dags"
