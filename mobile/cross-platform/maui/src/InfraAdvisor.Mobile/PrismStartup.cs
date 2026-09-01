@@ -23,6 +23,19 @@ public static class PrismStartup
                 var store = container.Resolve<ISessionStore>();
                 var session = container.Resolve<AppSession>();
                 var observability = container.Resolve<IObservability>();
+
+                // Any 401 (expired/invalid token) triggers AppSession.ExpireAsync(),
+                // which raises this event — mirrors InfoViewModel.LogoutAsync()'s
+                // manual-logout teardown, but server-driven rather than user-initiated.
+                session.SessionExpired += async () =>
+                {
+                    await store.ClearAsync();
+                    observability.ClearUser();
+                    observability.StopSession();
+                    var expiredResult = await navigation.NavigateAsync($"/{nameof(LoginPage)}");
+                    AppNavigator.EnsureSucceeded(expiredResult, "return to sign in after session expiry");
+                };
+
                 try
                 {
                     var restored = await store.RestoreAsync();

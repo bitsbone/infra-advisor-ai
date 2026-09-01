@@ -68,6 +68,26 @@ public sealed class AppSession
         ClearAuthentication();
     }
 
+    /// <summary>
+    /// Fires when the MAUI host should clear persisted session storage and
+    /// return to the login screen after the server rejects the current
+    /// token (expired or invalid) — distinct from the user-initiated
+    /// <see cref="SignOutAsync"/> flow. Subscribed once at app startup
+    /// (see PrismStartup.cs); left null-safe so InfraAdvisorApiClient (a
+    /// platform-agnostic Core type) never needs a direct MAUI/navigation
+    /// dependency.
+    /// </summary>
+    public event Func<Task>? SessionExpired;
+
+    public async Task ExpireAsync()
+    {
+        ClearAuthentication();
+        if (SessionExpired is { } handler)
+        {
+            await handler().ConfigureAwait(false);
+        }
+    }
+
     public void RegisterSessionCleanup(Func<Task> cleanup) => sessionCleanup = cleanup;
 
     public async Task SignOutAsync()

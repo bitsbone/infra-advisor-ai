@@ -152,7 +152,7 @@ public sealed class InfraAdvisorApiClient
         return request;
     }
 
-    private static async Task<T> ReadAsync<T>(HttpResponseMessage response, CancellationToken cancellationToken)
+    private async Task<T> ReadAsync<T>(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         await EnsureSuccessAsync(response, cancellationToken).ConfigureAwait(false);
         try
@@ -165,11 +165,19 @@ public sealed class InfraAdvisorApiClient
         }
     }
 
-    private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    private async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         if (response.IsSuccessStatusCode)
         {
             return;
+        }
+
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            // The cached token is expired or otherwise rejected — clear it now so no
+            // further requests replay a dead token, and let the host (subscribed via
+            // AppSession.SessionExpired) clear persisted storage and return to login.
+            await session.ExpireAsync().ConfigureAwait(false);
         }
 
         var message = response.StatusCode switch

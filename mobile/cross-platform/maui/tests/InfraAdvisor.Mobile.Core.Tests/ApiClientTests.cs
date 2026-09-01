@@ -157,6 +157,25 @@ public sealed class ApiClientTests
     }
 
     [Fact]
+    public async Task UnauthorizedResponseExpiresSessionAndRaisesSessionExpired()
+    {
+        var session = SignedInSession();
+        var expiredRaised = false;
+        session.SessionExpired += () =>
+        {
+            expiredRaised = true;
+            return Task.CompletedTask;
+        };
+        var client = CreateClient(new RecordingHandler("{\"detail\":\"Invalid or expired token\"}", HttpStatusCode.Unauthorized), session);
+
+        await Assert.ThrowsAsync<ApiException>(() => client.GetModelsAsync(TestContext.Current.CancellationToken));
+
+        Assert.True(expiredRaised);
+        Assert.False(session.IsAuthenticated);
+        Assert.Null(session.Token);
+    }
+
+    [Fact]
     public async Task MalformedSuccessResponseReturnsSanitizedDecodeError()
     {
         var client = CreateClient(new RecordingHandler("not-json"), SignedInSession());
