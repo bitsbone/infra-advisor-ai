@@ -587,7 +587,7 @@ async def run_agent(
     llm = build_llm(deployment)
     all_tools = await mcp_client.get_tools()
 
-    with LLMObs.workflow("query-processing") as workflow_span:
+    with LLMObs.workflow("query-processing", session_id=session_id) as workflow_span:
         # Cascade both modalities to plain text — nested inside the workflow
         # span so transcribe-audio/describe-image show up as its children in
         # the trace, matching load-history/extract-sources. See
@@ -811,7 +811,7 @@ async def run_agent_stream(
     has_image = bool(attachments) and any(a.get("kind") == "image" for a in attachments)
 
     try:
-        with LLMObs.workflow("query-processing") as workflow_span:
+        with LLMObs.workflow("query-processing", session_id=session_id) as workflow_span:
             # Nested inside the workflow span so transcribe-audio/describe-image
             # show up as its children in the trace, matching
             # load-history/extract-sources.

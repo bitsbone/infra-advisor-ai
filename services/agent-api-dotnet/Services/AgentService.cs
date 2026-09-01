@@ -112,6 +112,8 @@ public class AgentService
         List<AttachmentDto>? attachments = null,
         CancellationToken ct = default)
     {
+        AmbientSessionContext.Set(sessionId);
+
         // 0. AI Guard pre-flight check on the raw user query. Runs before
         //    anything else touches the LLM/tool loop — see DatadogAiGuardClient
         //    for why this is the HTTP API path (no LangChain-equivalent
@@ -508,6 +510,8 @@ public class AgentService
         List<AttachmentDto>? attachments = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
+        AmbientSessionContext.Set(sessionId);
+
         _logger.LogDebug(
             "[stream] starting; ct already cancelled: {AlreadyCancelled}",
             ct.IsCancellationRequested);

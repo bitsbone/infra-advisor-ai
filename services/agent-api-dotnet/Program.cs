@@ -314,6 +314,13 @@ ActivitySource.AddActivityListener(new ActivityListener
         }
         if (activity.OperationName == "invoke_agent")
             AgentSpanContext.Capture(activity);
+
+        // DD LLM Observability session/conversation grouping (OTel path)
+        // requires gen_ai.conversation.id on every gen_ai span in the trace,
+        // not just the root — see AmbientSessionContext for why this can't
+        // be set at each auto-instrumented span's call site directly.
+        if (AmbientSessionContext.Current is { } sessionId)
+            activity.SetTag("gen_ai.conversation.id", sessionId);
     },
     Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
 });
