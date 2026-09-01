@@ -1,0 +1,18 @@
+{
+  "Name": "Datadog ADF Monitoring (Custom)",
+  "IsCustom": true,
+  "Description": "Least-privilege role for Datadog Data Jobs Monitoring to poll Azure Data Factory pipeline/activity/trigger run history. Grant to the App Registration used by the existing Datadog Azure integration — do not use the broader built-in 'Data Factory Contributor' role, which also grants write/delete access to factories, pipelines, datasets, and linked services.",
+  "Actions": [
+    "Microsoft.DataFactory/factories/read",
+    "Microsoft.DataFactory/factories/*/read",
+    "Microsoft.DataFactory/factories/querypipelineruns/action",
+    "Microsoft.DataFactory/factories/querytriggerruns/action",
+    "Microsoft.DataFactory/factories/pipelineruns/queryactivityruns/action"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/rg-tola-infra-advisor-ai"
+  ]
+}

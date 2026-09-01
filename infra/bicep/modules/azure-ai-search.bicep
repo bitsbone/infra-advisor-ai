@@ -35,3 +35,6 @@ output searchName string = searchService.name
 
 @description('Azure AI Search HTTPS endpoint')
 output endpoint string = 'https://${searchService.name}.search.windows.net'
+
+@description('Azure AI Search primary admin key — fully derivable from this resource within the same deployment (unlike e.g. a Datadog API key), so it flows through Bicep module outputs only, matching monitoring.bicep\'s workspaceSharedKey and azure-storage.bicep\'s primaryConnectionString. Never written to a .bicepparam file.')
+output adminKey string = searchService.listAdminKeys().primaryKey

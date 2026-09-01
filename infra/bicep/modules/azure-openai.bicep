@@ -178,3 +178,6 @@ output endpoint string = openAiAccount.properties.endpoint
 
 @description('Whisper-only Azure OpenAI account HTTPS endpoint')
 output whisperEndpoint string = whisperAccount.properties.endpoint
+
+@description('Main OpenAI account primary key — fully derivable from this resource within the same deployment, so it flows through Bicep module outputs only, matching monitoring.bicep\'s workspaceSharedKey. Never written to a .bicepparam file.')
+output apiKey string = openAiAccount.listKeys().key1

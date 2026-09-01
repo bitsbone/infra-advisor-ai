@@ -1,6 +1,10 @@
 // azure-storage.bicep — Azure Blob Storage for InfraAdvisor AI
 // Containers:
-//   raw-data       — Airflow ingestion output (NBI, FEMA, EIA, EPA JSON/Parquet)
+//   raw-data       — Ingestion pipeline output (NBI, FEMA, EIA, EPA JSON/Parquet)
+//   prepared-data  — Ingestion pipeline hand-off between the ADF fetch and
+//                    index-search-shared Function Activities (see
+//                    services/adf-functions/) — prepared narrative+doc_id
+//                    records ready to chunk/embed/upsert
 //   processed-data — Spark feature engineering output (chunked, embedding-ready)
 //   knowledge-docs — Synthetic + real documents for AI Search knowledge base
 //   chat-media     — User-uploaded chat attachments (images, audio); accessed via
@@ -65,6 +69,12 @@ resource chatMediaContainer 'Microsoft.Storage/storageAccounts/blobServices/cont
   properties: { publicAccess: 'None' }
 }
 
+resource preparedDataContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  parent: blobService
+  name: 'prepared-data'
+  properties: { publicAccess: 'None' }
+}
+
 @description('Storage account name')
 output storageAccountName string = storageAccount.name
 
@@ -73,3 +83,6 @@ output blobEndpoint string = storageAccount.properties.primaryEndpoints.blob
 
 @description('Resource ID of the storage account')
 output resourceId string = storageAccount.id
+
+@description('Primary connection string — consumed by the ADF Function App (AzureWebJobsStorage / AZURE_STORAGE_CONNECTION_STRING) and by K8s Secrets, never committed to a file. Matches the existing listKeys()-in-output pattern used by monitoring.bicep for the same reason (internal cross-module wiring within this trusted deployment scope).')
+output primaryConnectionString string = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=core.windows.net'

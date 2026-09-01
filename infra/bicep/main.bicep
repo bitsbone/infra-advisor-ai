@@ -88,6 +88,24 @@ param acaDdRumSite string = 'us3.datadoghq.com'
 param deployAcaAgenticPoc bool = false
 
 // ---------------------------------------------------------------------------
+// ADF migration params — replaces self-hosted Airflow (see
+// infra/bicep/modules/data-factory.bicep and adf-functions.bicep). Every
+// secret these two modules need is either derived from another module's
+// output within this same deployment (storage connection string, Search
+// admin key, OpenAI key — see the listKeys()-in-output pattern already used
+// by monitoring.bicep) or, for EIA_API_KEY (a genuinely external, freely
+// self-registered eia.gov key with no Azure-derivable source), passed here
+// via CLI --parameters, same treatment as the ACA POC secrets above.
+// ---------------------------------------------------------------------------
+
+@description('EIA (eia.gov) free API key for the ADF Function App — pass via CLI --parameters, never commit. Leave empty to deploy without it; the eia pipeline will then fail and the public-docs pipeline\'s EIA fetcher will skip gracefully.')
+@secure()
+param eiaApiKey string = ''
+
+@description('Deploy the ADF migration module (Data Factory + Function App) — false by default so a routine `make deploy-infra` run does not stand up new billable resources until explicitly requested; set true when ready to provision.')
+param deployAdfMigration bool = false
+
+// ---------------------------------------------------------------------------
 // Resource group
 // ---------------------------------------------------------------------------
 // Live resources in rg-tola-infra-advisor-ai (audited 2026-07-31 via
@@ -205,6 +223,42 @@ module monitoring 'modules/monitoring.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
+// Module: ADF Function App (opt-in — see deployAdfMigration above)
+// ---------------------------------------------------------------------------
+
+module adfFunctions 'modules/adf-functions.bicep' = if (deployAdfMigration) {
+  name: 'deploy-adf-functions'
+  scope: resourceGroup
+  params: {
+    location: location
+    environment: environment
+    storageConnectionString: storage.outputs.primaryConnectionString
+    searchEndpoint: search.outputs.endpoint
+    searchApiKey: search.outputs.adminKey
+    openAiEndpoint: openAi.outputs.endpoint
+    openAiApiKey: openAi.outputs.apiKey
+    eiaApiKey: eiaApiKey
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Module: Azure Data Factory (opt-in — see deployAdfMigration above)
+// ---------------------------------------------------------------------------
+
+module dataFactory 'modules/data-factory.bicep' = if (deployAdfMigration) {
+  name: 'deploy-data-factory'
+  scope: resourceGroup
+  params: {
+    location: location
+    environment: environment
+    functionAppHostName: deployAdfMigration ? adfFunctions.outputs.functionAppHostName : ''
+    functionAppHostKey: deployAdfMigration ? adfFunctions.outputs.functionAppHostKey : ''
+    searchEndpoint: search.outputs.endpoint
+    searchApiKey: search.outputs.adminKey
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Module: ACA agentic POC (opt-in — see deployAcaAgenticPoc above)
 // ---------------------------------------------------------------------------
 
@@ -272,3 +326,9 @@ output acaManagedAppFqdn string = deployAcaAgenticPoc ? acaAgenticPoc.outputs.ma
 
 @description('ACA agentic POC — Datadog-sidecar-path Container App FQDN (empty unless deployAcaAgenticPoc=true)')
 output acaSidecarAppFqdn string = deployAcaAgenticPoc ? acaAgenticPoc.outputs.sidecarAppFqdn : ''
+
+@description('ADF migration — Data Factory name (empty unless deployAdfMigration=true)')
+output dataFactoryName string = deployAdfMigration ? dataFactory.outputs.factoryName : ''
+
+@description('ADF migration — Function App name (empty unless deployAdfMigration=true)')
+output adfFunctionAppName string = deployAdfMigration ? adfFunctions.outputs.functionAppName : ''
