@@ -16,13 +16,6 @@ metadata:
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: airflow
-  labels:
-    app.kubernetes.io/part-of: infra-advisor-ai
----
-apiVersion: v1
-kind: Namespace
-metadata:
   name: datadog
   labels:
     app.kubernetes.io/part-of: infra-advisor-ai

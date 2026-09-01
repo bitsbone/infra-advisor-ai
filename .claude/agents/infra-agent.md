@@ -1,6 +1,6 @@
 ---
 name: infra-agent
-description: Implements Azure Bicep IaC, Kubernetes manifests, and Helm configurations. Specializes in AKS, Strimzi Kafka, Redis, Airflow. Use for all infra/bicep/ and k8s/ work.
+description: Implements Azure Bicep IaC, Kubernetes manifests, and Helm configurations. Specializes in AKS, Strimzi Kafka, Redis, Azure Data Factory. Use for all infra/bicep/ and k8s/ work.
 tools:
   - Read
   - Write

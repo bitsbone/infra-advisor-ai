@@ -17,7 +17,7 @@ Built as a **reference architecture** for building, training, deploying, and mon
 ```mermaid
 flowchart LR
     GOV[("Government\nAPIs")]
-    TRAIN["① Ingest & Train\nAirflow · Spark"]
+    TRAIN["① Ingest & Train\nAzure Data Factory · Functions"]
     KB[("② Knowledge Base\nAzure AI Search")]
     AGENT["③ AI Agent\nLangGraph · GPT-4.1"]
     USER(("④ Consultant\nReact UI"))
@@ -30,7 +30,7 @@ flowchart LR
 
 | Phase | What happens |
 |---|---|
-| **① Ingest & Train** | 9 Airflow DAGs pull raw data from government APIs → Spark normalises and chunks it → Azure Blob Storage |
+| **① Ingest & Train** | 6 Azure Data Factory pipelines trigger Azure Functions that pull raw data from government APIs, chunk it (tiktoken, 512 tokens / 64 overlap), and land it in Azure Blob Storage |
 | **② Knowledge Base** | AI Search indexes chunks embedded with `text-embedding-3-small` — hybrid vector + BM25 keyword |
 | **③ AI Agent** | Consultant query → router LLM selects specialist → specialist agent calls MCP tools → `gpt-4.1-mini` synthesises answer |
 | **④ Consultant UI** | React + Chakra UI chat with auth, domain tiles, citation sidebar, sandbox playground, admin panel |
@@ -83,18 +83,19 @@ Each specialist receives only its domain-relevant tools — the engineering spec
 
 ```mermaid
 flowchart LR
-    Sources["Government Sources\nFHWA NBI · OpenFEMA · EIA\nEPA SDWIS · TWDB · Census\nUSASpending · SAM.gov · ERCOT"]
-    DAGs["9 Airflow DAGs\nLocalExecutor · Airflow 3.x"]
+    Sources["Government Sources\nFHWA NBI · OpenFEMA · EIA\nCensus · USASpending · SAM.gov"]
+    ADF["Azure Data Factory\n6 pipelines · Schedule Triggers"]
+    Fn["Azure Functions\nfetch-and-store-* · Consumption plan"]
     Raw[("Blob Storage\nraw-data/")]
-    Spark["PySpark\nchunk · normalise\nTF-IDF features"]
-    Processed[("Blob Storage\nprocessed-data/")]
+    Chunk["tiktoken\n512 tokens / 64 overlap"]
+    Processed[("Blob Storage\nprepared-data/")]
     Embed["text-embedding-3-small"]
     Index[("Azure AI Search\nhybrid index")]
 
-    Sources --> DAGs --> Raw --> Spark --> Processed --> Embed --> Index
+    Sources --> ADF --> Fn --> Raw --> Chunk --> Processed --> Embed --> Index
 ```
 
-Spark runs in local mode inside the Airflow scheduler pod — no separate cluster needed at demo scale.
+Each pipeline triggers a Function Activity that fetches, chunks, embeds, and upserts — no persistent orchestrator process, matching the Consumption Function App's pay-per-execution model.
 
 ---
 
@@ -126,7 +127,7 @@ flowchart TB
     DD --- LLMOBS["LLM Observability\nworkflow → router → specialist span tree\ntoken counts · faithfulness · user_feedback"]
     DD --- RUM["RUM + Session Replay\nquery_submitted · citation_expanded\nsession.id linked to LLM Obs traces"]
     DD --- DSM["Data Streams Monitoring\nKafka producer → consumer topology\nconsumer lag · throughput"]
-    DD --- DJM["Data Jobs Monitoring\nAirflow DAG run duration · status\nOpenLineage Datadog transport"]
+    DD --- DJM["Data Jobs Monitoring\nADF pipeline/activity run status\npull-based Azure integration"]
     DD --- CSPM["CSPM + CWS\nruntime threat detection\nAzure posture baseline"]
 ```
 
@@ -143,7 +144,7 @@ Managed by a single `DatadogAgent` custom resource via the Datadog Operator.
 | [`services/auth-api`](services/auth-api/) | Python 3.12 | FastAPI + PostgreSQL — register, login, password reset (SMTP), admin user management |
 | [`services/ui`](services/ui/) | TypeScript / React 18 / Chakra UI v3 | Consultant chat UI — auth, domain tiles, citations, model picker, sandbox, admin panel, guided tour |
 | [`services/load-generator`](services/load-generator/) | Python 3.12 | Kafka producer — synthetic query corpus (70 % happy path, 20 % edge, 10 % adversarial) |
-| [`services/ingestion`](services/ingestion/) | Python 3.12 | 9 Airflow DAGs — government data ingestion + Spark feature engineering |
+| [`services/adf-functions`](services/adf-functions/) | Python 3.12 | Azure Functions — government data ingestion, chunking, embedding, and search indexing, triggered by Azure Data Factory |
 
 ## Mobile applications
 
@@ -166,8 +167,8 @@ Both clients use the deployed authentication and query APIs, associate RUM sessi
 | User database | PostgreSQL (K8s Deployment) | `infra-advisor` |
 | Session memory | Redis (K8s Deployment) | `infra-advisor` |
 | Message bus | Kafka via Strimzi Operator | `kafka` |
-| Ingestion orchestration | Apache Airflow 3.x (LocalExecutor) | `airflow` |
-| Feature engineering | PySpark local mode (inside Airflow scheduler) | `airflow` |
+| Ingestion orchestration | Azure Data Factory — 6 pipelines, Schedule Triggers | — |
+| Ingestion compute | Azure Functions — Consumption plan | — |
 | Dev email capture | Mailpit — SMTP + Web UI (bcrypt basic auth) | `infra-advisor` |
 | Observability | Datadog Operator — Agent DaemonSet + Cluster Agent | `datadog` |
 | IaC | Azure Bicep — subscription-scoped | — |
@@ -211,14 +212,15 @@ make create-ghcr-secret          # GHCR imagePullSecret
 make create-secrets              # all application secrets (reads from .env)
 ```
 
-`make create-secrets` runs all individual secret targets: MCP server (Azure + EIA + ERCOT + SAM.gov), agent API (Azure OpenAI), auth API (JWT + Postgres), Datadog Postgres (DBM), and airflow secrets.
+`make create-secrets` runs all individual secret targets: MCP server (Azure + EIA + ERCOT + SAM.gov), agent API (Azure OpenAI), auth API (JWT + Postgres), Datadog Postgres (DBM).
 
 ### 4. Deploy to Kubernetes
 
 ```bash
 make deploy-k8s   # applies all K8s manifests (runs check-env first)
-make run-dags     # triggers all Airflow DAGs
 ```
+
+Ingestion runs separately via Azure Data Factory triggers, not `deploy-k8s` — see `make deploy-infra` and `ops/azure/README.md` for provisioning the ADF/Functions ingestion pipeline.
 
 ### 5. Access the UI
 
@@ -229,7 +231,7 @@ App is served at `https://infra-advisor-ai.bitsbone.com` via Cloudflare → AKS 
 kubectl port-forward -n infra-advisor svc/ui 3000:80
 ```
 
-Default admin credentials are set in `k8s/airflow/values.yaml` (`createUserJob`). For the InfraAdvisor app itself, register via the UI login page (restricted to `@datadoghq.com` domain by default).
+Register via the UI login page (restricted to `@datadoghq.com` domain by default).
 
 ### When to re-run each command
 
@@ -270,7 +272,7 @@ uv run pytest -x services/auth-api/tests/
 | Workflow | Trigger | Description |
 |---|---|---|
 | [CI](.github/workflows/ci.yml) | push / PR | pytest for all Python services |
-| [Build & Push](.github/workflows/build-push.yml) | push to `main` | Docker build → GHCR → `kubectl rollout restart` on AKS + Helm upgrade Airflow + DAG sync |
+| [Build & Push](.github/workflows/build-push.yml) | push to `main` | Docker build → GHCR → `kubectl rollout restart` on AKS |
 | [MAUI Release](.github/workflows/maui-release.yml) | manual / tag | Builds and signs the MAUI mobile app, uploads to App Store Connect and Datadog Synthetics |
 
 Images: `ghcr.io/bitsbone/infra-advisor-ai/{service}:latest`
@@ -299,8 +301,8 @@ Configured on the repo (Settings → Secrets and variables → Actions), not rea
 | Multi-agent routing | Router LLM classifies domain and selects one of 5 specialists; each specialist gets only its relevant tools — reduces hallucination surface and produces richer Datadog LLM Obs trace trees |
 | MCP for tool abstraction | Agent never calls government APIs directly — all data access through versioned MCP tools; MCP server is independently deployable and testable |
 | No LLM in MCP server | `draft_document` uses Jinja2 only; LLM reasoning stays in the agent layer for clear observability boundaries |
-| Spark in local mode | PySpark runs inside the Airflow scheduler pod — no separate cluster at demo scale; straightforward upgrade path to Spark on K8s |
-| Azure Blob as staging | Raw → processed handoff between DAGs and AI Search indexer; Datadog Blob Storage dashboard tracks upload throughput and latency by DAG |
+| Azure Data Factory over Airflow | Datadog Data Jobs Monitoring added native ADF support, so the AKS-hosted Airflow deployment this reference architecture originally used was retired in favor of ADF + Consumption-plan Azure Functions — no persistent orchestrator to operate |
+| Azure Blob as staging | Raw → prepared handoff between ingestion Functions and AI Search indexer; Datadog Blob Storage dashboard tracks upload throughput and latency |
 | Kafka for eval | Load generator → `infra.query.events` → agent → `infra.eval.results`; DSM shows the full producer-consumer topology and consumer lag |
 | Async faithfulness scoring | `gpt-4.1-mini` scores every response in a background thread — zero latency added for users; results flow to Datadog as `eval.faithfulness_score` metric |
 | RUM ↔ LLM Obs linking | Browser RUM session ID is forwarded as `X-DD-RUM-Session-ID` header and set as `session.id` on all LLM Obs spans — enables "View session replay" from any trace |
@@ -311,11 +313,11 @@ Configured on the repo (Settings → Secrets and variables → Actions), not rea
 
 | Signal | What's instrumented |
 |---|---|
-| **APM** | All 4 Python services via `ddtrace.auto`; service map; DBM (auth-api → Postgres with `DD_DBM_PROPAGATION_MODE=full`) |
+| **APM** | All 5 Python services (including the ADF-triggered Azure Functions, agentless via `datadog-serverless-compat`) via `ddtrace.auto`; service map; DBM (auth-api → Postgres with `DD_DBM_PROPAGATION_MODE=full`) |
 | **LLM Observability** | Full span tree per query: `workflow → router → specialist → tool calls`; token counts; `faithfulness_score` evaluations; authenticated end-user feedback events |
 | **RUM** | React UI — `query_submitted`, `citation_expanded`, `suggestion_clicked` custom events; session replay; linked to LLM Obs via `session.id` |
 | **Data Streams** | Kafka topology: load-generator → `infra.query.events` → agent-api → `infra.eval.results`; consumer lag alerts |
-| **Data Jobs** | Airflow DAG run duration, task status, and per-task breakdown via OpenLineage Datadog transport |
+| **Data Jobs** | Azure Data Factory pipeline/activity run status via Datadog's Azure integration (pull-based, no OpenLineage) |
 | **Dashboards** | infra-overview · llm-observability · mcp-server · pipeline-health · blob-storage (5 total in `datadog/dashboards/`) |
 | **Monitors** | faithfulness-score · kafka-consumer-lag · mcp-external-api-error (3 total in `datadog/monitors/`) |
 | **Synthetics** | `consultant-query-flow` — end-to-end browser test of the full query flow |

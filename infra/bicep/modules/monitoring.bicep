@@ -19,7 +19,7 @@
 //   - APM (port 8126) and DogStatsD (port 8125) listeners
 //   - Kafka JMX integration via autodiscovery annotations on broker pods
 //   - Redis integration via autodiscovery annotations on the Redis pod
-//   - Airflow integration via Data Jobs Monitoring (DJM)
+//   - Log collection and APM for the ADF-triggered Azure Functions (agentless)
 //   - Log collection from all namespaces
 //   - LLM Observability for agent-api traces
 //   - AI Guard inline policy enforcement

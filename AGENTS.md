@@ -43,10 +43,10 @@ Global infrastructure consulting firm AI assistant. Refer to `@docs/agent-guides
 - **Markdown formatting:** Do not hard-wrap Markdown prose. Write each paragraph or list item on one physical line; allow renderers to wrap it visually. Code blocks and tables may use the line structure required by their syntax.
 - **Security:** Never hardcode server-side secrets. Use `os.environ["VAR_NAME"]` and fail fast.
 - **Schema:** Do not modify NBI field names; use exact names from PRD Section 3.
-- **Orchestration:** \* Namespace: `infra-advisor` (Exceptions: `kafka`, `airflow`, `datadog`).
+- **Orchestration:** \* Namespace: `infra-advisor` (Exceptions: `kafka`, `datadog`).
   - Manifests: Must include `imagePullSecrets: [{name: ghcr-pull-secret}]`.
   - Registry: `ghcr.io/bitsbone/infra-advisor-ai/<service>:latest`.
-- **Public ingress:** The UI pod's nginx is the only LoadBalancer. Adding a service with a public subpath requires (1) a `location ^~ /<subpath>/` block in `services/ui/nginx.conf`, (2) the upstream configured with its subpath (e.g. `MP_WEBROOT`, `AIRFLOW__API__BASE_URL`, `--root-path`), and (3) a UI image rebuild (nginx.conf is `COPY`'d at build time). Full rules in `@docs/agent-guides/core-conventions.md` § Public ingress routing.
+- **Public ingress:** The UI pod's nginx is the only LoadBalancer. Adding a service with a public subpath requires (1) a `location ^~ /<subpath>/` block in `services/ui/nginx.conf`, (2) the upstream configured with its subpath (e.g. `MP_WEBROOT`, `--root-path`), and (3) a UI image rebuild (nginx.conf is `COPY`'d at build time). Full rules in `@docs/agent-guides/core-conventions.md` § Public ingress routing.
 
 ---
 

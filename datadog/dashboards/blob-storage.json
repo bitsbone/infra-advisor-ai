@@ -1,6 +1,6 @@
 {
   "title": "InfraAdvisor — Azure Blob Storage",
-  "description": "APM spans for azure.blob.upload across all Airflow ingestion DAGs. Tracks throughput, latency, size, and errors by DAG and container.",
+  "description": "APM spans for azure.blob.upload across all Airflow ingestion DAGs. Tracks throughput, latency, size, and errors by DAG and container. STALE since the Airflow-to-ADF migration: this dashboard's queries key on the custom azure.blob.upload span + dag_id tag that only Airflow's now-deleted _dd_blob.py wrapper emitted — services/adf-functions relies on ddtrace.auto's generic azure-storage-blob auto-instrumentation instead, which uses a different span/resource shape. Needs a rebuild against the new span names, not yet done.",
   "layout_type": "ordered",
   "tags": ["team:infra-advisor", "env:dev"],
   "widgets": [

@@ -137,7 +137,7 @@ const TOOL_META: Record<string, { label: string; document_type: string; descript
   search_project_knowledge: {
     label: "Knowledge Base", document_type: "Document",
     description: "Firm internal knowledge base — case studies, risk frameworks, templates (Azure AI Search)",
-    data_notes: "Requires knowledge_base_init Airflow DAG to be run. Scope depends on indexed documents.",
+    data_notes: "Requires the knowledge-base index to be seeded. Scope depends on indexed documents.",
   },
   draft_document: {
     label: "Draft Document", document_type: "Document",

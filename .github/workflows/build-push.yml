@@ -15,9 +15,6 @@ on:
       - 'k8s/**'
       - 'infra/bicep/modules/aca-agentic-poc.bicep'
       - '.github/workflows/build-push.yml'
-      # Airflow builds/deploys via its own deploy-airflow.yml workflow.
-      - '!services/ingestion/**'
-      - '!k8s/airflow/**'
   workflow_dispatch: # manual full rebuild — always builds all services
 
 env:

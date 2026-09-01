@@ -274,7 +274,7 @@ public sealed class WaterInfrastructureTool(IHttpClientFactory httpFactory, ILog
                     new()
                     {
                         ["_source"] = TwdbSource,
-                        ["error"] = "Azure AI Search index not found. Run the knowledge_base_init Airflow DAG (make run-dags) to create and populate the index before querying water plan projects.",
+                        ["error"] = "Azure AI Search index not found or empty. The synthetic knowledge-base seed data has no automated regeneration path since the Airflow-to-ADF migration retired knowledge_base_init without a replacement — contact an administrator to seed the index manually.",
                         ["retriable"] = false,
                         ["content"] = "",
                     }

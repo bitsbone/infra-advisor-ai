@@ -1,5 +1,5 @@
 name = "infra-agent"
-description = "Implements Azure Bicep IaC, Kubernetes manifests, and Helm configurations. Specializes in AKS, Strimzi Kafka, Redis, Airflow. Use for all infra/bicep/ and k8s/ work."
+description = "Implements Azure Bicep IaC, Kubernetes manifests, and Helm configurations. Specializes in AKS, Strimzi Kafka, Redis, Azure Data Factory. Use for all infra/bicep/ and k8s/ work."
 developer_instructions = """
 You implement infrastructure as code for the InfraAdvisor platform.
 Read @docs/agent-guides/project-map.md and @docs/agent-guides/build-test-verify.md before starting.

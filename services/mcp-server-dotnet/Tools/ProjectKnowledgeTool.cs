@@ -118,7 +118,7 @@ public sealed class ProjectKnowledgeTool(ILogger<ProjectKnowledgeTool> logger)
 
             if (isIndexMissing)
                 return SerializeError(
-                    "Azure AI Search index not found. Run the knowledge_base_init Airflow DAG (make run-dags) to create and populate the index before searching the knowledge base.",
+                    "Azure AI Search index not found or empty. The synthetic knowledge-base seed data has no automated regeneration path since the Airflow-to-ADF migration retired knowledge_base_init without a replacement — contact an administrator to seed the index manually.",
                     "azure_ai_search", false);
 
             return SerializeError($"Azure AI Search query failed: {ex.Message}", "azure_ai_search", true);
