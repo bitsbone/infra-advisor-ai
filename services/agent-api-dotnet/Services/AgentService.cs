@@ -618,6 +618,15 @@ public class AgentService
             _logger.LogWarning(
                 "agent.RunStreamingAsync failed category={Category} error_type={ErrorType}",
                 errorCategory, streamError.GetType().Name);
+            // Persist whatever the session accumulated before the failure
+            // (at minimum the user's own message) so a transient error or a
+            // client disconnect mid-stream doesn't silently wipe context for
+            // the next turn — previously this returned before ever calling
+            // SaveAsync, so a dropped connection made the agent "forget" the
+            // conversation up to that point. Use CancellationToken.None: `ct`
+            // may already be cancelled (e.g. client disconnect), and we still
+            // want this write to go through.
+            await _sessions.SaveAsync(agent, sessionId, session, CancellationToken.None);
             yield return new ErrorEvent(
                 errorMessage, TraceId: Activity.Current?.TraceId.ToString(), Category: errorCategory);
             yield break;

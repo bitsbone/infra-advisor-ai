@@ -666,55 +666,66 @@ app.MapPost("/query/stream", async (
         else { stepIndexById[step.Id] = stepRecords.Count; stepRecords.Add(step); }
     }
 
-    await foreach (var evt in agentService.RunAgentStreamingAsync(
-        query: body.Query,
-        sessionId: agentSessionKey,
-        deployment: deployment,
-        attachments: attachments,
-        ct: httpContext.RequestAborted))
+    try
     {
-        // Accumulate side-effects we need post-stream.
-        switch (evt)
+        await foreach (var evt in agentService.RunAgentStreamingAsync(
+            query: body.Query,
+            sessionId: agentSessionKey,
+            deployment: deployment,
+            attachments: attachments,
+            ct: httpContext.RequestAborted))
         {
-            case TextChunkEvent t: fullAnswer.Append(t.Chunk); break;
-            case StepEvent se:
-                UpsertStep(new StoredStep(
-                    Kind: "internal", Id: $"internal:{se.Step}", Name: se.Step, Status: se.Status,
-                    ArgsJson: null, ResultSummary: null, Sources: null, DurationMs: null, Detail: se.Detail));
-                break;
-            case ToolCallStartEvent tcs:
-                UpsertStep(new StoredStep(
-                    Kind: "tool", Id: tcs.Id, Name: tcs.Name, Status: "running",
-                    ArgsJson: tcs.ArgsJson, ResultSummary: null, Sources: null, DurationMs: null, Detail: null));
-                break;
-            case ToolCallEndEvent tce:
-                // Preserve ArgsJson captured at tool_call_start rather than
-                // dropping it — the end event doesn't carry args.
-                var priorArgsJson = stepIndexById.TryGetValue(tce.Id, out var priorIdx)
-                    ? stepRecords[priorIdx].ArgsJson
-                    : null;
-                UpsertStep(new StoredStep(
-                    Kind: "tool", Id: tce.Id, Name: tce.Name, Status: tce.Status,
-                    ArgsJson: priorArgsJson, ResultSummary: tce.ResultSummary, Sources: tce.Sources,
-                    DurationMs: tce.DurationMs, Detail: null));
-                break;
-            case ArtifactEvent ae:
-                artifacts.Add(ae.Artifact.Clone());
-                break;
-            case DoneEvent d:
-                doneSources.AddRange(d.Sources);
-                finalTraceId = d.TraceId;
-                finalSpanId = d.SpanId;
-                break;
-        }
+            // Accumulate side-effects we need post-stream.
+            switch (evt)
+            {
+                case TextChunkEvent t: fullAnswer.Append(t.Chunk); break;
+                case StepEvent se:
+                    UpsertStep(new StoredStep(
+                        Kind: "internal", Id: $"internal:{se.Step}", Name: se.Step, Status: se.Status,
+                        ArgsJson: null, ResultSummary: null, Sources: null, DurationMs: null, Detail: se.Detail));
+                    break;
+                case ToolCallStartEvent tcs:
+                    UpsertStep(new StoredStep(
+                        Kind: "tool", Id: tcs.Id, Name: tcs.Name, Status: "running",
+                        ArgsJson: tcs.ArgsJson, ResultSummary: null, Sources: null, DurationMs: null, Detail: null));
+                    break;
+                case ToolCallEndEvent tce:
+                    // Preserve ArgsJson captured at tool_call_start rather than
+                    // dropping it — the end event doesn't carry args.
+                    var priorArgsJson = stepIndexById.TryGetValue(tce.Id, out var priorIdx)
+                        ? stepRecords[priorIdx].ArgsJson
+                        : null;
+                    UpsertStep(new StoredStep(
+                        Kind: "tool", Id: tce.Id, Name: tce.Name, Status: tce.Status,
+                        ArgsJson: priorArgsJson, ResultSummary: tce.ResultSummary, Sources: tce.Sources,
+                        DurationMs: tce.DurationMs, Detail: null));
+                    break;
+                case ArtifactEvent ae:
+                    artifacts.Add(ae.Artifact.Clone());
+                    break;
+                case DoneEvent d:
+                    doneSources.AddRange(d.Sources);
+                    finalTraceId = d.TraceId;
+                    finalSpanId = d.SpanId;
+                    break;
+            }
 
-        // Serialize without the EventName field (it goes on the SSE
-        // "event:" line, not in the data payload).
-        var payload = JsonSerializer.Serialize((object)evt, evt.GetType(), jsonOpts);
-        await httpContext.Response.WriteAsync(
-            $"event: {evt.EventName}\ndata: {payload}\n\n",
-            httpContext.RequestAborted);
-        await httpContext.Response.Body.FlushAsync(httpContext.RequestAborted);
+            // Serialize without the EventName field (it goes on the SSE
+            // "event:" line, not in the data payload).
+            var payload = JsonSerializer.Serialize((object)evt, evt.GetType(), jsonOpts);
+            await httpContext.Response.WriteAsync(
+                $"event: {evt.EventName}\ndata: {payload}\n\n",
+                httpContext.RequestAborted);
+            await httpContext.Response.Body.FlushAsync(httpContext.RequestAborted);
+        }
+    }
+    catch (Exception) when (httpContext.RequestAborted.IsCancellationRequested)
+    {
+        // Client disconnected mid-stream (tab closed, proxy timeout, network
+        // drop). AgentService already persisted the agent session up to this
+        // point (see AgentService.RunAgentStreamingAsync); still persist
+        // whatever we accumulated here too, so the conversation history the
+        // UI reloads isn't silently missing this turn.
     }
 
     await memoryService.SetSessionModelAsync(agentSessionKey, deployment);
