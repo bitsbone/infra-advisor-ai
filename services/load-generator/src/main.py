@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
 
-KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka-broker.kafka.svc.cluster.local:9092")
+KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092")
 KAFKA_TOPIC_QUERIES = "infra.query.events"
 AGENT_API_URL = os.environ.get("AGENT_API_URL", "http://agent-api.infra-advisor.svc.cluster.local:8001")
 

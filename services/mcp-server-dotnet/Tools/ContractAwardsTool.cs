@@ -111,17 +111,17 @@ public sealed class ContractAwardsTool(IHttpClientFactory httpFactory, ILogger<C
         }
         catch (TaskCanceledException)
         {
-            return SerializeError("USASpending API request timed out.", "usaspending", true);
+            return JsonSerializer.Serialize(BuildArtifact(new(), new List<object> { new { code = "timeout", retriable = true } }, limit));
         }
         catch (Exception)
         {
             logger.LogError("Unexpected error in get_contract_awards");
-            return SerializeError("Unexpected error querying USASpending.gov", "usaspending", false);
+            return JsonSerializer.Serialize(BuildArtifact(new(), new List<object> { new { code = "unexpected", retriable = false } }, limit));
         }
 
         var statusCode = (int)resp.StatusCode;
         if (statusCode >= 400)
-            return SerializeError($"USASpending API error: HTTP {statusCode}", "usaspending", statusCode >= 500);
+            return JsonSerializer.Serialize(BuildArtifact(new(), new List<object> { new { code = $"http_{statusCode}", retriable = statusCode >= 500 } }, limit));
 
         var json = await resp.Content.ReadAsStringAsync(cancellationToken);
         using var doc = JsonDocument.Parse(json);
@@ -134,7 +134,7 @@ public sealed class ContractAwardsTool(IHttpClientFactory httpFactory, ILogger<C
         if (rawResults.Count == 0)
         {
             logger.LogInformation("USASpending returned zero awards");
-            return JsonSerializer.Serialize(Array.Empty<object>());
+            return JsonSerializer.Serialize(BuildArtifact(new(), new(), limit));
         }
 
         var awards = rawResults.Select(NormalizeAward).ToList();
@@ -153,8 +153,43 @@ public sealed class ContractAwardsTool(IHttpClientFactory httpFactory, ILogger<C
         }
 
         logger.LogInformation("USASpending returned {Count} awards", awards.Count);
-        return JsonSerializer.Serialize(awards);
+        return JsonSerializer.Serialize(BuildArtifact(awards, new(), limit));
     }
+
+    private static object BuildArtifact(List<Dictionary<string, object?>> awards, List<object> errors, int requestedLimit)
+    {
+        var limit = Math.Clamp(requestedLimit, 1, MaxResults);
+        // Dedup by award_id, first-seen-wins — MCP plumbing can surface the
+        // same award via multiple representations; this is not USASpending
+        // returning genuinely distinct records.
+        var deduped = new List<Dictionary<string, object?>>();
+        var seen = new HashSet<string>();
+        foreach (var award in awards)
+        {
+            var awardId = award.TryGetValue("award_id", out var idObj) ? idObj?.ToString() ?? "" : "";
+            if (!string.IsNullOrEmpty(awardId) && !seen.Add(awardId)) continue;
+            deduped.Add(award);
+        }
+        var bounded = deduped.Take(limit).ToList();
+        return new
+        {
+            kind = "contract_awards",
+            schema_version = "1.0",
+            tool_name = "get_contract_awards",
+            tool_call_id = (string?)null,
+            status = errors.Count > 0 && bounded.Count == 0 ? "error" : bounded.Count == 0 ? "empty" : "ok",
+            generated_at = DateTimeOffset.UtcNow.ToString("O"),
+            items = bounded,
+            meta = new
+            {
+                returned_count = bounded.Count,
+                truncated = deduped.Count > bounded.Count,
+                partial_errors = errors,
+            },
+        };
+    }
+
+    private const int MaxResults = 20;
 
     private static Dictionary<string, object?> NormalizeAward(JsonElement result)
     {
@@ -232,7 +267,4 @@ public sealed class ContractAwardsTool(IHttpClientFactory httpFactory, ILogger<C
         if (val.ValueKind == JsonValueKind.Number) return val.GetDouble();
         return null;
     }
-
-    private static string SerializeError(string message, string source, bool retriable) =>
-        JsonSerializer.Serialize(new { error = message, source, retriable });
 }

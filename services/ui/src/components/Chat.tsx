@@ -19,7 +19,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, ChevronLeft, Bug, Paperclip, Mic, Square } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { ApiError, Attachment, BackendType, BridgeData, ConversationDetail, ConversationSummary, FeedbackRating, StoredStepDto, StreamEvent, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQueryStream, setBackend, setModel, setSessionId, submitFeedback, uploadMedia } from "../lib/api";
+import { ApiError, Attachment, BackendType, BridgeData, ContractAwardsArtifact, ConversationDetail, ConversationSummary, FeedbackRating, StoredStepDto, StreamEvent, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQueryStream, setBackend, setModel, setSessionId, submitFeedback, uploadMedia } from "../lib/api";
 import {
   trackAttachmentAdded,
   trackBridgeCardRendered,
@@ -36,6 +36,7 @@ import { AdminTab } from "./AdminTab";
 import { AttachmentChip } from "./AttachmentChip";
 import { AttachmentViewerModal } from "./AttachmentViewerModal";
 import { BridgeCard } from "./BridgeCard";
+import { ContractAwardCard } from "./ContractAwardCard";
 import { StepKind, StepStatus, ToolDisplayMeta, ToolStepChip } from "./ToolStepChip";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { QuerySuggestions } from "./QuerySuggestions";
@@ -90,6 +91,7 @@ interface Message {
   sources: string[];
   steps: StreamStep[];              // tool / pipeline steps; rendered above content
   bridges: BridgeData[];
+  artifacts: ContractAwardsArtifact[];
   traceId?: string | null;
   spanId?: string | null;
   attachments?: Attachment[];
@@ -721,6 +723,7 @@ export function Chat() {
       // saved before this persistence existed.
       steps: toStepsFromMessage(m),
       bridges: [],
+      artifacts: m.artifacts ?? [],
       traceId: m.trace_id,
       spanId: m.span_id,
       attachments: m.attachments,
@@ -873,10 +876,11 @@ export function Chat() {
       sources: [],
       steps: [],
       bridges: [],
+      artifacts: [],
       attachments: attachments.length > 0 ? attachments : undefined,
     };
     // Empty assistant placeholder we mutate in place as stream events arrive.
-    const placeholder: Message = { role: "assistant", content: "", sources: [], steps: [], bridges: [] };
+    const placeholder: Message = { role: "assistant", content: "", sources: [], steps: [], bridges: [], artifacts: [] };
     let assistantIdx = -1;
     setMessages((prev) => {
       const next = [...prev, userMessage, placeholder];
@@ -959,6 +963,12 @@ export function Chat() {
           case "text_chunk":
             finalAnswer += evt.chunk;
             patchAssistant((m) => ({ ...m, content: m.content + evt.chunk }));
+            break;
+          case "artifact":
+            if (evt.artifact.kind === "contract_awards") {
+              const artifact = evt.artifact as ContractAwardsArtifact;
+              patchAssistant((m) => ({ ...m, artifacts: [...m.artifacts, artifact] }));
+            }
             break;
           case "done":
             finalSources = evt.sources;
@@ -1043,6 +1053,7 @@ export function Chat() {
       sources: m.sources,
       steps: toStepsFromMessage(m),
       bridges: [],
+      artifacts: m.artifacts ?? [],
       traceId: m.trace_id,
       spanId: m.span_id,
       attachments: m.attachments,
@@ -1345,6 +1356,14 @@ export function Chat() {
                         {msg.bridges.length > 0 && (
                           <VStack mt={3} gap={2} align="stretch">
                             {msg.bridges.map((b, j) => <BridgeCard key={j} bridge={b} />)}
+                          </VStack>
+                        )}
+
+                        {msg.artifacts.length > 0 && (
+                          <VStack mt={3} gap={2} align="stretch">
+                            {msg.artifacts.flatMap((a) => a.items).map((award, j) => (
+                              <ContractAwardCard key={award.award_id || j} award={award} />
+                            ))}
                           </VStack>
                         )}
 

@@ -120,3 +120,76 @@ def test_rejects_invalid_counts_lengths_and_partial_error_values():
     artifact = _artifact([_item()])
     artifact["meta"]["partial_errors"] = [{"provider": "evil.example", "code": "failed", "retriable": False}]
     assert extract_chat_artifact(artifact) is None
+
+
+# ---------------------------------------------------------------------------
+# contract_awards kind
+# ---------------------------------------------------------------------------
+
+
+def _award_item(award_id="CONT_AWD_001", recipient_name="BRIDGE CORP"):
+    return {
+        "award_id": award_id,
+        "recipient_name": recipient_name,
+        "award_amount_usd": 5_000_000.0,
+        "awarding_agency": "DEPARTMENT OF TRANSPORTATION",
+        "awarding_sub_agency": "FEDERAL HIGHWAY ADMINISTRATION",
+        "description": "BRIDGE REHABILITATION PROJECT",
+        "place_of_performance": "Austin TX",
+        "start_date": "2023-01-15",
+        "end_date": "2024-06-30",
+        "naics_description": "Highway, Street, and Bridge Construction",
+        "contract_type": "Definitive Contract",
+        "usaspending_permalink": f"https://www.usaspending.gov/award/{award_id}",
+        "_source": "USASpending.gov",
+        "source": {"name": "USASpending.gov", "retrieved_at": "2026-01-15T12:00:00Z"},
+    }
+
+
+def _contract_awards_artifact(items=None):
+    values = items or []
+    return {
+        "kind": "contract_awards",
+        "schema_version": "1.0",
+        "status": "ok",
+        "generated_at": "2026-01-15T12:00:00Z",
+        "items": values,
+        "meta": {"returned_count": len(values), "truncated": False, "partial_errors": []},
+    }
+
+
+def test_extracts_contract_awards_artifact():
+    result = extract_chat_artifact(json.dumps(_contract_awards_artifact([_award_item()])), "get_contract_awards", "call-1")
+    assert result is not None
+    assert result["kind"] == "contract_awards"
+    assert result["tool_call_id"] == "call-1"
+    assert result["items"][0]["recipient_name"] == "BRIDGE CORP"
+
+
+def test_dedupes_duplicate_award_ids_first_seen_wins_at_extraction_layer():
+    items = [
+        _award_item(award_id="CONT_AWD_DUP", recipient_name="FIRST SEEN CORP"),
+        _award_item(award_id="CONT_AWD_DUP", recipient_name="SECOND SEEN CORP"),
+        _award_item(award_id="CONT_AWD_UNIQUE", recipient_name="UNIQUE CORP"),
+    ]
+    artifact = _contract_awards_artifact(items)
+    artifact["meta"]["returned_count"] = len(items)  # simulate an un-deduped upstream count
+    result = extract_chat_artifact(artifact, "get_contract_awards", "call-1")
+
+    assert result is not None
+    assert len(result["items"]) == 2
+    assert result["meta"]["returned_count"] == 2
+    dup = next(i for i in result["items"] if i["award_id"] == "CONT_AWD_DUP")
+    assert dup["recipient_name"] == "FIRST SEEN CORP"
+
+
+def test_contract_awards_permalink_is_the_exposed_source_url():
+    artifact = _contract_awards_artifact([_award_item()])
+    envelope = {"content": [{"type": "text", "text": json.dumps(artifact)}]}
+    assert extract_chat_artifact_source_urls(json.dumps(envelope)) == ["https://www.usaspending.gov/award/CONT_AWD_001"]
+
+
+def test_contract_awards_rejects_wrong_source_name():
+    item = _award_item()
+    item["source"]["name"] = "not-usaspending"
+    assert extract_chat_artifact(_contract_awards_artifact([item])) is None

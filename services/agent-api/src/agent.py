@@ -16,6 +16,7 @@ from openai import RateLimitError
 from pydantic import BaseModel
 
 from artifacts import extract_chat_artifact, extract_chat_artifact_source_urls
+from kafka_producer import publish_contract_awards_event
 from media import transcribe_audio
 from memory import load_history
 from observability.ai_guard import check_query
@@ -316,6 +317,37 @@ def _extract_answer_and_tools(result: dict[str, Any]) -> tuple[str, list[str]]:
                     tools_called.append(name)
 
     return answer, tools_called
+
+
+def _tool_call_args_by_id(all_messages: list[Any]) -> dict[str, dict[str, Any]]:
+    """Map each AIMessage tool_call id to its original call args.
+
+    Used to recover the ContractAwardsInput-shaped args for the Kafka
+    contract_awards publish, since ToolMessage itself only carries the result.
+    """
+    args_by_id: dict[str, dict[str, Any]] = {}
+    for msg in all_messages:
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            for tc in msg.tool_calls:
+                call_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                call_args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", None)
+                if call_id and isinstance(call_args, dict):
+                    args_by_id[call_id] = call_args
+    return args_by_id
+
+
+def _publish_contract_awards_if_applicable(
+    artifact: dict | None, session_id: str, tool_call_id: str | None, query_input: dict[str, Any] | None
+) -> None:
+    if not artifact or artifact.get("kind") != "contract_awards":
+        return
+    publish_contract_awards_event(
+        session_id=session_id,
+        tool_call_id=tool_call_id,
+        query_input=query_input or {},
+        raw_awards=artifact["items"],
+        deduped_award_count=len(artifact["items"]),
+    )
 
 
 def _extract_sources_from_tool_content(content: Any) -> list[str]:
@@ -675,12 +707,17 @@ async def run_agent(
         context_chunks: list[str] = []
 
         with LLMObs.task("extract-sources") as sources_span:
+            tool_call_args = _tool_call_args_by_id(all_messages)
             for msg in all_messages:
                 if isinstance(msg, ToolMessage):
                     context_chunks.append(str(msg.content)[:500])
-                    artifact = extract_chat_artifact(msg.content, getattr(msg, "name", None), getattr(msg, "tool_call_id", None))
+                    tool_call_id = getattr(msg, "tool_call_id", None)
+                    artifact = extract_chat_artifact(msg.content, getattr(msg, "name", None), tool_call_id)
                     if artifact:
                         artifacts.append(artifact)
+                        _publish_contract_awards_if_applicable(
+                            artifact, session_id, tool_call_id, tool_call_args.get(tool_call_id)
+                        )
                     for src in _extract_sources_from_tool_content(msg.content):
                         if src not in sources:
                             sources.append(src)
@@ -869,6 +906,7 @@ async def run_agent_stream(
             context_chunks: list[str] = []
             tool_names_by_run: dict[str, str] = {}
             tool_starts: dict[str, float] = {}
+            tool_inputs_by_run: dict[str, Any] = {}
 
             with LLMObs.agent(f"specialist-{specialist_name}") as agent_span:
                 # Explicitly invoke specialist_prompt so ddtrace captures the
@@ -895,6 +933,7 @@ async def run_agent_stream(
                         if name and name not in tools_called:
                             tools_called.append(name)
                         tool_input = ev.get("data", {}).get("input")
+                        tool_inputs_by_run[run_id] = tool_input
                         yield {
                             "event": "tool_call_start",
                             "id": run_id,
@@ -934,6 +973,10 @@ async def run_agent_stream(
                         artifact = extract_chat_artifact(result_content, name, run_id)
                         if artifact:
                             yield {"event": "artifact", "artifact": artifact}
+                            raw_input = tool_inputs_by_run.get(run_id)
+                            _publish_contract_awards_if_applicable(
+                                artifact, session_id, run_id, raw_input if isinstance(raw_input, dict) else None
+                            )
 
                 answer = "".join(answer_parts)
                 tag_agent_run(

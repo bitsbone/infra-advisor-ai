@@ -149,4 +149,57 @@ public sealed class ChatArtifactParserTests
         errors["meta"]!["partial_errors"] = new JsonArray(new JsonObject { ["provider"] = "evil.example", ["code"] = "failed", ["retriable"] = false });
         Assert.Null(ChatArtifactParser.TryExtract(errors.ToJsonString(), null, null));
     }
+
+    // -------------------------------------------------------------------
+    // contract_awards kind
+    // -------------------------------------------------------------------
+
+    private const string ValidContractAwardItem = """
+        {"award_id":"CONT_AWD_001","recipient_name":"BRIDGE CORP","award_amount_usd":5000000.0,"awarding_agency":"DEPARTMENT OF TRANSPORTATION","awarding_sub_agency":"FEDERAL HIGHWAY ADMINISTRATION","description":"BRIDGE REHABILITATION PROJECT","place_of_performance":"Austin TX","start_date":"2023-01-15","end_date":"2024-06-30","naics_description":"Highway, Street, and Bridge Construction","contract_type":"Definitive Contract","usaspending_permalink":"https://www.usaspending.gov/award/CONT_AWD_001","source":{"name":"USASpending.gov","retrieved_at":"2026-01-15T12:00:00Z"}}
+        """;
+
+    private static string ContractAwardsArtifact(string itemsJson) =>
+        "{\"kind\":\"contract_awards\",\"schema_version\":\"1.0\",\"status\":\"ok\",\"generated_at\":\"2026-01-15T12:00:00Z\",\"items\":[" + itemsJson + "],\"meta\":{\"returned_count\":1,\"truncated\":false,\"partial_errors\":[]}}";
+
+    [Fact]
+    public void ContractAwardsArtifactIsExtractedWithToolCorrelation()
+    {
+        var artifact = ContractAwardsArtifact(ValidContractAwardItem);
+        var result = ChatArtifactParser.TryExtract(artifact, "get_contract_awards", "call-1");
+
+        Assert.NotNull(result);
+        Assert.Equal("contract_awards", result.Value.GetProperty("kind").GetString());
+        Assert.Equal("call-1", result.Value.GetProperty("tool_call_id").GetString());
+        Assert.Equal("BRIDGE CORP", result.Value.GetProperty("items")[0].GetProperty("recipient_name").GetString());
+    }
+
+    [Fact]
+    public void ContractAwardsDedupesDuplicateAwardIdsFirstSeenWins()
+    {
+        var second = ValidContractAwardItem.Replace("CONT_AWD_001", "CONT_AWD_DUP").Replace("BRIDGE CORP", "SECOND SEEN CORP");
+        var first = ValidContractAwardItem.Replace("CONT_AWD_001", "CONT_AWD_DUP").Replace("BRIDGE CORP", "FIRST SEEN CORP");
+        var artifact = ContractAwardsArtifact($"{first},{second}");
+        var result = ChatArtifactParser.TryExtract(artifact, "get_contract_awards", "call-1")!.Value;
+
+        var items = result.GetProperty("items").EnumerateArray().ToList();
+        Assert.Single(items);
+        Assert.Equal(1, result.GetProperty("meta").GetProperty("returned_count").GetInt32());
+        Assert.Equal("FIRST SEEN CORP", items[0].GetProperty("recipient_name").GetString());
+    }
+
+    [Fact]
+    public void ContractAwardsSourceUrlsUsePermalinkNotSourceObject()
+    {
+        var artifact = ChatArtifactParser.TryExtract(ContractAwardsArtifact(ValidContractAwardItem), "tool", "call")!.Value;
+        Assert.Equal(["https://www.usaspending.gov/award/CONT_AWD_001"], ChatArtifactParser.ExtractSourceUrls(artifact));
+    }
+
+    [Fact]
+    public void ContractAwardsRejectsWrongSourceName()
+    {
+        var item = JsonNode.Parse(ValidContractAwardItem)!.AsObject();
+        item["source"]!["name"] = "not-usaspending";
+        var artifact = ContractAwardsArtifact(item.ToJsonString());
+        Assert.Null(ChatArtifactParser.TryExtract(artifact, null, null));
+    }
 }

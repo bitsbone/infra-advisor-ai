@@ -2,7 +2,7 @@ import ddtrace.auto  # must be first import — enables APM auto-instrumentation
 
 import logging
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, List, Optional
 
 import httpx
@@ -138,18 +138,60 @@ def _normalize_award(result: dict) -> dict[str, Any]:
     }
 
 
+_MAX_RESULTS = 20
+
+
+def _artifact(
+    items: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    requested_limit: int,
+) -> dict[str, Any]:
+    """Wrap award records in the stable, bounded chat-artifact envelope.
+
+    Mirrors procurement_opportunities.py's `_artifact()` so the same
+    extract_chat_artifact()/ChatArtifactParser pipeline can accept both kinds.
+    """
+    limit = max(1, min(requested_limit, _MAX_RESULTS))
+    # Dedup by award_id, first-seen-wins — MCP/LangChain plumbing can surface
+    # the same award via multiple content-block representations; this is not
+    # USASpending returning genuinely distinct records.
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        award_id = item.get("award_id") or ""
+        if award_id and award_id in seen:
+            continue
+        if award_id:
+            seen.add(award_id)
+        deduped.append(item)
+    bounded = deduped[:limit]
+    return {
+        "kind": "contract_awards",
+        "schema_version": "1.0",
+        "tool_name": "get_contract_awards",
+        "tool_call_id": None,
+        "status": "error" if errors and not bounded else "empty" if not bounded else "ok",
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "items": bounded,
+        "meta": {
+            "returned_count": len(bounded),
+            "truncated": len(deduped) > limit,
+            "partial_errors": errors[:2],
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public tool entry point
 # ---------------------------------------------------------------------------
 
 
-async def get_contract_awards(input_data: ContractAwardsInput) -> list | dict:
+async def get_contract_awards(input_data: ContractAwardsInput) -> dict[str, Any]:
     """
     Query USASpending.gov for historical federal contract awards related to
     infrastructure projects.
 
-    Returns a list of normalised award records on success, or a structured error dict.
-    Never raises.
+    Returns the bounded contract_awards chat-artifact envelope. Never raises.
     """
     tool_start = time.monotonic()
 
@@ -226,10 +268,11 @@ async def get_contract_awards(input_data: ContractAwardsInput) -> list | dict:
                     status_code=resp.status_code,
                     body=resp.text,
                 )
-                return {
-                    "error": f"USASpending API error: HTTP {resp.status_code}",
-                    "retriable": resp.status_code >= 500,
-                }
+                return _artifact(
+                    [],
+                    [{"code": f"http_{resp.status_code}", "retriable": resp.status_code >= 500}],
+                    input_data.limit,
+                )
 
             emit_external_api("usaspending", api_latency_ms)
             body = resp.json()
@@ -241,7 +284,7 @@ async def get_contract_awards(input_data: ContractAwardsInput) -> list | dict:
         log_external_api_failure(
             logger, source="usaspending", tool_name="get_contract_awards", error="timeout"
         )
-        return {"error": "USASpending API request timed out.", "retriable": True}
+        return _artifact([], [{"code": "timeout", "retriable": True}], input_data.limit)
 
     except Exception as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
@@ -251,14 +294,14 @@ async def get_contract_awards(input_data: ContractAwardsInput) -> list | dict:
         log_external_api_failure(
             logger, source="usaspending", tool_name="get_contract_awards", error=str(exc)
         )
-        return {"error": "Unexpected error querying USASpending.gov", "retriable": False}
+        return _artifact([], [{"code": "unexpected", "retriable": False}], input_data.limit)
 
     raw_results: list = body.get("results", [])
 
     if not raw_results:
         logger.info("USASpending returned zero awards")
         emit_tool_call("get_contract_awards", (time.monotonic() - tool_start) * 1000, "success", result_count=0)
-        return []
+        return _artifact([], [], input_data.limit)
 
     # Normalize
     awards = [_normalize_award(r) for r in raw_results]
@@ -282,8 +325,12 @@ async def get_contract_awards(input_data: ContractAwardsInput) -> list | dict:
             )
         ]
 
+    artifact = _artifact(awards, [], input_data.limit)
     emit_tool_call(
-        "get_contract_awards", (time.monotonic() - tool_start) * 1000, "success", result_count=len(awards)
+        "get_contract_awards",
+        (time.monotonic() - tool_start) * 1000,
+        "success",
+        result_count=artifact["meta"]["returned_count"],
     )
-    logger.info("USASpending returned %d awards", len(awards))
-    return awards
+    logger.info("USASpending returned %d awards", artifact["meta"]["returned_count"])
+    return artifact

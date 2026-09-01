@@ -44,6 +44,7 @@ public class AgentService
     private readonly Counter<long> _toolCounter;
     private readonly Counter<long> _mcpReconnectCounter;
     private readonly double _evalSampleRate;
+    private readonly IContractAwardsEventPublisher _contractAwardsPublisher;
     private readonly ILogger<AgentService> _logger;
 
     // ActivitySource for manual spans that the M.E.AI / MAF decorators don't
@@ -64,6 +65,7 @@ public class AgentService
         IServiceProvider serviceProvider,
         IHttpClientFactory httpClientFactory,
         IMeterFactory meterFactory,
+        IContractAwardsEventPublisher contractAwardsPublisher,
         ILogger<AgentService> logger)
     {
         _agentHolder = agentHolder;
@@ -79,6 +81,7 @@ public class AgentService
         // are present.
         _whisperOpenAiClient = serviceProvider.GetKeyedService<AzureOpenAIClient>("whisper");
         _mediaHttpClient = httpClientFactory.CreateClient("agent-media-download");
+        _contractAwardsPublisher = contractAwardsPublisher;
         _whisperDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_WHISPER_DEPLOYMENT") ?? "whisper";
         _logger = logger;
         _evalSampleRate = double.TryParse(
@@ -199,6 +202,18 @@ public class AgentService
         var sources = ExtractSourcesFromResponse(response);
         var toolsCalled = ExtractToolsCalledFromResponse(response);
         var artifacts = ExtractArtifactsFromResponse(response);
+        if (artifacts.Count > 0)
+        {
+            var toolCallArgs = ExtractToolCallArgsByCallId(response);
+            foreach (var artifact in artifacts)
+            {
+                var toolCallId = artifact.TryGetProperty("tool_call_id", out var tcid) && tcid.ValueKind == JsonValueKind.String
+                    ? tcid.GetString()
+                    : null;
+                var queryInput = toolCallId is not null && toolCallArgs.TryGetValue(toolCallId, out var args) ? args : null;
+                PublishContractAwardsIfApplicable(artifact, sessionId, queryInput);
+            }
+        }
 
         // Business metrics — increment once per completed query plus once
         // per MCP tool invocation. Tags let dashboards slice by domain and
@@ -543,6 +558,7 @@ public class AgentService
         // ToolCallStart so the End event reports duration even when MAF
         // emits the call + result back-to-back in a single update batch.
         var toolStarts = new Dictionary<string, (long StartTicks, string Name)>();
+        var argsJsonByCallId = new Dictionary<string, string?>();
         var allSources = new List<string>();
         var toolsCalledOrdered = new List<string>();
         var toolResults = new List<string>();
@@ -606,6 +622,17 @@ public class AgentService
             var update = enumerator.Current;
             foreach (var ev in HandleUpdate(update, toolStarts, allSources, toolsCalledOrdered, toolResults, fullAnswer))
             {
+                if (ev is ToolCallStartEvent startEv) argsJsonByCallId[startEv.Id] = startEv.ArgsJson;
+                if (ev is ArtifactEvent artifactEv)
+                {
+                    var toolCallId = artifactEv.Artifact.TryGetProperty("tool_call_id", out var tcid) && tcid.ValueKind == JsonValueKind.String
+                        ? tcid.GetString()
+                        : null;
+                    object? queryInput = toolCallId is not null && argsJsonByCallId.TryGetValue(toolCallId, out var argsJson) && argsJson is not null
+                        ? JsonSerializer.Deserialize<JsonElement>(argsJson)
+                        : null;
+                    PublishContractAwardsIfApplicable(artifactEv.Artifact, sessionId, queryInput);
+                }
                 if (ev is ToolCallStartEvent or TextChunkEvent) anyStreamed = true;
                 yield return ev;
             }
@@ -807,6 +834,29 @@ public class AgentService
                     if (artifact is not null) artifacts.Add(artifact.Value);
                 }
         return artifacts;
+    }
+
+    // Maps each tool call's id to its original arguments — used to recover
+    // the query context (e.g. ContractAwardsInput fields) for the Kafka
+    // contract_awards publish, since FunctionResultContent only carries the
+    // result, not the request that produced it.
+    private static Dictionary<string, object?> ExtractToolCallArgsByCallId(AgentResponse response)
+    {
+        var argsByCallId = new Dictionary<string, object?>();
+        foreach (var message in response.Messages)
+            foreach (var content in message.Contents)
+                if (content is FunctionCallContent fc)
+                    argsByCallId[fc.CallId] = fc.Arguments;
+        return argsByCallId;
+    }
+
+    private void PublishContractAwardsIfApplicable(JsonElement artifact, string sessionId, object? queryInput)
+    {
+        if (!artifact.TryGetProperty("kind", out var kind) || kind.GetString() != "contract_awards") return;
+        var toolCallId = artifact.TryGetProperty("tool_call_id", out var tcid) && tcid.ValueKind == JsonValueKind.String
+            ? tcid.GetString()
+            : null;
+        _contractAwardsPublisher.Publish(sessionId, toolCallId, queryInput, artifact.GetProperty("items"));
     }
 
     // Raw tool RESULTS captured from the agent response. LLM-judge evaluators

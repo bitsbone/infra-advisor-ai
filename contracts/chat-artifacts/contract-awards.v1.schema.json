@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infra-advisor-ai.bitsbone.com/contracts/chat-artifacts/contract-awards.v1.schema.json",
+  "title": "Contract awards chat artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schema_version", "status", "generated_at", "items", "meta"],
+  "properties": {
+    "kind": { "const": "contract_awards" },
+    "schema_version": { "const": "1.0" },
+    "tool_name": { "type": "string", "maxLength": 100 },
+    "tool_call_id": { "type": ["string", "null"], "maxLength": 200 },
+    "status": { "enum": ["ok", "empty", "error"] },
+    "generated_at": { "type": "string", "format": "date-time", "maxLength": 50 },
+    "items": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/award" } },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["returned_count", "truncated", "partial_errors"],
+      "properties": {
+        "returned_count": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "truncated": { "type": "boolean" },
+        "partial_errors": { "type": "array", "maxItems": 2, "items": { "type": "object", "additionalProperties": false, "required": ["code", "retriable"], "properties": { "code": { "type": "string", "maxLength": 100 }, "retriable": { "type": "boolean" } } } }
+      }
+    }
+  },
+  "$defs": {
+    "award": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["award_id", "recipient_name", "award_amount_usd", "awarding_agency", "awarding_sub_agency", "description", "place_of_performance", "start_date", "end_date", "naics_description", "contract_type", "usaspending_permalink", "source"],
+      "properties": {
+        "award_id": { "type": "string", "maxLength": 200 },
+        "recipient_name": { "type": "string", "maxLength": 500 },
+        "award_amount_usd": { "type": ["number", "null"], "minimum": 0, "maximum": 1000000000000000 },
+        "awarding_agency": { "type": "string", "maxLength": 500 },
+        "awarding_sub_agency": { "type": "string", "maxLength": 500 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "place_of_performance": { "type": "string", "maxLength": 200 },
+        "start_date": { "anyOf": [{ "type": "null" }, { "type": "string", "format": "date", "maxLength": 10 }, { "type": "string", "format": "date-time", "maxLength": 50 }] },
+        "end_date": { "anyOf": [{ "type": "null" }, { "type": "string", "format": "date", "maxLength": 10 }, { "type": "string", "format": "date-time", "maxLength": 50 }] },
+        "naics_description": { "type": "string", "maxLength": 300 },
+        "contract_type": { "type": "string", "maxLength": 100 },
+        "usaspending_permalink": { "oneOf": [{ "type": "null" }, { "type": "string", "format": "uri", "pattern": "^https?://", "maxLength": 1000 }] },
+        "source": { "type": "object", "additionalProperties": false, "required": ["name", "retrieved_at"], "properties": { "name": { "const": "USASpending.gov" }, "retrieved_at": { "type": "string", "format": "date-time", "maxLength": 50 } } }
+      }
+    }
+  }
+}

@@ -33,3 +33,23 @@ spec:
     retention.ms: 604800000   # 7 days
     cleanup.policy: delete
     min.insync.replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: infra-contract-awards-raw
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka-cluster
+    app.kubernetes.io/part-of: infra-advisor-ai
+spec:
+  # Published by agent-api/agent-api-dotnet whenever get_contract_awards
+  # returns results — raw (already-deduped) award data + query context, for
+  # downstream analysis/modeling. No consumer exists yet; this is producer-only.
+  topicName: infra.contract-awards.raw
+  partitions: 3
+  replicas: 1
+  config:
+    retention.ms: 604800000   # 7 days
+    cleanup.policy: delete
+    min.insync.replicas: 1

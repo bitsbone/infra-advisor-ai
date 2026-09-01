@@ -107,6 +107,33 @@ export interface BridgeData {
   _source: string;
 }
 
+export interface ContractAwardItem {
+  award_id: string;
+  recipient_name: string;
+  award_amount_usd: number | null;
+  awarding_agency: string;
+  awarding_sub_agency: string;
+  description: string;
+  place_of_performance: string;
+  start_date: string | null;
+  end_date: string | null;
+  naics_description: string;
+  contract_type: string;
+  usaspending_permalink: string | null;
+  source: { name: string; retrieved_at: string };
+}
+
+export interface ContractAwardsArtifact {
+  kind: "contract_awards";
+  schema_version: "1.0";
+  status: "ok" | "empty" | "error";
+  generated_at: string;
+  items: ContractAwardItem[];
+  meta: { returned_count: number; truncated: boolean; partial_errors: unknown[] };
+  tool_name?: string;
+  tool_call_id?: string | null;
+}
+
 const MODEL_STORAGE_KEY = "infra_advisor_model";
 
 export function getModel(): string {
@@ -244,6 +271,7 @@ export type StreamEvent =
       duration_ms: number;
     }
   | { event: "text_chunk"; chunk: string }
+  | { event: "artifact"; artifact: ContractAwardsArtifact | { kind: string; [key: string]: unknown } }
   | {
       event: "done";
       trace_id: string | null;
@@ -481,6 +509,7 @@ export interface ConversationMessage {
   sources: string[];
   steps?: StoredStepDto[];
   attachments?: Attachment[];
+  artifacts?: ContractAwardsArtifact[];
   trace_id: string | null;
   span_id: string | null;
   created_at: string;

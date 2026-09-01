@@ -50,11 +50,21 @@ public static class ChatArtifactParser
     {
         var sources = new List<string>();
         if (!artifact.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array) return sources;
+        var isContractAwards = artifact.TryGetProperty("kind", out var kind) && kind.GetString() == "contract_awards";
         foreach (var item in items.EnumerateArray())
         {
-            if (!item.TryGetProperty("source", out var source) || source.ValueKind != JsonValueKind.Object ||
-                !source.TryGetProperty("url", out var urlValue) || urlValue.ValueKind != JsonValueKind.String ||
-                !Uri.TryCreate(urlValue.GetString(), UriKind.Absolute, out var url) || url.Scheme is not ("http" or "https"))
+            string? rawUrl = null;
+            if (isContractAwards)
+            {
+                if (item.TryGetProperty("usaspending_permalink", out var permalink) && permalink.ValueKind == JsonValueKind.String)
+                    rawUrl = permalink.GetString();
+            }
+            else if (item.TryGetProperty("source", out var source) && source.ValueKind == JsonValueKind.Object &&
+                     source.TryGetProperty("url", out var urlValue) && urlValue.ValueKind == JsonValueKind.String)
+            {
+                rawUrl = urlValue.GetString();
+            }
+            if (rawUrl is null || !Uri.TryCreate(rawUrl, UriKind.Absolute, out var url) || url.Scheme is not ("http" or "https"))
                 continue;
             var sanitized = new UriBuilder(url) { Query = "", Fragment = "" }.Uri.ToString();
             if (!sources.Contains(sanitized, StringComparer.Ordinal)) sources.Add(sanitized);
@@ -86,6 +96,25 @@ public static class ChatArtifactParser
     }
 
     private static JsonElement? TryValidate(JsonObject candidate, string? toolName, string? toolCallId)
+    {
+        string? kindName;
+        try
+        {
+            kindName = candidate["kind"]?.GetValue<string>();
+        }
+        catch (Exception error) when (error is InvalidOperationException or FormatException)
+        {
+            return null;
+        }
+        return kindName switch
+        {
+            "procurement_opportunities" => TryValidateProcurement(candidate, toolName, toolCallId),
+            "contract_awards" => TryValidateContractAwards(candidate, toolName, toolCallId),
+            _ => null,
+        };
+    }
+
+    private static JsonElement? TryValidateProcurement(JsonObject candidate, string? toolName, string? toolCallId)
     {
         try
         {
@@ -135,6 +164,104 @@ public static class ChatArtifactParser
         {
             return null;
         }
+    }
+
+    private static JsonElement? TryValidateContractAwards(JsonObject candidate, string? toolName, string? toolCallId)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(candidate.ToJsonString());
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("kind", out var kind) || kind.GetString() != "contract_awards" ||
+                !root.TryGetProperty("schema_version", out var version) || version.GetString() != "1.0" ||
+                !root.TryGetProperty("meta", out var meta) || meta.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array || items.GetArrayLength() > MaxItems)
+                return null;
+
+            var status = ReadString(root, "status", 20);
+            if (status is not ("ok" or "empty" or "error")) return null;
+
+            // Dedup by award_id, first-seen-wins — defensive backstop even
+            // though the tool itself now dedups too.
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var normalizedItems = new List<JsonObject>();
+            foreach (var rawItem in items.EnumerateArray())
+            {
+                var normalized = NormalizeContractAwardItem(rawItem);
+                var awardId = normalized["award_id"]!.GetValue<string>();
+                if (awardId.Length > 0 && !seen.Add(awardId)) continue;
+                normalizedItems.Add(normalized);
+            }
+
+            if (!meta.TryGetProperty("truncated", out var truncated) || truncated.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return null;
+            var partialErrors = NormalizeContractAwardErrors(meta);
+            var selectedToolName = !string.IsNullOrWhiteSpace(toolName) ? ValidateString(toolName, 100) : ReadOptionalString(root, "tool_name", 100);
+            var selectedToolCallId = toolCallId is null ? null : ValidateString(toolCallId, 200);
+
+            var node = new JsonObject
+            {
+                ["kind"] = "contract_awards",
+                ["schema_version"] = "1.0",
+                ["status"] = status,
+                ["generated_at"] = ReadDateTime(root, "generated_at"),
+                ["items"] = new JsonArray(normalizedItems.Cast<JsonNode?>().ToArray()),
+                ["meta"] = new JsonObject
+                {
+                    ["returned_count"] = normalizedItems.Count,
+                    ["truncated"] = truncated.GetBoolean(),
+                    ["partial_errors"] = partialErrors,
+                },
+                ["tool_call_id"] = selectedToolCallId,
+            };
+            if (selectedToolName is not null) node["tool_name"] = selectedToolName;
+            var finalJson = node.ToJsonString();
+            if (System.Text.Encoding.UTF8.GetByteCount(finalJson) > MaxBytes) return null;
+            using var finalDoc = JsonDocument.Parse(finalJson);
+            return finalDoc.RootElement.Clone();
+        }
+        catch (Exception error) when (error is JsonException or FormatException or InvalidOperationException or OverflowException)
+        {
+            return null;
+        }
+    }
+
+    private static JsonObject NormalizeContractAwardItem(JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.Object) throw new FormatException("item must be an object");
+        var source = ReadObject(item, "source");
+        if (ReadString(source, "name", 100) != "USASpending.gov") throw new FormatException("invalid contract award source");
+
+        return new JsonObject
+        {
+            ["award_id"] = ReadString(item, "award_id", 200),
+            ["recipient_name"] = ReadString(item, "recipient_name", 500),
+            ["award_amount_usd"] = ReadNumberNode(item, "award_amount_usd"),
+            ["awarding_agency"] = ReadString(item, "awarding_agency", 500),
+            ["awarding_sub_agency"] = ReadString(item, "awarding_sub_agency", 500),
+            ["description"] = ReadString(item, "description", 1000),
+            ["place_of_performance"] = ReadString(item, "place_of_performance", 200),
+            ["start_date"] = ReadDateOrDateTime(item, "start_date"),
+            ["end_date"] = ReadDateOrDateTime(item, "end_date"),
+            ["naics_description"] = ReadString(item, "naics_description", 300),
+            ["contract_type"] = ReadString(item, "contract_type", 100),
+            ["usaspending_permalink"] = ReadSanitizedUrl(item, "usaspending_permalink"),
+            ["source"] = new JsonObject { ["name"] = "USASpending.gov", ["retrieved_at"] = ReadDateTime(source, "retrieved_at") },
+        };
+    }
+
+    private static JsonArray NormalizeContractAwardErrors(JsonElement meta)
+    {
+        if (!meta.TryGetProperty("partial_errors", out var errors) || errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() > 2)
+            throw new FormatException("invalid partial errors");
+        var result = new JsonArray();
+        foreach (var error in errors.EnumerateArray())
+        {
+            if (error.ValueKind != JsonValueKind.Object) throw new FormatException("invalid partial error");
+            if (!error.TryGetProperty("retriable", out var retriable) || retriable.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw new FormatException("invalid partial error");
+            result.Add(new JsonObject { ["code"] = ReadString(error, "code", 100), ["retriable"] = retriable.GetBoolean() });
+        }
+        return result;
     }
 
     private static JsonObject NormalizeItem(JsonElement item)

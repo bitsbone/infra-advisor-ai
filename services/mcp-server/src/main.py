@@ -361,7 +361,7 @@ async def get_contract_awards(
     date_to: str | None = None,
     min_award_usd: int | None = None,
     limit: int = 25,
-) -> list | dict:
+) -> dict:
     """USASpending.gov — HISTORICAL federal contract awards.
 
     Who won similar work, at what price, and for which agencies.

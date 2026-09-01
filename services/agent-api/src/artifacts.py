@@ -205,6 +205,87 @@ def _normalize_item(value: Any) -> dict[str, Any]:
     }
 
 
+_CONTRACT_AWARD_STATUSES = {"ok", "empty", "error"}
+
+
+def _normalize_contract_award_item(value: Any) -> dict[str, Any]:
+    item = _object(value)
+    source = _object(item.get("source"))
+    if _string(source.get("name"), 100) != "USASpending.gov":
+        raise ValueError("invalid contract award source")
+    return {
+        "award_id": _string(item.get("award_id"), 200),
+        "recipient_name": _string(item.get("recipient_name"), 500),
+        "award_amount_usd": _number(item.get("award_amount_usd")),
+        "awarding_agency": _string(item.get("awarding_agency"), 500),
+        "awarding_sub_agency": _string(item.get("awarding_sub_agency"), 500),
+        "description": _string(item.get("description"), 1000),
+        "place_of_performance": _string(item.get("place_of_performance"), 200),
+        "start_date": _date_or_datetime(item.get("start_date")),
+        "end_date": _date_or_datetime(item.get("end_date")),
+        "naics_description": _string(item.get("naics_description"), 300),
+        "contract_type": _string(item.get("contract_type"), 100),
+        "usaspending_permalink": _safe_url(item.get("usaspending_permalink")),
+        "source": {"name": "USASpending.gov", "retrieved_at": _datetime(source.get("retrieved_at"))},
+    }
+
+
+def _normalize_contract_awards_artifact(candidate: dict[str, Any], tool_name: str | None, tool_call_id: str | None) -> dict[str, Any]:
+    status = _string(candidate.get("status"), 20)
+    if status not in _CONTRACT_AWARD_STATUSES:
+        raise ValueError("invalid status")
+    raw_items = candidate.get("items")
+    if not isinstance(raw_items, list) or len(raw_items) > _MAX_ITEMS:
+        raise ValueError("invalid items")
+    items = [_normalize_contract_award_item(item) for item in raw_items]
+
+    # Dedup by award_id, first-seen-wins — defensive backstop even though the
+    # tool itself now dedups too; nothing upstream guarantees uniqueness.
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        award_id = item["award_id"]
+        if award_id and award_id in seen:
+            continue
+        if award_id:
+            seen.add(award_id)
+        deduped.append(item)
+    items = deduped
+
+    meta = _object(candidate.get("meta"))
+    truncated = meta.get("truncated")
+    if not isinstance(truncated, bool):
+        raise ValueError("invalid truncated flag")
+    raw_errors = meta.get("partial_errors")
+    if not isinstance(raw_errors, list) or len(raw_errors) > 2:
+        raise ValueError("invalid partial errors")
+    partial_errors = []
+    for raw_error in raw_errors:
+        error = _object(raw_error)
+        retriable = error.get("retriable")
+        if not isinstance(retriable, bool):
+            raise ValueError("invalid partial error")
+        partial_errors.append({"code": _string(error.get("code"), 100), "retriable": retriable})
+
+    selected_tool_name = tool_name or candidate.get("tool_name")
+    if selected_tool_name is not None:
+        selected_tool_name = _string(selected_tool_name, 100)
+    if tool_call_id is not None:
+        tool_call_id = _string(tool_call_id, 200)
+    artifact: dict[str, Any] = {
+        "kind": "contract_awards",
+        "schema_version": "1.0",
+        "status": status,
+        "generated_at": _datetime(candidate.get("generated_at")),
+        "items": items,
+        "meta": {"returned_count": len(items), "truncated": truncated, "partial_errors": partial_errors},
+    }
+    if selected_tool_name is not None:
+        artifact["tool_name"] = selected_tool_name
+    artifact["tool_call_id"] = tool_call_id
+    return artifact
+
+
 def _normalize_artifact(candidate: dict[str, Any], tool_name: str | None, tool_call_id: str | None) -> dict[str, Any]:
     if candidate.get("kind") != "procurement_opportunities" or candidate.get("schema_version") != "1.0":
         raise ValueError("unsupported artifact")
@@ -279,8 +360,15 @@ def extract_chat_artifact(content: Any, tool_name: str | None = None, tool_call_
                 continue
         if not isinstance(candidate, dict):
             continue
+        kind = candidate.get("kind")
+        if kind == "procurement_opportunities" and candidate.get("schema_version") == "1.0":
+            normalizer = _normalize_artifact
+        elif kind == "contract_awards" and candidate.get("schema_version") == "1.0":
+            normalizer = _normalize_contract_awards_artifact
+        else:
+            continue
         try:
-            artifact = _normalize_artifact(candidate, tool_name, tool_call_id)
+            artifact = normalizer(candidate, tool_name, tool_call_id)
         except (TypeError, ValueError):
             continue
         if len(json.dumps(artifact, separators=(",", ":")).encode("utf-8")) <= _MAX_BYTES:
@@ -294,8 +382,11 @@ def extract_chat_artifact_source_urls(content: Any) -> list[str]:
     if not artifact:
         return []
     sources: list[str] = []
-    for opportunity in artifact["items"]:
-        url = opportunity["source"]["url"]
+    for item in artifact["items"]:
+        if artifact["kind"] == "contract_awards":
+            url = item.get("usaspending_permalink")
+        else:
+            url = item.get("source", {}).get("url")
         if url and url not in sources:
             sources.append(url)
     return sources

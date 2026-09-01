@@ -107,16 +107,20 @@ async def test_successful_award_results():
         inp = ContractAwardsInput(query="bridge rehabilitation Texas")
         result = await get_contract_awards(inp)
 
-    assert isinstance(result, list), "Expected a list of award dicts"
-    assert len(result) == 2
+    assert result["kind"] == "contract_awards"
+    assert result["schema_version"] == "1.0"
+    assert result["status"] == "ok"
+    items = result["items"]
+    assert len(items) == 2
+    assert result["meta"]["returned_count"] == 2
 
-    first = result[0]
+    first = items[0]
     assert first["recipient_name"] == "BRIDGE CORP"
     assert first["award_amount_usd"] == 5_000_000.0
     assert first["_source"] == "USASpending.gov"
     assert "CONT_AWD_001" in first["usaspending_permalink"]
 
-    second = result[1]
+    second = items[1]
     assert second["recipient_name"] == "ROAD BUILDERS INC"
     assert second["award_amount_usd"] == 2_000_000.0
     assert second["_source"] == "USASpending.gov"
@@ -144,8 +148,8 @@ async def test_geography_filter_narrows_results():
         inp = ContractAwardsInput(query="highway construction", geography="TX")
         result = await get_contract_awards(inp)
 
-    assert isinstance(result, list)
-    assert len(result) == 2
+    assert result["status"] == "ok"
+    assert len(result["items"]) == 2
 
     # Verify the request body included the geography filter
     locations = captured_request_body["filters"]["place_of_performance_locations"]
@@ -165,10 +169,13 @@ async def test_api_error_returns_structured_error():
         inp = ContractAwardsInput(query="water infrastructure")
         result = await get_contract_awards(inp)
 
-    assert isinstance(result, dict), "Error response must be a dict"
-    assert "error" in result, "Error dict must contain 'error' key"
-    assert "USASpending API error: HTTP 500" in result["error"]
-    assert result["retriable"] is True
+    assert result["kind"] == "contract_awards"
+    assert result["status"] == "error"
+    assert result["items"] == []
+    errors = result["meta"]["partial_errors"]
+    assert len(errors) == 1
+    assert errors[0]["code"] == "http_500"
+    assert errors[0]["retriable"] is True
 
 
 async def test_api_error_logs_response_body_for_debugging():
@@ -206,3 +213,29 @@ async def test_contract_award_logs_exclude_query_and_provider_body(caplog):
     assert query not in logged
     assert "PRIVATE-GEOGRAPHY" not in logged
     assert provider_body not in logged
+
+
+async def test_duplicate_award_ids_are_deduped_first_seen_wins():
+    """USASpending pagination/plumbing can surface the same award_id twice.
+    The artifact envelope must keep only the first occurrence."""
+    awards = [
+        _make_award(award_id="CONT_AWD_DUP", recipient_name="FIRST SEEN CORP"),
+        _make_award(award_id="CONT_AWD_DUP", recipient_name="SECOND SEEN CORP"),
+        _make_award(award_id="CONT_AWD_UNIQUE", recipient_name="UNIQUE CORP"),
+    ]
+
+    with respx.mock as mock:
+        mock.post(USASPENDING_URL).mock(
+            return_value=Response(200, json=_usaspending_response(awards))
+        )
+
+        inp = ContractAwardsInput(query="bridge rehabilitation Texas")
+        result = await get_contract_awards(inp)
+
+    items = result["items"]
+    assert len(items) == 2
+    assert result["meta"]["returned_count"] == 2
+    award_ids = [item["award_id"] for item in items]
+    assert award_ids.count("CONT_AWD_DUP") == 1
+    dup_item = next(item for item in items if item["award_id"] == "CONT_AWD_DUP")
+    assert dup_item["recipient_name"] == "FIRST SEEN CORP"

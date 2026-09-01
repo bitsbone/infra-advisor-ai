@@ -354,6 +354,7 @@ builder.Services.AddSingleton<IResponseEvaluator, ToolRoutingAccuracyEvaluator>(
 // per-eval cost is one extra inference call on each sampled trace.
 builder.Services.AddSingleton<IResponseEvaluator, MeaiRelevanceEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, MeaiGroundednessEvaluator>();
+builder.Services.AddSingleton<IContractAwardsEventPublisher, ContractAwardsEventPublisher>();
 builder.Services.AddSingleton<AgentService>();
 builder.Services.AddSingleton<SuggestionService>();
 builder.Services.AddSingleton<ConversationService>();
