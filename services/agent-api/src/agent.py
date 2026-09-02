@@ -589,7 +589,12 @@ async def run_agent(
     llm = build_llm(deployment)
     all_tools = await mcp_client.get_tools()
 
-    with LLMObs.workflow("query-processing", session_id=session_id) as workflow_span:
+    # LLMObs session grouping should key off the real Datadog RUM session
+    # (enables LLMObs <-> RUM correlation) when the client sent one — session_id
+    # here is a tenant-scoped Redis memory key (user_id + conversation_id), not
+    # a RUM session, and the two only coincide by accident for the web client.
+    llmobs_session_id = rum_session_id or session_id
+    with LLMObs.workflow("query-processing", session_id=llmobs_session_id) as workflow_span:
         # Cascade both modalities to plain text — nested inside the workflow
         # span so transcribe-audio/describe-image show up as its children in
         # the trace, matching load-history/extract-sources. See
@@ -819,8 +824,11 @@ async def run_agent_stream(
     has_audio = bool(attachments) and any(a.get("kind") == "audio" for a in attachments)
     has_image = bool(attachments) and any(a.get("kind") == "image" for a in attachments)
 
+    # See run_agent for why this prefers the real RUM session over the
+    # tenant-scoped Redis memory key.
+    llmobs_session_id = rum_session_id or session_id
     try:
-        with LLMObs.workflow("query-processing", session_id=session_id) as workflow_span:
+        with LLMObs.workflow("query-processing", session_id=llmobs_session_id) as workflow_span:
             # Nested inside the workflow span so transcribe-audio/describe-image
             # show up as its children in the trace, matching
             # load-history/extract-sources.

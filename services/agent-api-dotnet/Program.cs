@@ -184,13 +184,54 @@ builder.Services.AddSingleton(sp => new McpClientHolder(
 // .UseOpenTelemetry()  emits chat spans on the "Experimental.Microsoft.Extensions.AI"
 // ActivitySource (registered in TelemetrySetup.cs).
 builder.Services.AddSingleton<IChatClient>(sp =>
-    sp.GetRequiredService<AzureOpenAIClient>()
+{
+    var mcpClientHolder = sp.GetRequiredService<McpClientHolder>();
+    var toolDiagnosticsLogger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("ToolInvocationDiagnostics");
+
+    return sp.GetRequiredService<AzureOpenAIClient>()
         .GetChatClient(azureDeployment)
         .AsIChatClient()
         .AsBuilder()
-        .UseFunctionInvocation()
+        .UseFunctionInvocation(configure: fic =>
+        {
+            // Diagnostic wrapper around every MCP tool call — investigating a
+            // recurring near-instant TaskCanceledException on execute_tool
+            // (Datadog Error Tracking issue 1d5322a6-5065-11f1-91de-da7ad0900003),
+            // seen specifically from MAUI clients. The bare framework exception
+            // carries no app context, so this tags the SAME execute_tool
+            // Activity the framework already creates (Activity.Current here is
+            // that exact span — FunctionInvokingChatClient starts it before
+            // invoking this delegate) and logs a structured line distinct from
+            // the generic HTTP request logs.
+            fic.FunctionInvoker = async (context, ct) =>
+            {
+                var toolName = context.Function.Name;
+                var ctAlreadyCancelled = ct.IsCancellationRequested;
+                var mcpGeneration = mcpClientHolder.Generation;
+                var sw = Stopwatch.StartNew();
+
+                Activity.Current?.SetTag("tool.ct_already_cancelled", ctAlreadyCancelled);
+                Activity.Current?.SetTag("tool.mcp_generation", mcpGeneration);
+
+                try
+                {
+                    var result = await context.Function.InvokeAsync(context.Arguments, ct);
+                    Activity.Current?.SetTag("tool.elapsed_ms", sw.Elapsed.TotalMilliseconds);
+                    return result;
+                }
+                catch (Exception ex)
+                {
+                    Activity.Current?.SetTag("tool.elapsed_ms", sw.Elapsed.TotalMilliseconds);
+                    toolDiagnosticsLogger.LogWarning(ex,
+                        "Tool call failed tool={ToolName} elapsed_ms={ElapsedMs} ct_already_cancelled={CtAlreadyCancelled} mcp_generation={McpGeneration}",
+                        toolName, sw.Elapsed.TotalMilliseconds, ctAlreadyCancelled, mcpGeneration);
+                    throw; // preserve existing framework + ClassifyStreamError behavior
+                }
+            };
+        })
         .UseOpenTelemetry(configure: cfg => cfg.EnableSensitiveData = TelemetryPrivacy.EnableSensitiveData)
-        .Build());
+        .Build();
+});
 
 // ── IEmbeddingGenerator pipeline (M.E.AI) ─────────────────────────────────────
 // Azure OpenAI embedding deployment behind the M.E.AI provider-neutral
@@ -529,6 +570,7 @@ app.MapPost("/query", async (
     AppState state) =>
 {
     var headerSessionId = httpContext.Request.Headers["X-Session-ID"].FirstOrDefault();
+    var rumSessionId = httpContext.Request.Headers["X-DD-RUM-Session-ID"].FirstOrDefault();
     var conversationId = httpContext.Request.Headers["X-Conversation-ID"].FirstOrDefault();
     var userId = SubClaim(httpContext);
     if (userId is null) return Results.Unauthorized();
@@ -573,6 +615,7 @@ app.MapPost("/query", async (
             sessionId: agentSessionKey,
             deployment: deployment,
             attachments: attachments,
+            rumSessionId: rumSessionId,
             ct: httpContext.RequestAborted);
     }
     catch (Exception ex)
@@ -633,6 +676,7 @@ app.MapPost("/query/stream", async (
     AppState state) =>
 {
     var headerSessionId = httpContext.Request.Headers["X-Session-ID"].FirstOrDefault();
+    var rumSessionId = httpContext.Request.Headers["X-DD-RUM-Session-ID"].FirstOrDefault();
     var conversationId = httpContext.Request.Headers["X-Conversation-ID"].FirstOrDefault();
     var userId = SubClaim(httpContext);
     if (userId is null) return Results.Unauthorized();
@@ -708,6 +752,7 @@ app.MapPost("/query/stream", async (
             query: body.Query,
             sessionId: agentSessionKey,
             deployment: deployment,
+            rumSessionId: rumSessionId,
             attachments: attachments,
             ct: httpContext.RequestAborted))
         {

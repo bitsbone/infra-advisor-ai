@@ -110,9 +110,14 @@ public class AgentService
         string sessionId,
         string deployment,
         List<AttachmentDto>? attachments = null,
+        string? rumSessionId = null,
         CancellationToken ct = default)
     {
-        AmbientSessionContext.Set(sessionId);
+        // gen_ai.conversation.id should key off the real Datadog RUM session
+        // (enables LLM Obs <-> RUM correlation) when the client sent one —
+        // sessionId here is TenantSessionKey (user_id + conversation_id), not
+        // a RUM session id.
+        AmbientSessionContext.Set(rumSessionId ?? sessionId);
 
         // 0. AI Guard pre-flight check on the raw user query. Runs before
         //    anything else touches the LLM/tool loop — see DatadogAiGuardClient
@@ -508,9 +513,12 @@ public class AgentService
         string sessionId,
         string deployment,
         List<AttachmentDto>? attachments = null,
+        string? rumSessionId = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
-        AmbientSessionContext.Set(sessionId);
+        // See RunAgentAsync for why this prefers the real RUM session over
+        // the tenant-scoped sessionId.
+        AmbientSessionContext.Set(rumSessionId ?? sessionId);
 
         _logger.LogDebug(
             "[stream] starting; ct already cancelled: {AlreadyCancelled}",
