@@ -2,10 +2,11 @@ import ddtrace.auto  # must be first import — monkey-patches httpx, openai, re
 
 import logging
 import os
-from typing import Literal
+from typing import Annotated, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -353,7 +354,16 @@ async def get_procurement_opportunities(
 
 @mcp.tool()
 async def get_contract_awards(
-    query: str,
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                "Natural-language search query, e.g. 'bridge rehabilitation', "
+                "'water treatment plant', 'highway expansion'. Drives "
+                "recipient/description keyword match."
+            )
+        ),
+    ],
     geography: str | None = None,
     naics_codes: list[str] | None = None,
     agency_names: list[str] | None = None,

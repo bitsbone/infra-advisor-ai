@@ -7,6 +7,7 @@ or network access are required (USASpending.gov is a public API — no auth need
 import logging
 import os
 import sys
+from typing import get_args, get_type_hints
 
 # ---------------------------------------------------------------------------
 # Environment setup — must happen before any ddtrace imports
@@ -31,6 +32,7 @@ from tools.contract_awards import (
     USASPENDING_URL,
     get_contract_awards,
 )
+from main import get_contract_awards as mcp_get_contract_awards
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +90,19 @@ def _usaspending_response(awards: list) -> dict:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+def test_mcp_query_parameter_has_search_guidance():
+    """The exposed MCP schema must tell the model what the required query means."""
+    query_annotation = get_type_hints(mcp_get_contract_awards, include_extras=True)["query"]
+    metadata = get_args(query_annotation)[1:]
+
+    field = next((item for item in metadata if hasattr(item, "description")), None)
+    assert field is not None
+    assert field.description == (
+        "Natural-language search query, e.g. 'bridge rehabilitation', "
+        "'water treatment plant', 'highway expansion'. Drives recipient/description keyword match."
+    )
 
 
 async def test_successful_award_results():
