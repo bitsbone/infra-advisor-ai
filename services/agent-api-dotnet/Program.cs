@@ -329,7 +329,21 @@ var promptManagementClient = new DatadogPromptManagementClient(
 var promptVersionFlags = new PromptVersionFlags(NullLogger<PromptVersionFlags>.Instance);
 var promptHolder = new PromptHolder(
     promptManagementClient, promptVersionFlags, AgentSystemPrompt, NullLogger<PromptHolder>.Instance);
-await promptHolder.RefreshAsync(CancellationToken.None); // warm the first resolution before serving traffic
+// Bounded startup-time warm-up: must never block app startup past this
+// deadline regardless of what hangs inside (Feature Flags provider init,
+// registry HTTP call, DNS). PromptHolder's own fallback still applies —
+// the background refresh (PromptRefreshBackgroundService) retries after.
+using (var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+{
+    try
+    {
+        await promptHolder.RefreshAsync(startupCts.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        Console.WriteLine("[prompt-management] initial warm-up did not complete within 5s — using fallback until the periodic refresh succeeds.");
+    }
+}
 
 builder.Services.AddSingleton(promptHolder);
 builder.Services.AddHostedService<PromptRefreshBackgroundService>();

@@ -284,36 +284,69 @@ jobs:
 
       - name: Wait for rollouts
         # Each wait_rollout blocks on `kubectl rollout status` for up to 10m.
-        # Previously these ran one after another, so N changed services cost
-        # up to N*10m in the worst case even though the rollouts themselves
-        # happen concurrently on the cluster. Backgrounding them makes the
-        # step's wall-clock cost the SLOWEST single rollout, not the sum —
-        # `wait_rollout` already turns a timeout into a warning rather than a
-        # failure, so running them in parallel doesn't change pass/fail
-        # semantics, only how long we wait to observe the outcome.
+        # Running them in the background makes the step's wall-clock cost the
+        # SLOWEST single rollout, not the sum, since the rollouts themselves
+        # happen concurrently on the cluster anyway.
+        #
+        # A previous version of this step turned a timed-out rollout into a
+        # warning rather than a failure — every wait_rollout ran with `|| true`,
+        # so the job reported green even when a deployment was genuinely
+        # crash-looping (2026-09-04 incident: agent-api-dotnet shipped a
+        # startup-blocking bug, timed out here after 10m, and this step still
+        # exited 0 — nobody was notified until it was caught manually). Now:
+        # a timeout automatically rolls the deployment back to its previous
+        # revision (never leave a bad image serving/crash-looping unattended)
+        # and fails this step for real, so the run shows red and a person is
+        # notified — instead of a silent warning line in a log nobody was
+        # watching. Per-service results also go to $GITHUB_STEP_SUMMARY so
+        # each deployment's outcome is independently visible in the run's
+        # Summary tab without reading interleaved background-job logs.
         run: |
+          echo "| Deployment | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+
           wait_rollout() {
             local dep="$1"
-            if kubectl get deployment/"$dep" -n infra-advisor &>/dev/null; then
-              if kubectl rollout status deployment/"$dep" -n infra-advisor --timeout=10m; then
-                echo "OK: $dep rollout finished"
-              else
-                echo "WARNING: $dep rollout timed out — pod may still be starting in cluster"
-              fi
+            local resultfile="$2"
+            if ! kubectl get deployment/"$dep" -n infra-advisor &>/dev/null; then
+              echo "skipped (no such deployment)" > "$resultfile"
+              return 0
+            fi
+            if kubectl rollout status deployment/"$dep" -n infra-advisor --timeout=10m; then
+              echo "OK: $dep rollout finished"
+              echo "ok" > "$resultfile"
+            else
+              echo "::error::$dep rollout exceeded its progress deadline — rolling back to the previous revision"
+              kubectl rollout undo deployment/"$dep" -n infra-advisor
+              kubectl rollout status deployment/"$dep" -n infra-advisor --timeout=5m \
+                && echo "::warning::$dep rolled back successfully — the new image never went live; check its startup logs before re-deploying" \
+                || echo "::error::$dep rollback ALSO failed to stabilize — needs manual investigation now"
+              echo "FAILED (auto-rolled-back)" > "$resultfile"
             fi
           }
 
+          tmpdir="$(mktemp -d)"
           pids=()
-          [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]        && { wait_rollout mcp-server        & pids+=($!); }
-          [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ] && { wait_rollout mcp-server-dotnet & pids+=($!); }
-          [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && { wait_rollout agent-api          & pids+=($!); }
-          [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && { wait_rollout agent-api-dotnet   & pids+=($!); }
-          [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && { wait_rollout auth-api           & pids+=($!); }
-          [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && { wait_rollout ui                 & pids+=($!); }
+          deps=()
+          [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]        && { wait_rollout mcp-server        "$tmpdir/mcp-server"        & pids+=($!); deps+=(mcp-server); }
+          [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ] && { wait_rollout mcp-server-dotnet "$tmpdir/mcp-server-dotnet" & pids+=($!); deps+=(mcp-server-dotnet); }
+          [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && { wait_rollout agent-api          "$tmpdir/agent-api"          & pids+=($!); deps+=(agent-api); }
+          [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && { wait_rollout agent-api-dotnet   "$tmpdir/agent-api-dotnet"   & pids+=($!); deps+=(agent-api-dotnet); }
+          [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && { wait_rollout auth-api           "$tmpdir/auth-api"           & pids+=($!); deps+=(auth-api); }
+          [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && { wait_rollout ui                 "$tmpdir/ui"                 & pids+=($!); deps+=(ui); }
 
           for pid in "${pids[@]:-}"; do
             wait "$pid" || true
           done
+
+          any_failed=0
+          for dep in "${deps[@]:-}"; do
+            result="$(cat "$tmpdir/$dep" 2>/dev/null || echo "unknown (no result written)")"
+            echo "| $dep | $result |" >> "$GITHUB_STEP_SUMMARY"
+            [[ "$result" == FAILED* ]] && any_failed=1
+          done
+
+          [ "$any_failed" -eq 0 ] || exit 1
 
   # ── ACA agentic POC deploy (Azure Container Apps, not AKS) ─────────────────
   deploy-aca:
