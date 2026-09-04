@@ -315,27 +315,33 @@ const string AgentSystemPrompt =
     "Use \"generation\" for raw MWh, \"capacity\" for installed MW.)";
 
 // ── Prompt management: fetch system prompt from DD's Prompt Registry ───────
-// One-shot startup fetch (AgentSystemPrompt is loaded once per process, not
-// per-request) with fail-open fallback to the hardcoded constant above. This
-// runs before builder.Build(), so DatadogPromptManagementClient is
-// constructed directly here rather than resolved from DI — see the class's
-// header comment for the exact registry endpoint/response shape.
+// PromptHolder refreshes periodically (PromptRefreshBackgroundService, ~60s)
+// so a version bump in the Datadog UI — including one pinned via a
+// prompt-version.* Feature Flag (PromptVersionFlags) — reaches a running
+// pod without a redeploy. Both are constructed directly here (not resolved
+// from DI) so the ActivityListener below can read PromptHolder's live state
+// before builder.Build() runs; PromptHolder is then registered as the
+// shared DI singleton so AgentHolder, the background refresh, and
+// GET /prompts/status all see the same instance.
 using var promptBootstrapHttp = new HttpClient();
 var promptManagementClient = new DatadogPromptManagementClient(
     promptBootstrapHttp, NullLogger<DatadogPromptManagementClient>.Instance);
-var promptFetch = await promptManagementClient.GetPromptTemplateAsync(
-    "infra-advisor-system-prompt", fallback: AgentSystemPrompt);
-var EffectiveSystemPrompt = promptFetch.Template;
+var promptVersionFlags = new PromptVersionFlags(NullLogger<PromptVersionFlags>.Instance);
+var promptHolder = new PromptHolder(
+    promptManagementClient, promptVersionFlags, AgentSystemPrompt, NullLogger<PromptHolder>.Instance);
+await promptHolder.RefreshAsync(CancellationToken.None); // warm the first resolution before serving traffic
+
+builder.Services.AddSingleton(promptHolder);
+builder.Services.AddHostedService<PromptRefreshBackgroundService>();
 
 // AgentHolder builds (and rebuilds) the ChatClientAgent against the current
-// McpClientHolder tool list. ChatClientAgent's ChatOptions.Tools is captured
-// at construction, so the agent must be rebuilt after each MCP reconnect to
-// pick up the fresh AITool instances. Holder caches against
-// McpClientHolder.Generation — one rebuild per reconnect, not per request.
+// McpClientHolder tool list and PromptHolder's current prompt. Both holders'
+// Generation are tracked so the agent rebuilds once per change, not per
+// request — see AgentHolder.
 builder.Services.AddSingleton(sp => new AgentHolder(
     chatClient:     sp.GetRequiredService<IChatClient>(),
     mcpHolder:      sp.GetRequiredService<McpClientHolder>(),
-    systemPrompt:   EffectiveSystemPrompt,
+    promptHolder:   sp.GetRequiredService<PromptHolder>(),
     agentName:      "infra-advisor",
     otelSourceName: TelemetrySetup.ActivitySourceName));
 
@@ -357,16 +363,10 @@ static string ShortContentHash(string text)
     return Convert.ToHexString(bytes).Substring(0, 8).ToLowerInvariant();
 }
 
-var promptVersion = promptFetch.Source == "registry"
-    ? $"registry-{promptFetch.Version}"
-    : "v1-" + ShortContentHash(EffectiveSystemPrompt);
-var promptTrackingJson = JsonSerializer.Serialize(new
-{
-    id = "infra-advisor-system-prompt",
-    version = promptVersion,
-    template = EffectiveSystemPrompt,
-    source = promptFetch.Source,
-});
+// Reads PromptHolder.Current fresh on every activity rather than closing
+// over a startup-time snapshot — required now that PromptHolder refreshes
+// periodically; otherwise span tagging would go stale the moment a
+// background refresh picked up a new version.
 ActivitySource.AddActivityListener(new ActivityListener
 {
     ShouldListenTo = source =>
@@ -376,8 +376,19 @@ ActivitySource.AddActivityListener(new ActivityListener
     {
         if (activity.OperationName is "invoke_agent" or "chat")
         {
+            var current = promptHolder.Current;
             // A content hash preserves prompt-version correlation without
             // copying the system prompt into exported span attributes.
+            var promptVersion = current.Source is "registry" or "flag-pinned"
+                ? $"{current.Source}-{current.Version}"
+                : "v1-" + ShortContentHash(current.Template);
+            var promptTrackingJson = JsonSerializer.Serialize(new
+            {
+                id = PromptHolder.PromptId,
+                version = promptVersion,
+                template = current.Template,
+                source = current.Source,
+            });
             activity.SetTag("prompt.version", promptVersion);
             activity.SetTag("_dd.ml_obs.prompt_tracking", promptTrackingJson);
         }
@@ -393,8 +404,8 @@ ActivitySource.AddActivityListener(new ActivityListener
     },
     Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
 });
-Console.WriteLine($"[prompt-management] system prompt source={promptFetch.Source} " +
-                  $"version={promptVersion} ({EffectiveSystemPrompt.Length} chars)");
+Console.WriteLine($"[prompt-management] system prompt source={promptHolder.Current.Source} " +
+                  $"version={promptHolder.Current.Version} ({promptHolder.Current.Template.Length} chars)");
 
 // ── Business metrics meter ────────────────────────────────────────────────────
 // Shared meter for endpoint-level counters (conversation + tool counters
@@ -997,6 +1008,27 @@ app.MapPost("/tools/{name}", async (
         });
     }
 }).RequireAuthorization();
+
+// ── /prompts/status — read-only diagnostics for the admin UI ──────────────────
+// Mirrors agent-api's GET /admin/prompts/status shape ({prompt_id, backend,
+// version, source, flag_value}) so the UI's prompt-versions panel can render
+// both backends' rows in one table. Read-only — see PromptHolder.
+app.MapGet("/prompts/status", async (PromptHolder holder, PromptVersionFlags flags) =>
+{
+    var current = holder.Current;
+    var flagValue = await flags.ResolveVersionAsync(PromptHolder.PromptId);
+    return Results.Ok(new[]
+    {
+        new
+        {
+            prompt_id = PromptHolder.PromptId,
+            backend = "dotnet",
+            version = current.Version,
+            source = current.Source,
+            flag_value = flagValue,
+        },
+    });
+});
 
 // ── /eval/status — read-only diagnostics for the admin UI ─────────────────────
 // Exposes the running eval pipeline state so admins can answer: "is the eval

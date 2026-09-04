@@ -5,35 +5,38 @@ using InfraAdvisor.AgentApi.Observability;
 namespace InfraAdvisor.AgentApi.Services;
 
 // Holds the current ChatClientAgent instance + rebuilds it when the
-// underlying MCP tool list changes (after an McpClientHolder.RefreshAsync).
+// underlying MCP tool list changes (after an McpClientHolder.RefreshAsync)
+// or the effective system prompt changes (after a PromptHolder refresh —
+// see PromptRefreshBackgroundService).
 //
 // Why a holder instead of a plain DI singleton: ChatClientAgent's
-// ChatOptions.Tools list is captured at construction. To pick up a
-// refreshed tool list after an MCP reconnect we must rebuild the agent.
-// Tracking McpClientHolder.Generation lets us rebuild lazily — once per
-// reconnect — rather than per request.
+// ChatOptions.Tools/Instructions are captured at construction. To pick up
+// a refreshed tool list or prompt version we must rebuild the agent.
+// Tracking both holders' Generation lets us rebuild lazily — once per
+// change — rather than per request.
 public class AgentHolder
 {
     private readonly IChatClient _chatClient;
     private readonly McpClientHolder _mcpHolder;
-    private readonly string _systemPrompt;
+    private readonly PromptHolder _promptHolder;
     private readonly string _agentName;
     private readonly string _otelSourceName;
     private readonly object _lock = new();
 
     private AIAgent? _agent;
-    private long _builtForGeneration = -1;
+    private long _builtForMcpGeneration = -1;
+    private long _builtForPromptGeneration = -1;
 
     public AgentHolder(
         IChatClient chatClient,
         McpClientHolder mcpHolder,
-        string systemPrompt,
+        PromptHolder promptHolder,
         string agentName,
         string otelSourceName)
     {
         _chatClient = chatClient;
         _mcpHolder = mcpHolder;
-        _systemPrompt = systemPrompt;
+        _promptHolder = promptHolder;
         _agentName = agentName;
         _otelSourceName = otelSourceName;
     }
@@ -41,11 +44,13 @@ public class AgentHolder
     public async Task<AIAgent> GetAgentAsync(CancellationToken ct)
     {
         var tools = await _mcpHolder.GetToolsAsync(ct);
-        var currentGen = _mcpHolder.Generation;
+        var mcpGen = _mcpHolder.Generation;
+        var prompt = await _promptHolder.GetOrRefreshAsync(ct);
+        var promptGen = _promptHolder.Generation;
 
         lock (_lock)
         {
-            if (_agent is not null && _builtForGeneration == currentGen)
+            if (_agent is not null && _builtForMcpGeneration == mcpGen && _builtForPromptGeneration == promptGen)
                 return _agent;
         }
 
@@ -59,7 +64,7 @@ public class AgentHolder
                     Name = _agentName,
                     ChatOptions = new ChatOptions
                     {
-                        Instructions = _systemPrompt,
+                        Instructions = prompt.Template,
                         Tools = tools,
                     },
                 })
@@ -73,10 +78,11 @@ public class AgentHolder
             // Another concurrent caller may have built the same generation
             // already — prefer theirs to avoid orphaning an agent we're
             // about to replace.
-            if (_agent is not null && _builtForGeneration == currentGen)
+            if (_agent is not null && _builtForMcpGeneration == mcpGen && _builtForPromptGeneration == promptGen)
                 return _agent;
             _agent = fresh;
-            _builtForGeneration = currentGen;
+            _builtForMcpGeneration = mcpGen;
+            _builtForPromptGeneration = promptGen;
             return _agent;
         }
     }

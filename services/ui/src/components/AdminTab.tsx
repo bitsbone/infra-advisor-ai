@@ -18,6 +18,7 @@ import { User, createUser, deleteUser, listUsers, patchUser, setUserPassword } f
 import { useAuth } from "../hooks/useAuth";
 import { EvalDiagnostics } from "./EvalDiagnostics";
 import { AiGuardDiagnostics } from "./AiGuardDiagnostics";
+import { PromptDiagnostics } from "./PromptDiagnostics";
 
 // ── Checkbox helper ───────────────────────────────────────────────────────────
 
@@ -484,6 +485,23 @@ export function AdminTab() {
             Snapshot of the .NET agent's AI Guard pre-flight checks. Native Datadog trace visibility isn't available over the HTTP API — this panel plus the manual ai_guard.* APM span tags are the substitute.
           </Text>
           <AiGuardDiagnostics />
+        </Box>
+
+        {/* ── Prompt versions (read-only) ──────────────────────────────────
+            Shows each subagent's currently active prompt version across both
+            backends — Python's router+specialists (tool-partitioned, one
+            prompt_id each) and .NET's single merged agent. A version can be
+            pinned per environment via a prompt-version.<prompt_id> Feature
+            Flag; "flag-pinned" in the Source column reflects that override.
+            See docs/llm-engineering/monitoring/prompt-targeting.mdx. */}
+        <Box>
+          <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={1}>
+            Prompt versions (read-only)
+          </Text>
+          <Text fontSize="xs" color="gray.500" mb={3}>
+            Active prompt version per subagent, across both backends. Deploy a new version by pointing a prompt-version.&lt;prompt_id&gt; Feature Flag at it in Datadog — no redeploy needed.
+          </Text>
+          <PromptDiagnostics />
         </Box>
       </VStack>
 

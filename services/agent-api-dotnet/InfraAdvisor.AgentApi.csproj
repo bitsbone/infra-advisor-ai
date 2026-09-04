@@ -52,6 +52,12 @@
 
     <PackageReference Include="StackExchange.Redis" Version="2.13.1" />
     <PackageReference Include="Confluent.Kafka" Version="2.14.0" />
+
+    <!-- Datadog Feature Flags via OpenFeature — pins a per-prompt registry
+         version (see Services/PromptVersionFlags.cs) so prompt deployment
+         is symmetric with agent-api's ddtrace.openfeature integration. -->
+    <PackageReference Include="Datadog.FeatureFlags.OpenFeature" Version="2.3.0" />
+    <PackageReference Include="OpenFeature" Version="2.3.0" />
     <PackageReference Include="Npgsql" Version="9.0.3" />
     <PackageReference Include="Npgsql.OpenTelemetry" Version="9.0.3" />
 

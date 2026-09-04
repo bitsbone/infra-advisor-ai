@@ -1,0 +1,63 @@
+---
+title: Deploy prompt versions with Feature Flags
+description: Pin a prompt version per environment via Datadog Feature Flags, evaluated identically in both backends via OpenFeature, with zero new correlation plumbing
+docType: concept
+audience:
+  - agent-developer
+  - observability-engineer
+maturity: partial
+verifiedOn: 2026-09-04
+datadogDocs: https://docs.datadoghq.com/llm_observability/configure/prompt_management/
+sidebar:
+  order: 5
+---
+
+import FlowExplorer from '@components/FlowExplorer.jsx';
+import ObservationChecklist from '@components/ObservationChecklist.astro';
+import { promptTargetingFlow } from '../../../../data/prompt-targeting-flow.js';
+
+[Prompt tracking and management](/llm-engineering/monitoring/prompt-tracking/) cover *what* prompt a subagent ran and *where* it came from (the hardcoded fallback, or Datadog's Prompt Registry). This page covers *how a specific version gets chosen*, without a redeploy — the mechanism behind "deploy this new prompt version to dev, but not prod yet."
+
+## Why Feature Flags, not Prompt Management's own targeting tab
+
+Datadog's Prompt Management product has its own environment/targeting-rule mechanism (`env_ids` at prompt-creation time, a `POST .../resolve` endpoint). Reading ddtrace's own implementation (`ddtrace/llmobs/_prompts/manager.py`) shows this already tries a real Feature Flag internally — evaluating `__llmobs__.prompt.<prompt_id>` via an OpenFeature provider — before falling back to the plain HTTP path. That flag key is an **undocumented internal convention**, though, and .NET has no equivalent since it has no native LLM Observability prompt SDK at all.
+
+This project uses one explicitly-named, documented Feature Flag per managed prompt_id instead: **`prompt-version.<prompt_id>`**, an integer flag, evaluated via the plain OpenFeature SDK in both languages. `0` is the "no override" sentinel — the existing default-version/fallback behavior applies unchanged. Any positive value pins that exact registry version. This keeps one configuration surface (Datadog's Feature Flags product) driving both backends identically, entirely within code this project owns.
+
+<FlowExplorer client:visible title="From a subagent request to a correlated trace" flows={promptTargetingFlow} />
+
+## How each backend evaluates the flag
+
+**Python** (`services/agent-api/src/observability/feature_flags.py`): registers `ddtrace.openfeature.DataDogProvider` (a real, separately-installed `openfeature-sdk` dependency — ddtrace's *own* internal reimplementation under `ddtrace.internal.openfeature` is a different, undocumented thing) scoped to its own domain, and exposes `resolve_prompt_version(prompt_id)`. `fetch_prompt()` in `observability/prompts.py` calls it first; a nonzero result pins that version via `LLMObs.get_prompt(prompt_id, version=N, fallback=...)`, bypassing the usual latest/fallback resolution.
+
+**.NET** (`Services/PromptVersionFlags.cs`): registers `Datadog.FeatureFlags.OpenFeature`'s `DatadogProvider` against the standard `OpenFeature.Api` — the first Datadog-branded NuGet dependency in this service (its APM/AAP today comes from the agent-injected profiler, not a NuGet SDK). `DatadogPromptManagementClient.GetPromptTemplateAsync` accepts an optional pinned `version`; when set, it calls `/prompts/{id}/versions/{version}` instead of the static "latest" path.
+
+Both fail open identically: any provider or evaluation error returns `0`, and the existing fallback-template behavior takes over — a Feature Flags outage must never block a prompt from resolving.
+
+### Why .NET now refreshes on a timer, not just at startup
+
+Before this, `agent-api-dotnet` fetched its one system prompt exactly once, at process startup — matching Python's own comment that the prompt is "loaded once per process." That was fine when the only way to change it was redeploying. Pinning a version via a Feature Flag only has value if a running pod can *pick up* a flag change — so `PromptHolder` now refreshes on a ~60s timer (`PromptRefreshBackgroundService`), and `AgentHolder` rebuilds the agent (cheap, already-established pattern via `McpClientHolder.Generation`) whenever the resolved prompt actually changes. Python already re-resolves on every request via `fetch_prompt()`, so this brings .NET to the same effective behavior — a version bump in the UI reaches both backends without a redeploy.
+
+## Correlating to LLM spans needed no new plumbing
+
+This is the part worth stating plainly: the resolved `{id, version, source}` flows into the *exact same* tagging path [prompt tracking](/llm-engineering/monitoring/prompt-tracking/) already documents — Python's `LLMObs.annotation_context(prompt=...)`, .NET's `prompt.version`/`_dd.ml_obs.prompt_tracking` activity tags. Nothing new was built for correlation; a flag-pinned version is just another value flowing through the resolver that already fed those tags. In Datadog, a trace's `prompt.version` reads `flag-pinned-<N>` (or `registry-<N>`/a content hash for the unpinned path) so a dashboard, monitor, or evaluation query grouping by `prompt.version` sees a pinned rollout the same way it sees any other version change.
+
+## Setting a targeting rule
+
+1. In Datadog, create an integer Feature Flag named `prompt-version.<prompt_id>` (e.g. `prompt-version.router`) — one per prompt_id you want to target independently.
+2. Default value `0` (no override) is safe to ship immediately; both backends already handle it as a no-op.
+3. Add a targeting rule matching on the `env` attribute (e.g. `env == "dev"` → `3`) to pin a specific registry version for that environment.
+4. Confirm the change reached a running pod via the admin UI's **Prompt versions** panel (`Chat → Admin → Prompt versions`) — it polls `GET /admin/prompts/status` (Python) and `GET /prompts/status` (.NET) every 10 seconds and shows each subagent's resolved version, source, and whether a flag override is active. This is the fastest way to confirm a change took effect without leaving the app.
+
+## Scope: environment-only, for now
+
+Targeting is scoped to the `env` attribute only — not per-user/canary targeting. Per-user targeting is possible with the same flag mechanism (an additional `EvaluationContext` attribute, matched by a different targeting rule), but for .NET it would mean moving prompt resolution from the periodic-refresh pattern above to a genuinely per-request evaluation, since a specific user's targeting can't be resolved on a fixed timer. That's a larger, not-yet-justified change — this page will be updated if that scope changes.
+
+<ObservationChecklist title="Verify a targeting rule took effect">
+  <ul>
+    <li>The admin UI's Prompt versions panel shows the expected version and a "flag-pinned" source for the targeted prompt_id.</li>
+    <li>A fresh trace's <code>prompt.version</code> tag reads <code>flag-pinned-&lt;N&gt;</code>, matching the pinned version.</li>
+    <li>Reverting the flag to <code>0</code> restores the previous default/fallback behavior without a redeploy.</li>
+    <li>A Feature Flags outage (simulate by clearing <code>DD_APP_KEY</code>/<code>DD_APPLICATION_KEY</code>) still resolves a usable prompt — check for a warning log, not a failed request.</li>
+  </ul>
+</ObservationChecklist>

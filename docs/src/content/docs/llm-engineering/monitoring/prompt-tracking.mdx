@@ -1,24 +1,26 @@
 ---
-title: Track prompt versions without exporting the prompt
-description: Correlate behavior with a content-derived prompt version while preserving the project's content-capture boundary
+title: Track and manage prompts without exporting them
+description: Correlate behavior with a content-derived prompt version, and optionally source prompts from Datadog's Prompt Registry, while preserving the project's content-capture boundary
 docType: concept
 audience:
   - agent-developer
   - observability-engineer
 maturity: partial
-verifiedOn: 2026-08-27
-datadogDocs: https://docs.datadoghq.com/llm_observability/
+verifiedOn: 2026-09-04
+datadogDocs: https://docs.datadoghq.com/llm_observability/configure/prompt_management/
 sidebar:
   order: 4
 ---
 
 import ObservationChecklist from '@components/ObservationChecklist.astro';
 
-When a prompt changes, date ranges are a weak comparison boundary: deployments overlap, rollbacks happen, and unrelated code may ship at the same time. A content-derived version lets traces and evaluations identify the prompt definition that actually ran.
+When a prompt changes, date ranges are a weak comparison boundary: deployments overlap, rollbacks happen, and unrelated code may ship at the same time. A content-derived version lets traces and evaluations identify the prompt definition that actually ran. This project layers two related but distinct capabilities on top of that idea: **prompt tracking** (labeling spans with the prompt that produced them) and **prompt management** (optionally sourcing that prompt from Datadog's Prompt Registry instead of a hardcoded string).
 
-## The privacy-preserving pattern
+## Prompt tracking: the privacy-preserving pattern
 
-InfraAdvisor hashes the system prompt and exports only the version:
+Both backends hash the system prompt and export only the version — never the template itself.
+
+**.NET** (`Program.cs`) stamps a content hash on `invoke_agent`/`chat` OpenTelemetry activities:
 
 ```csharp
 static string ShortContentHash(string text) =>
@@ -32,15 +34,43 @@ if (activity.OperationName is "invoke_agent" or "chat")
     activity.SetTag("prompt.version", promptVersion);
 ```
 
-The value changes when the prompt content changes, but the template itself is not copied into a custom span attribute. This preserves correlation without expanding the telemetry content boundary.
+**Python** (`services/agent-api/src/observability/prompts.py`) uses the same hash convention, exposed via a shared `fetch_prompt(prompt_id, fallback_template)` resolver every prompt call site goes through:
 
-## What is implemented
+```python
+def content_version(text: str) -> str:
+    """Short content-hash version tag — matches agent-api-dotnet's ShortContentHash."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+```
 
-- The .NET backend stamps `prompt.version` on `invoke_agent` and `chat` activities.
-- External evaluation submissions include a prompt-version tag, although that tag currently comes from the `PROMPT_VERSION` environment value rather than the content-derived hash. Aligning those sources remains necessary for exact joins.
-- The Python backend does not yet emit an equivalent content-derived prompt-version tag.
+`fetch_prompt()` returns both the effective template text and an annotation dict (`{"id", "version", "template", "tags": {"source": ...}}`) that gets passed into `LLMObs.annotation_context(prompt=...)`, tagging every LLM span created inside that context — including the auto-instrumented chat completion, not just an explicit span the app created directly.
 
-Because coverage and version sources differ, prompt comparisons across both backends are not yet authoritative.
+The value changes when the prompt content changes, but the template itself is not copied into a custom span attribute (`prompt.version` is a hash, not the text) — this preserves correlation without expanding the telemetry content boundary.
+
+## Prompt management: sourcing prompts from the registry
+
+`DD_PROMPT_MANAGEMENT_ENABLED` (an app config value, **not** a Datadog product toggle) gates whether `fetch_prompt()`/its .NET equivalent actually calls out to [Datadog's Prompt Registry](https://docs.datadoghq.com/llm_observability/configure/prompt_management/) at runtime, versus always using the hardcoded string constant already in the codebase:
+
+- **Disabled** (the default — `"false"` in both `k8s/agent-api/configmap.yaml` and `k8s/agent-api-dotnet/configmap.yaml` today): the hardcoded constant is used directly, tagged with `source: "fallback"`.
+- **Enabled**: Python calls `LLMObs.get_prompt(prompt_id, fallback=fallback_template)`; .NET's `DatadogPromptManagementClient` calls the registry's REST API directly (no native .NET SDK support exists for this yet). Both **fail open** — any registry/network error, including a missing `DD_API_KEY`, falls straight back to the hardcoded constant rather than blocking startup or a request, mirroring this project's `observability/ai_guard.py` fail-open pattern.
+
+This feature is fully built but **not turned on anywhere today** — both backends run entirely on their hardcoded fallback strings in every deployed environment. Turning it on is a configmap change (`DD_PROMPT_MANAGEMENT_ENABLED: "true"`), not a code change.
+
+### The prompt_id inventory — why there are 9, not a duplicated 2
+
+Python and .NET manage **different, non-overlapping sets** of prompt_ids in the registry — this reflects a genuine architecture difference, not the same prompts deployed two ways:
+
+| Backend | prompt_ids | Why |
+|---|---|---|
+| Python (`services/agent-api`) | `router`, `specialist-engineering`, `specialist-water_energy`, `specialist-business_development`, `specialist-document`, `specialist-general`, `describe-image`, `faithfulness-eval` (8 total) | A router + 5-specialist multi-agent design — each specialist gets a *partitioned* tool set (`_TOOL_PARTITIONS`), so each needs its own prompt. `describe-image` and `faithfulness-eval` are two smaller, single-purpose prompts elsewhere in the pipeline. |
+| .NET (`services/agent-api-dotnet`) | `infra-advisor-system-prompt` (1 total) | A single-agent design — one `ChatClientAgent` with every MCP tool available; the model itself decides which tool to call, with no routing/partitioning step. |
+
+Collapsing these into one shared prompt would require also collapsing Python's tool-partitioning logic — a real behavioral change, not just a registry cleanup. Some prose could reasonably be shared as sub-fragments (e.g. the bridge/NBI citation rules both backends state independently), but the *number* of registry entries differing (8 vs 1) is expected.
+
+### Seeding the registry
+
+`services/agent-api/scripts/seed_prompt_registry.py` is a one-time, manually-run script (not part of app startup) that pushes today's hardcoded prompts into the registry as each one's `v1`, so `LLMObs.get_prompt()` has something real to resolve once `DD_PROMPT_MANAGEMENT_ENABLED=true` is turned on. It reads the .NET prompt directly out of `agent-api-dotnet/Program.cs` (rather than requiring a manually-pasted copy, which previously risked drifting from the real constant) and is safe to re-run — an existing prompt_id is skipped, not overwritten.
+
+Once a prompt is in the registry, [deploying a specific version per environment](/llm-engineering/monitoring/prompt-targeting/) — without a redeploy — is a separate, Feature-Flags-driven mechanism covered on its own page.
 
 ## Use the version to answer a bounded question
 
@@ -59,7 +89,8 @@ Do not interpret a correlation as causation without controlling for model, backe
     <li>The value changes after a real prompt edit and remains stable across unrelated deployments.</li>
     <li>Evaluation tags use the same version source as the traced operation.</li>
     <li>No custom attribute exports the full system prompt or user content.</li>
+    <li>If `DD_PROMPT_MANAGEMENT_ENABLED=true` anywhere, the span's prompt `source` reads `registry`, not `fallback`, when the registry fetch is expected to succeed.</li>
   </ul>
 </ObservationChecklist>
 
-The next implementation step is to derive one version value per backend and reuse it for traces, evaluations, dashboards, and experiments.
+External evaluation submissions include a prompt-version tag, although that tag currently comes from a separate `PROMPT_VERSION` environment value on the .NET side rather than the content-derived hash — aligning those two sources remains a known gap for exact joins across evaluation and trace data.

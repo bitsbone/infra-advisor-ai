@@ -41,6 +41,7 @@ from memory import (
     set_session_model,
 )
 from observability.llm_obs import enable_llm_obs, submit_user_feedback
+from observability.prompts import get_last_resolved as get_last_resolved_prompts
 from observability.tracing import current_span_id, current_trace_id
 from tenant import tenant_session_key
 
@@ -1020,6 +1021,14 @@ async def readyz() -> JSONResponse:
     """Readiness from cached startup connectivity; never calls a provider."""
     ready = _mcp_connected and _llm_connected
     return JSONResponse(status_code=200 if ready else 503, content={"status": "ready" if ready else "not_ready", "service": os.environ.get("DD_SERVICE", "infraadvisor-agent-api"), "mcp_connected": _mcp_connected, "llm_connected": _llm_connected})
+
+
+@app.get("/admin/prompts/status")
+async def prompt_status(_user: dict = Depends(require_auth)) -> list[dict]:
+    """Read-only snapshot of each managed prompt's most recent resolution
+    (id, version, source, Feature Flags-pinned version if any) for the admin
+    UI's prompt-versions panel. See observability/prompts.py."""
+    return get_last_resolved_prompts()
 
 
 @app.delete("/session/{session_id}")
