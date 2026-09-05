@@ -155,26 +155,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # docker/metadata-action's `type=sha` (with the default `context:
+      # workflow`) reads github.sha, which under workflow_run is this
+      # workflow FILE's ref, not the tested commit — wrong. `context: git`
+      # reads the actual checked-out commit instead, but requires a proper
+      # ref; checking out a raw SHA (above) always leaves the repo in
+      # detached HEAD, which broke it ("Cannot infer ref from detached
+      # HEAD", live failure 2026-09-05). So: skip metadata-action's SHA
+      # inference entirely and pass our already-correct head_sha directly
+      # as a literal tag instead.
+      - name: Compute short SHA
+        id: sha
+        if: matrix.changed == 'true'
+        run: echo "short=${HEAD_SHA:0:7}" >> "$GITHUB_OUTPUT"
+        env:
+          HEAD_SHA: ${{ needs.changes.outputs.head_sha }}
+
       - name: Extract metadata
         id: meta
         if: matrix.changed == 'true'
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
-          # context: git reads the SHA from the actual checked-out repo
-          # (pinned to head_sha above) rather than the workflow-run event's
-          # own github.sha, which under workflow_run is the wrong commit.
-          context: git
           tags: |
-            type=sha,prefix=
+            type=raw,value=${{ steps.sha.outputs.short }}
             type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Compute short SHA
-        id: sha
-        if: matrix.changed == 'true' && matrix.service == 'ui'
-        run: echo "short=${HEAD_SHA:0:7}" >> "$GITHUB_OUTPUT"
-        env:
-          HEAD_SHA: ${{ needs.changes.outputs.head_sha }}
 
       - name: Collect UI build args
         id: ui-args
