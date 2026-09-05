@@ -64,11 +64,21 @@ jobs:
           ref: ${{ steps.sha.outputs.value }}
           fetch-depth: 2
 
+      # dorny/paths-filter's `base` input must be a real ref/SHA it can
+      # `git fetch <remote> <base>` — a relative expression like `HEAD~1`
+      # only resolves against a local repo and isn't valid fetch syntax
+      # (confirmed failing: "fatal: invalid refspec 'HEAD~1'"). Resolve the
+      # actual parent SHA locally first (fetch-depth 2 above already pulled
+      # it) and pass that literal SHA instead.
+      - id: parent
+        if: github.event_name == 'workflow_run'
+        run: echo "sha=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
+
       - uses: dorny/paths-filter@v4
         id: filter
         if: github.event_name == 'workflow_run'
         with:
-          base: HEAD~1
+          base: ${{ steps.parent.outputs.sha }}
           filters: |
             mcp-server:
               - 'services/mcp-server/**'
