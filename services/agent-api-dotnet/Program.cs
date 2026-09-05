@@ -1266,3 +1266,9 @@ app.MapDelete("/conversations/{id}", async (string id, HttpContext httpContext, 
 }).RequireAuthorization();
 
 app.Run();
+
+// Exposes the top-level-statements entry point to WebApplicationFactory<Program>
+// for integration tests (see agent-api-dotnet.Tests/StartupTests.cs) — otherwise
+// the compiler-generated Program class is internal and inaccessible to the test
+// assembly.
+public partial class Program { }
