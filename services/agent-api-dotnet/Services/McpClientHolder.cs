@@ -66,16 +66,23 @@ public class McpClientHolder : IAsyncDisposable
         return _tools;
     }
 
-    // Force a reconnect — disposes the current client and re-runs the
-    // init handshake. Safe to call from inside an exception handler;
-    // concurrent callers will see the same new client after one round
-    // trip thanks to the connect lock.
+    // How long to keep a superseded McpClient alive after a refresh before
+    // disposing it, so an unrelated request's already-in-flight tool call
+    // (bound to the old client, captured before the refresh happened) has
+    // time to finish naturally instead of being cancelled out from under it.
+    // See ConnectNoLockAsync's comment for why disposing immediately is
+    // actively dangerous, not just wasteful.
+    private static readonly TimeSpan _staleClientDisposeDelay = TimeSpan.FromSeconds(60);
+
+    // Force a reconnect — connects a fresh client (old one is disposed later,
+    // see ConnectNoLockAsync) and re-runs the init handshake. Safe to call
+    // from inside an exception handler; concurrent callers will see the same
+    // new client after one round trip thanks to the connect lock.
     public async Task RefreshAsync(CancellationToken ct)
     {
         await _connectLock.WaitAsync(ct);
         try
         {
-            await DisposeClientNoLockAsync();
             await ConnectNoLockAsync(ct);
         }
         finally
@@ -125,6 +132,22 @@ public class McpClientHolder : IAsyncDisposable
             ownsHttpClient: false);
         var client = await McpClient.CreateAsync(transport, cancellationToken: ct);
         var listed = await client.ListToolsAsync(cancellationToken: ct);
+
+        // Swap in the new client/tools before touching the old one. A caller
+        // that already captured the OLD _tools (e.g. mid-tool-call, from
+        // before this refresh started) is holding a direct reference to the
+        // old McpClient — disposing it immediately would cancel that
+        // in-flight call out from under an otherwise-healthy, unrelated
+        // request: ModelContextProtocol.Core's StreamableHttpClientSessionTransport
+        // links every outgoing request's CancellationToken to one
+        // transport-instance-wide CTS that only fires on DisposeAsync(), and
+        // that CTS is shared by every concurrent call using this client —
+        // confirmed root cause of a recurring near-instant TaskCanceledException
+        // on execute_tool (Datadog Error Tracking issue
+        // 1d5322a6-5065-11f1-91de-da7ad0900003; ilspycmd-verified against the
+        // installed ModelContextProtocol.Core 1.3.0 package). So: dispose the
+        // superseded client only after a grace period, not synchronously.
+        var previous = _client;
         _client = client;
         _tools = [.. listed];
         Interlocked.Increment(ref _generation);
@@ -132,6 +155,28 @@ public class McpClientHolder : IAsyncDisposable
             "[mcp] connected to {Url} (gen {Generation}); loaded {Count} tool(s): {Tools}",
             _serverUrl, _generation, _tools.Count,
             string.Join(", ", listed.Select(t => t.Name)));
+
+        if (previous is not null)
+        {
+            ScheduleDelayedDispose(previous);
+        }
+    }
+
+    private void ScheduleDelayedDispose(McpClient previous)
+    {
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(_staleClientDisposeDelay); }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("Delay before disposing stale MCP client was interrupted: {Error}", ex.Message);
+            }
+            try { await previous.DisposeAsync(); }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("Ignoring error disposing stale MCP client after grace period: {Error}", ex.Message);
+            }
+        });
     }
 
     private async Task DisposeClientNoLockAsync()
