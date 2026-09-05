@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Badge, Box, Flex, HStack, Spinner, Table, Text, VStack } from "@chakra-ui/react";
 import { Layers } from "lucide-react";
 import { getApiBase } from "../lib/api";
+import { getToken } from "../lib/auth";
 
 // ── Types matching GET /admin/prompts/status (agent-api) and
 //    GET /prompts/status (agent-api-dotnet) ─────────────────────────────────
@@ -23,7 +24,15 @@ async function fetchStatus(backend: "python" | "dotnet"): Promise<PromptRow[]> {
     backend === "python"
       ? `${getApiBase("python")}/admin/prompts/status`
       : `${getApiBase("dotnet")}/prompts/status`;
-  const resp = await fetch(url, { credentials: "include" });
+  // agent-api's /admin/prompts/status requires Authorization: Bearer <jwt> —
+  // this app authenticates via a token header, not cookies, so
+  // credentials: "include" alone (copied from EvalDiagnostics, whose .NET
+  // endpoint has no auth requirement) always 401'd here silently.
+  const token = getToken();
+  const resp = await fetch(url, {
+    credentials: "include",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
 }

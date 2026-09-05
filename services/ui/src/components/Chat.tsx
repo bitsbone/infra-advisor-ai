@@ -736,7 +736,17 @@ export function Chat() {
     }
 
     if (detail.model && availableModels.includes(detail.model)) setSelectedModel(detail.model);
-    if (detail.backend) setSelectedBackend(detail.backend as BackendType);
+    if (detail.backend) {
+      // Must also persist to localStorage (not just component state) —
+      // sendQueryStream()/getApiBase() read the active backend exclusively
+      // from getBackend() (localStorage), never from this React state. A
+      // conversation loaded here without this would show its real backend
+      // in the (now-locked) selector while silently sending every new
+      // message to whatever backend localStorage last pointed to (Python,
+      // if never set) — a real, confirmed bug (2026-09-05).
+      setBackend(detail.backend as BackendType);
+      setSelectedBackend(detail.backend as BackendType);
+    }
 
     setRecommendations(getFollowUpSuggestions(lastAiIdx?.m.sources ?? []));
   }
@@ -1067,7 +1077,12 @@ export function Chat() {
 
     // Restore model/backend from conversation metadata
     if (detail.model && availableModels.includes(detail.model)) setSelectedModel(detail.model);
-    if (detail.backend) setSelectedBackend(detail.backend as BackendType);
+    if (detail.backend) {
+      // See loadConversationById's identical fix above — getApiBase() reads
+      // the active backend only from localStorage, never from this state.
+      setBackend(detail.backend as BackendType);
+      setSelectedBackend(detail.backend as BackendType);
+    }
 
     setRecommendations(getFollowUpSuggestions(lastAiIdx?.m.sources ?? []));
   }
