@@ -1,20 +1,20 @@
 name: Build and push images
 
 on:
-  push:
+  # Chained to CI (ci.yml) rather than triggering on push directly — a
+  # deploy must never ship code CI hasn't actually validated. This is why
+  # the two workflows stayed separate files instead of merging into one
+  # (2026-09-04): ci.yml also runs on pull_request, independent of any
+  # deploy concern, and shouldn't be entangled with build/deploy jobs.
+  #
+  # Path filtering that used to live on the push trigger now happens
+  # entirely inside the `changes` job below (dorny/paths-filter diffs
+  # head_sha against its parent) — workflow_run carries no equivalent
+  # "paths" filter of its own.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
-    paths:
-      # Only trigger when service code or this workflow changes.
-      # README, docs/, infra/, .claude/ etc. never trigger a build — except
-      # the ACA agentic POC's own Bicep module, since that app deploys via
-      # `az deployment sub create`, not `kubectl`, so infra-only changes
-      # (env vars, secrets wiring) need to trigger a redeploy too, not just
-      # app-code changes. Deliberately narrow (not all of infra/bicep/**) so
-      # unrelated infra changes (e.g. AKS node count) don't trigger this.
-      - 'services/**'
-      - 'k8s/**'
-      - 'infra/bicep/modules/aca-agentic-poc.bicep'
-      - '.github/workflows/build-push.yml'
   workflow_dispatch: # manual full rebuild — always builds all services
 
 env:
@@ -27,7 +27,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # workflow_run fires on EVERY CI completion regardless of outcome — only
+    # proceed when CI actually passed. workflow_dispatch (manual rebuild)
+    # always proceeds. Everything below (build, deploy, deploy-aca,
+    # apply-datadog-agent) depends on this job via `needs:`, so a skip here
+    # cascades to a full-workflow no-op rather than a failure.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     outputs:
+      head_sha: ${{ steps.sha.outputs.value }}
       mcp-server:         ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.mcp-server == 'true' }}
       mcp-server-dotnet:  ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.mcp-server-dotnet == 'true' }}
       agent-api:          ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.agent-api == 'true' }}
@@ -39,12 +48,27 @@ jobs:
       aca-agentic-poc-dotnet: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.aca-agentic-poc-dotnet == 'true' }}
       aca-bicep:          ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.aca-bicep == 'true' }}
     steps:
+      # Under workflow_run, github.sha is this WORKFLOW FILE's ref (whatever
+      # main's tip happened to be when build-push.yml itself last changed) —
+      # NOT the commit CI just validated. Every job below must build/deploy
+      # github.event.workflow_run.head_sha specifically, never plain
+      # github.sha, or a fast-follow push could ship before CI has even
+      # looked at it. fetch-depth 2 so paths-filter can diff head_sha
+      # against its immediate parent (there's no `github.event.before`
+      # under workflow_run the way there is under push).
+      - id: sha
+        run: echo "value=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.sha.outputs.value }}
+          fetch-depth: 2
 
       - uses: dorny/paths-filter@v4
         id: filter
-        if: github.event_name == 'push'
+        if: github.event_name == 'workflow_run'
         with:
+          base: HEAD~1
           filters: |
             mcp-server:
               - 'services/mcp-server/**'
@@ -102,7 +126,12 @@ jobs:
           - service: aca-agentic-poc-dotnet
             changed: ${{ needs.changes.outputs.aca-agentic-poc-dotnet }}
     steps:
+      # Must check out the exact commit CI validated (needs.changes.outputs.head_sha),
+      # not github.sha — under workflow_run, github.sha is this workflow FILE's
+      # ref, not the tested commit. See the `changes` job's checkout step comment.
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.head_sha }}
 
       - name: Set up Docker Buildx
         if: matrix.changed == 'true'
@@ -122,6 +151,10 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          # context: git reads the SHA from the actual checked-out repo
+          # (pinned to head_sha above) rather than the workflow-run event's
+          # own github.sha, which under workflow_run is the wrong commit.
+          context: git
           tags: |
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
@@ -129,7 +162,9 @@ jobs:
       - name: Compute short SHA
         id: sha
         if: matrix.changed == 'true' && matrix.service == 'ui'
-        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        run: echo "short=${HEAD_SHA:0:7}" >> "$GITHUB_OUTPUT"
+        env:
+          HEAD_SHA: ${{ needs.changes.outputs.head_sha }}
 
       - name: Collect UI build args
         id: ui-args
@@ -184,7 +219,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
           build-args: |
             DD_GIT_REPOSITORY_URL=https://github.com/bitsbone/infra-advisor-ai
-            DD_GIT_COMMIT_SHA=${{ github.sha }}
+            DD_GIT_COMMIT_SHA=${{ needs.changes.outputs.head_sha }}
             ${{ steps.ui-args.outputs.args }}
 
   # ── Rolling restart on AKS (only if a deployable service was rebuilt) ──────
@@ -197,8 +232,14 @@ jobs:
     # Container Apps (see infra/bicep/modules/aca-agentic-poc.bicep), not AKS,
     # so there's no `kubectl set image` step for it here. See the deploy-aca
     # job below for its actual deploy path (az deployment sub create).
+    #
+    # The branch check only matters for workflow_dispatch (manually runnable
+    # against any branch) — workflow_run is already scoped to main by this
+    # workflow's own trigger filter (`on.workflow_run.branches`), and
+    # github.ref under workflow_run refers to this workflow file's ref, not
+    # necessarily the tested branch, so checking it there would be wrong.
     if: |
-      github.ref == 'refs/heads/main' && (
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') && (
         needs.changes.outputs.mcp-server        == 'true' ||
         needs.changes.outputs.mcp-server-dotnet == 'true' ||
         needs.changes.outputs.agent-api         == 'true' ||
@@ -211,6 +252,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.head_sha }}
 
       - name: Azure login
         uses: azure/login@v3
@@ -270,8 +313,10 @@ jobs:
         # (confirmed happening in the 2026-09-04 incident). Capturing the
         # real pre-deploy image explicitly and rolling back to THAT exact
         # tag sidesteps Kubernetes' revision-history ambiguity entirely.
+        env:
+          HEAD_SHA: ${{ needs.changes.outputs.head_sha }}
         run: |
-          SHORT_SHA="${GITHUB_SHA:0:7}"
+          SHORT_SHA="${HEAD_SHA:0:7}"
           IMAGE_PREFIX="${{ env.IMAGE_PREFIX }}"
           mkdir -p "$RUNNER_TEMP/prev-images"
 
@@ -378,8 +423,10 @@ jobs:
   deploy-aca:
     needs: [changes, build]
     runs-on: ubuntu-latest
+    # See the `deploy` job's `if:` comment re: the branch check only applying
+    # to workflow_dispatch.
     if: |
-      github.ref == 'refs/heads/main' && (
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') && (
         needs.changes.outputs.aca-agentic-poc-dotnet == 'true' ||
         needs.changes.outputs.aca-bicep == 'true'
       )
@@ -388,6 +435,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.head_sha }}
 
       - name: Azure login
         uses: azure/login@v3
@@ -421,14 +470,18 @@ jobs:
   apply-datadog-agent:
     needs: [changes]
     runs-on: ubuntu-latest
+    # See the `deploy` job's `if:` comment re: the branch check only applying
+    # to workflow_dispatch.
     if: |
-      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') &&
       needs.changes.outputs.datadog == 'true'
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.head_sha }}
 
       - name: Azure login
         uses: azure/login@v3
