@@ -258,14 +258,30 @@ jobs:
         # HIGH-3: pods now run a specific git-SHA tag, not whatever happens
         # to be at :latest. Initial apply still uses :latest from the k8s/
         # manifests; CI overrides on every deploy.
+        #
+        # Also captures each deployment's image as it was RIGHT BEFORE this
+        # pin, into $RUNNER_TEMP/prev-images/<dep> — this is the exact value
+        # "Wait for rollouts" rolls back to on failure below. Not `kubectl
+        # rollout undo`: the previous step just ran `kubectl apply` against
+        # manifests whose checked-in image is :latest, which can itself
+        # create a new (transient, immediately-superseded) revision — so
+        # "undo to the previous revision" can land on that transient
+        # :latest revision instead of the actual last-known-good SHA
+        # (confirmed happening in the 2026-09-04 incident). Capturing the
+        # real pre-deploy image explicitly and rolling back to THAT exact
+        # tag sidesteps Kubernetes' revision-history ambiguity entirely.
         run: |
           SHORT_SHA="${GITHUB_SHA:0:7}"
           IMAGE_PREFIX="${{ env.IMAGE_PREFIX }}"
+          mkdir -p "$RUNNER_TEMP/prev-images"
 
           set_image() {
             local dep="$1"
             local container="$2"
             if kubectl get deployment/"$dep" -n infra-advisor &>/dev/null; then
+              kubectl get deployment/"$dep" -n infra-advisor \
+                -o jsonpath="{.spec.template.spec.containers[?(@.name==\"$container\")].image}" \
+                > "$RUNNER_TEMP/prev-images/$dep"
               kubectl set image deployment/"$dep" \
                 "$container=$IMAGE_PREFIX/$dep:$SHORT_SHA" \
                 -n infra-advisor --record=false
@@ -294,20 +310,23 @@ jobs:
         # crash-looping (2026-09-04 incident: agent-api-dotnet shipped a
         # startup-blocking bug, timed out here after 10m, and this step still
         # exited 0 — nobody was notified until it was caught manually). Now:
-        # a timeout automatically rolls the deployment back to its previous
-        # revision (never leave a bad image serving/crash-looping unattended)
-        # and fails this step for real, so the run shows red and a person is
-        # notified — instead of a silent warning line in a log nobody was
-        # watching. Per-service results also go to $GITHUB_STEP_SUMMARY so
-        # each deployment's outcome is independently visible in the run's
-        # Summary tab without reading interleaved background-job logs.
+        # a timeout automatically rolls the deployment back to the EXACT
+        # image it ran before this deploy (captured above — not `kubectl
+        # rollout undo`, see the previous step's comment for why that's
+        # unreliable here) and fails this step for real, so the run shows
+        # red and a person is notified — instead of a silent warning line
+        # in a log nobody was watching. Per-service results also go to
+        # $GITHUB_STEP_SUMMARY so each deployment's outcome is independently
+        # visible in the run's Summary tab without reading interleaved
+        # background-job logs.
         run: |
           echo "| Deployment | Result |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
 
           wait_rollout() {
             local dep="$1"
-            local resultfile="$2"
+            local container="$2"
+            local resultfile="$3"
             if ! kubectl get deployment/"$dep" -n infra-advisor &>/dev/null; then
               echo "skipped (no such deployment)" > "$resultfile"
               return 0
@@ -316,11 +335,18 @@ jobs:
               echo "OK: $dep rollout finished"
               echo "ok" > "$resultfile"
             else
-              echo "::error::$dep rollout exceeded its progress deadline — rolling back to the previous revision"
-              kubectl rollout undo deployment/"$dep" -n infra-advisor
+              local prev_image
+              prev_image="$(cat "$RUNNER_TEMP/prev-images/$dep" 2>/dev/null || true)"
+              if [ -z "$prev_image" ]; then
+                echo "::error::$dep rollout exceeded its progress deadline, and no previous image was captured — needs manual investigation now"
+                echo "FAILED (no rollback possible)" > "$resultfile"
+                return 0
+              fi
+              echo "::error::$dep rollout exceeded its progress deadline — rolling back to $prev_image"
+              kubectl set image deployment/"$dep" "$container=$prev_image" -n infra-advisor --record=false
               kubectl rollout status deployment/"$dep" -n infra-advisor --timeout=5m \
-                && echo "::warning::$dep rolled back successfully — the new image never went live; check its startup logs before re-deploying" \
-                || echo "::error::$dep rollback ALSO failed to stabilize — needs manual investigation now"
+                && echo "::warning::$dep rolled back to $prev_image successfully — the new image never went live; check its startup logs before re-deploying" \
+                || echo "::error::$dep rollback to $prev_image ALSO failed to stabilize — needs manual investigation now"
               echo "FAILED (auto-rolled-back)" > "$resultfile"
             fi
           }
@@ -328,12 +354,12 @@ jobs:
           tmpdir="$(mktemp -d)"
           pids=()
           deps=()
-          [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]        && { wait_rollout mcp-server        "$tmpdir/mcp-server"        & pids+=($!); deps+=(mcp-server); }
-          [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ] && { wait_rollout mcp-server-dotnet "$tmpdir/mcp-server-dotnet" & pids+=($!); deps+=(mcp-server-dotnet); }
-          [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && { wait_rollout agent-api          "$tmpdir/agent-api"          & pids+=($!); deps+=(agent-api); }
-          [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && { wait_rollout agent-api-dotnet   "$tmpdir/agent-api-dotnet"   & pids+=($!); deps+=(agent-api-dotnet); }
-          [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && { wait_rollout auth-api           "$tmpdir/auth-api"           & pids+=($!); deps+=(auth-api); }
-          [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && { wait_rollout ui                 "$tmpdir/ui"                 & pids+=($!); deps+=(ui); }
+          [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]        && { wait_rollout mcp-server        mcp-server        "$tmpdir/mcp-server"        & pids+=($!); deps+=(mcp-server); }
+          [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ] && { wait_rollout mcp-server-dotnet mcp-server-dotnet "$tmpdir/mcp-server-dotnet" & pids+=($!); deps+=(mcp-server-dotnet); }
+          [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && { wait_rollout agent-api          agent-api          "$tmpdir/agent-api"          & pids+=($!); deps+=(agent-api); }
+          [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && { wait_rollout agent-api-dotnet   agent-api-dotnet   "$tmpdir/agent-api-dotnet"   & pids+=($!); deps+=(agent-api-dotnet); }
+          [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && { wait_rollout auth-api           auth-api           "$tmpdir/auth-api"           & pids+=($!); deps+=(auth-api); }
+          [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && { wait_rollout ui                 ui                 "$tmpdir/ui"                 & pids+=($!); deps+=(ui); }
 
           for pid in "${pids[@]:-}"; do
             wait "$pid" || true

@@ -346,6 +346,7 @@ using (var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
 }
 
 builder.Services.AddSingleton(promptHolder);
+builder.Services.AddSingleton(promptVersionFlags);
 builder.Services.AddHostedService<PromptRefreshBackgroundService>();
 
 // AgentHolder builds (and rebuilds) the ChatClientAgent against the current
