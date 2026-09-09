@@ -8,16 +8,16 @@ namespace InfraAdvisor.AgentApi.Services;
 // stable v2 surface but the SDK itself still calls the unstable path:
 //
 //   GET https://api.<site>/api/unstable/llm-obs/v1/prompts/{prompt_id}
-//   GET https://api.<site>/api/unstable/llm-obs/v1/prompts/{prompt_id}/versions/{version}
 //
-// The plain fetch is the static-registry "latest version" path — no
-// DD_APPLICATION_KEY needed (that's only required for the env-scoped
-// /resolve endpoint, which we still don't call directly here — instead a
-// specific version can be pinned via PromptVersionFlags' Feature Flag,
-// passed in as `version` below, hitting the versions/{version} path
-// instead). Response is a flat JSON object with "template" (or
-// "chat_template" for multi-message prompts — unused here, we only manage
-// a single string system prompt) and "version"/"user_version".
+// Always the static-registry "latest version" path — no DD_APPLICATION_KEY
+// needed (that's only required for the env-scoped /resolve endpoint, which
+// this client doesn't call). Per-user/per-environment version pinning goes
+// through PromptVersionFlags' Feature Flag evaluation instead (checked
+// first by PromptHolder, this client is the fallback when that flag
+// doesn't hit) — see PromptVersionFlags for why there's no more integer
+// "pinned version" parameter here. Response is a flat JSON object with
+// "template" (or "chat_template" for multi-message prompts — unused here,
+// we only manage a single string system prompt) and "version"/"user_version".
 //
 // Disabled gracefully when DD_PROMPT_MANAGEMENT_ENABLED isn't "true" or
 // DD_API_KEY isn't set, and fails OPEN (returns the caller's fallback) on
@@ -49,14 +49,11 @@ public class DatadogPromptManagementClient
                 "DatadogPromptManagementClient disabled (DD_PROMPT_MANAGEMENT_ENABLED not \"true\" or DD_API_KEY unset) — using local fallback prompts.");
     }
 
-    // Fetches promptId's registry version — pinned to `version` when
-    // nonzero (a Feature Flags override, see PromptVersionFlags), otherwise
-    // the latest — or falls back to `fallback` (the hardcoded local prompt)
-    // on any failure. Never throws.
+    // Fetches promptId's latest registry version, or falls back to
+    // `fallback` (the hardcoded local prompt) on any failure. Never throws.
     public async Task<PromptFetchResult> GetPromptTemplateAsync(
         string promptId,
         string fallback,
-        int version = 0,
         CancellationToken ct = default)
     {
         if (!_enabled)
@@ -65,9 +62,7 @@ public class DatadogPromptManagementClient
         try
         {
             var escapedId = Uri.EscapeDataString(promptId);
-            var url = version > 0
-                ? $"https://api.{_site}/api/unstable/llm-obs/v1/prompts/{escapedId}/versions/{version}"
-                : $"https://api.{_site}/api/unstable/llm-obs/v1/prompts/{escapedId}";
+            var url = $"https://api.{_site}/api/unstable/llm-obs/v1/prompts/{escapedId}";
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.TryAddWithoutValidation("DD-API-KEY", _apiKey);
 
@@ -97,7 +92,7 @@ public class DatadogPromptManagementClient
                 ?? (root.TryGetProperty("version", out var v) ? v.ToString() : null)
                 ?? "unknown";
 
-            return new PromptFetchResult(template, resolvedVersion, version > 0 ? "flag-pinned" : "registry");
+            return new PromptFetchResult(template, resolvedVersion, "registry");
         }
         catch (Exception ex)
         {

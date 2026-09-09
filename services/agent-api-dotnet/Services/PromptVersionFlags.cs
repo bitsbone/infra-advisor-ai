@@ -4,11 +4,19 @@ using OpenFeature.Model;
 
 namespace InfraAdvisor.AgentApi.Services;
 
-// Resolves a per-prompt pinned registry version via Datadog Feature Flags
-// (prompt-version.<prompt_id>, an integer flag; 0 is the "no override"
-// sentinel). Mirrors agent-api's observability/feature_flags.py so both
-// backends read the exact same flags — see
+// Evaluates the Datadog Prompt Registry's own auto-provisioned
+// `__llmobs__.prompt.<prompt_id>` Feature Flag — one per managed prompt,
+// created the moment that prompt exists in the registry, no manual flag
+// setup required. Mirrors agent-api's observability/prompts.py (which lets
+// ddtrace's own LLMObs.get_prompt() evaluate the same flag internally) so
+// both backends read the exact same flag/targeting rules — see
 // docs/src/content/docs/llm-engineering/monitoring/prompt-targeting.mdx.
+//
+// This replaced an earlier version of this file that evaluated a custom
+// integer flag (`prompt-version.<prompt_id>`) hand-rolled specifically for
+// this app. That flag is gone: the registry's own flag is real, documented,
+// and (per Datadog's own server-flag-evaluation-metrics guide) monitored —
+// no reason to maintain a parallel mechanism.
 //
 // Disabled gracefully when DD_PROMPT_MANAGEMENT_ENABLED isn't "true" — this
 // must have zero footprint (no OpenFeature provider registration, no network
@@ -51,7 +59,7 @@ public class PromptVersionFlags
             if (completed != registered)
             {
                 _logger.LogWarning(
-                    "Datadog OpenFeature provider registration did not complete within {Timeout} — prompt-version flags will use defaults (0) until it does.",
+                    "Datadog OpenFeature provider registration did not complete within {Timeout} — prompt flag evaluation will fall through to the registry HTTP fetch until it does.",
                     InitTimeout);
             }
             else
@@ -61,7 +69,7 @@ public class PromptVersionFlags
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to register Datadog OpenFeature provider — prompt-version flags will use defaults (0).");
+            _logger.LogWarning(ex, "Failed to register Datadog OpenFeature provider — prompt flag evaluation will fall through to the registry HTTP fetch.");
         }
         finally
         {
@@ -70,23 +78,59 @@ public class PromptVersionFlags
         }
     }
 
-    public async Task<int> ResolveVersionAsync(string promptId, CancellationToken ct = default)
+    // Evaluates __llmobs__.prompt.<promptId> as an object value (ilspycmd-
+    // confirmed against the installed OpenFeature 2.3.0 package:
+    // FeatureClient.GetObjectValueAsync(flagKey, Value defaultValue,
+    // EvaluationContext?, ...) -> Value, backed by OpenFeature.Model.Structure)
+    // — the same object shape ddtrace's Python _fetch_from_ff parses
+    // (template + user_version/version). Returns null on any non-hit
+    // (disabled, provider not ready, empty structure, error) so the caller
+    // falls through to DatadogPromptManagementClient's REST fetch, exactly
+    // like Python's manager.py falls through to its HTTP /resolve floor.
+    //
+    // targetingKey/attributes let a targeting rule on the flag resolve a
+    // different version per user (e.g. keyed on the demo job_role
+    // attribute) — both are optional; a pod-wide/default resolution (no
+    // per-user targeting) passes null/empty for both.
+    public async Task<PromptFetchResult?> ResolveAsync(
+        string promptId,
+        string? targetingKey,
+        IReadOnlyDictionary<string, string>? attributes,
+        CancellationToken ct = default)
     {
-        if (!_enabled) return 0;
+        if (!_enabled) return null;
 
         try
         {
             await EnsureProviderAsync();
             var client = Api.Instance.GetClient();
-            var context = EvaluationContext.Builder()
-                .Set("env", Environment.GetEnvironmentVariable("DD_ENV") ?? "")
-                .Build();
-            return await client.GetIntegerValueAsync($"prompt-version.{promptId}", 0, context, cancellationToken: ct);
+
+            var contextBuilder = EvaluationContext.Builder();
+            if (targetingKey is not null) contextBuilder.SetTargetingKey(targetingKey);
+            if (attributes is not null)
+                foreach (var (attrKey, attrValue) in attributes)
+                    contextBuilder.Set(attrKey, attrValue);
+            var context = contextBuilder.Build();
+
+            var value = await client.GetObjectValueAsync(
+                $"__llmobs__.prompt.{promptId}", new Value(Structure.Empty), context, cancellationToken: ct);
+            var structure = value.AsStructure;
+            if (structure is null || structure.Count == 0) return null;
+
+            var template = structure.TryGetValue("template", out var templateValue) ? templateValue?.AsString : null;
+            if (string.IsNullOrEmpty(template)) return null;
+
+            var version =
+                (structure.TryGetValue("user_version", out var uv) ? uv?.AsString : null)
+                ?? (structure.TryGetValue("version", out var v) ? (v?.AsString ?? v?.AsInteger?.ToString()) : null)
+                ?? "unknown";
+
+            return new PromptFetchResult(template, version, "ff");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Prompt-version flag evaluation failed for {PromptId} — using 0 (no override).", promptId);
-            return 0;
+            _logger.LogWarning(ex, "Prompt flag evaluation failed for {PromptId} — falling through to registry fetch.", promptId);
+            return null;
         }
     }
 }

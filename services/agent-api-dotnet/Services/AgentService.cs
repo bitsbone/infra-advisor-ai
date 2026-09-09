@@ -3,6 +3,7 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Azure.AI.OpenAI;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
@@ -14,18 +15,23 @@ namespace InfraAdvisor.AgentApi.Services;
 
 // Agent orchestrator backed by Microsoft Agents Framework.
 //
-// Replaces ~500 lines of hand-rolled router→specialist→tool-loop code with
-// the MAF builder pipeline. The single ChatClientAgent has access to every
-// MCP tool exposed by mcp-server-dotnet; the model picks which to call.
-// MAF's .UseOpenTelemetry() emits the invoke_agent span; M.E.AI's
-// .UseOpenTelemetry() on the chat client (set up in Program.cs) emits the
-// chat + execute_tool spans inside it.
+// Router + 5 tool-partitioned specialists, wired via
+// Microsoft.Agents.AI.Workflows' HandoffWorkflowBuilder (see
+// SpecialistRegistry) — the .NET equivalent of Python's router +
+// _TOOL_PARTITIONS pattern. MAF's .UseOpenTelemetry() (applied per agent in
+// AgentHolder) emits the invoke_agent span; M.E.AI's .UseOpenTelemetry() on
+// the shared chat client (set up in Program.cs) emits the chat +
+// execute_tool spans inside it.
 //
-// Session memory + persistence is handled by AgentSessionStore (Redis JSON
-// round-trip via SerializeSessionAsync / DeserializeSessionAsync), not here.
+// Session memory + persistence: AgentSessionStore round-trips a plain
+// List<ChatMessage> (user + final assistant text per turn — no tool-call
+// replay), matching Python's agent-api exactly (services/agent-api/src/
+// agent.py builds history_messages the same way from stored transcript
+// text). See AgentSessionStore for why this replaced the old single-agent
+// AgentSession serialize/deserialize once the workflow spanned 6 agents.
 public class AgentService
 {
-    private readonly AgentHolder _agentHolder;
+    private readonly SpecialistRegistry _specialistRegistry;
     private readonly McpClientHolder _mcpHolder;
     private readonly AgentSessionStore _sessions;
     private readonly RetrievalService _retrieval;
@@ -55,7 +61,7 @@ public class AgentService
         new(Observability.TelemetrySetup.ActivitySourceName);
 
     public AgentService(
-        AgentHolder agentHolder,
+        SpecialistRegistry specialistRegistry,
         McpClientHolder mcpHolder,
         AgentSessionStore sessions,
         RetrievalService retrieval,
@@ -68,7 +74,7 @@ public class AgentService
         IContractAwardsEventPublisher contractAwardsPublisher,
         ILogger<AgentService> logger)
     {
-        _agentHolder = agentHolder;
+        _specialistRegistry = specialistRegistry;
         _mcpHolder = mcpHolder;
         _sessions = sessions;
         _retrieval = retrieval;
@@ -105,142 +111,63 @@ public class AgentService
             description: "Count of MCP client reconnects triggered by session-expired errors. Tagged with reason.");
     }
 
+    // Non-streaming variant — a thin aggregator over RunAgentStreamingAsync
+    // rather than a second hand-rolled workflow-invocation path. Business
+    // metrics, evals, and the retrieval/classify/AI-Guard pipeline all live
+    // exactly once, in the streaming method; this just collects its
+    // StreamEvents into an AgentResult for callers that don't want SSE.
     public async Task<AgentResult> RunAgentAsync(
         string query,
         string sessionId,
         string deployment,
         List<AttachmentDto>? attachments = null,
         string? rumSessionId = null,
+        string? userId = null,
+        string? jobRole = null,
         CancellationToken ct = default)
     {
-        // gen_ai.conversation.id should key off the real Datadog RUM session
-        // (enables LLM Obs <-> RUM correlation) when the client sent one —
-        // sessionId here is TenantSessionKey (user_id + conversation_id), not
-        // a RUM session id.
-        AmbientSessionContext.Set(rumSessionId ?? sessionId);
+        var answer = new System.Text.StringBuilder();
+        var sources = new List<string>();
+        var toolsCalled = new List<string>();
+        var artifacts = new List<JsonElement>();
+        var domain = "general";
+        var isFirstEvent = true;
 
-        // 0. AI Guard pre-flight check on the raw user query. Runs before
-        //    anything else touches the LLM/tool loop — see DatadogAiGuardClient
-        //    for why this is the HTTP API path (no LangChain-equivalent
-        //    auto-integration exists for Microsoft Agent Framework) and why
-        //    it fails open on transport errors.
-        var guardResult = await _aiGuard.EvaluateAsync(
-            new[] { new AiGuardMessage("user", query) }, ct);
-        if (guardResult.IsBlocked)
+        await foreach (var evt in RunAgentStreamingAsync(query, sessionId, deployment, attachments, rumSessionId, userId, jobRole, ct))
         {
-            _logger.LogWarning(
-                "AI Guard blocked query action={Action}",
-                guardResult.Action);
-            return new AgentResult(
-                Answer: "",
-                Sources: new List<string>(),
-                ToolsCalled: new List<string>(),
-                QueryDomain: "blocked",
-                Blocked: true,
-                BlockReason: guardResult.Reason ?? $"Blocked by AI Guard ({guardResult.Action})");
-        }
-
-        // 1. Fold any audio attachment's transcript into the query text
-        //    (cascade architecture — the chat LLM never sees raw audio) and
-        //    surface the image attachment, if any, before anything else
-        //    touches the query text — so domain classification + retrieval
-        //    both see the transcript.
-        var (effectiveQuery, imageAttachment) = await BuildEffectiveQueryAsync(query, attachments, ct);
-
-        // 2. Task: classify the query domain (manual span — pure CS, no LLM).
-        var domain = ClassifyDomainTraced(effectiveQuery);
-
-        // 3. Retrieval: vector-search the best-practices corpus. Emits a
-        //    retrieval span which wraps a framework-emitted embedding span
-        //    (query embedding). Failures degrade silently — the agent still
-        //    answers without retrieved context.
-        var retrieved = await _retrieval.RetrieveAsync(effectiveQuery, topK: 3, ct);
-
-        // 4. Inject retrieval context as a system-style preamble. Cheap and
-        //    keeps the agent prompt unchanged structurally.
-        var augmentedQuery = retrieved.Count > 0
-            ? $"Relevant InfraAdvisor best-practice context:\n{string.Join("\n\n", retrieved)}\n\n---\n\nUser question: {effectiveQuery}"
-            : effectiveQuery;
-
-        // Multi-part vision message when an image attachment is present —
-        // TextContent + UriContent, same shape RunAsync accepts for plain
-        // text via a single TextContent part.
-        var inputMessage = BuildAgentInputMessage(augmentedQuery, imageAttachment);
-
-        var agent = await _agentHolder.GetAgentAsync(ct);
-
-        // Session lookup / restore / save round-trip wraps the MAF agent call.
-        var session = await _sessions.GetOrCreateAsync(agent, sessionId, ct);
-
-        AgentResponse response;
-        try
-        {
-            response = await agent.RunAsync(inputMessage, session, cancellationToken: ct);
-        }
-        catch (Exception ex) when (IsMcpSessionExpired(ex))
-        {
-            // mcp-server-dotnet was restarted while this agent-api pod was
-            // up — the cached McpClient's session ID no longer maps to
-            // anything on the (new) server. Reconnect, rebuild the agent
-            // with the fresh tool list, recreate the agent session (the
-            // old one was tied to the old agent's context), and retry once.
-            _logger.LogWarning(
-                "MCP session expired; reconnecting and retrying once error_type={ErrorType}",
-                ex.GetType().Name);
-            _mcpReconnectCounter.Add(1,
-                new KeyValuePair<string, object?>("reason", "session_expired"));
-            await _mcpHolder.RefreshAsync(ct);
-            agent = await _agentHolder.GetAgentAsync(ct);
-            // Restored session JSON references AITool instances that came
-            // from the prior MCP client; recreate fresh against the new
-            // agent so the tool call routing wires correctly.
-            session = await agent.CreateSessionAsync(ct);
-            response = await agent.RunAsync(inputMessage, session, cancellationToken: ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning("agent.RunAsync failed error_type={ErrorType}", ex.GetType().Name);
-            throw;
-        }
-
-        await _sessions.SaveAsync(agent, sessionId, session, ct);
-
-        var answer = response.Text ?? "";
-        var sources = ExtractSourcesFromResponse(response);
-        var toolsCalled = ExtractToolsCalledFromResponse(response);
-        var artifacts = ExtractArtifactsFromResponse(response);
-        if (artifacts.Count > 0)
-        {
-            var toolCallArgs = ExtractToolCallArgsByCallId(response);
-            foreach (var artifact in artifacts)
+            switch (evt)
             {
-                var toolCallId = artifact.TryGetProperty("tool_call_id", out var tcid) && tcid.ValueKind == JsonValueKind.String
-                    ? tcid.GetString()
-                    : null;
-                var queryInput = toolCallId is not null && toolCallArgs.TryGetValue(toolCallId, out var args) ? args : null;
-                PublishContractAwardsIfApplicable(artifact, sessionId, queryInput);
+                case ErrorEvent err when isFirstEvent:
+                    // AI Guard blocks before anything else streams — the
+                    // very first event on a blocked query is always this
+                    // ErrorEvent, mirroring RunAgentStreamingAsync's guard
+                    // check ordering.
+                    return new AgentResult(
+                        Answer: "",
+                        Sources: sources,
+                        ToolsCalled: toolsCalled,
+                        QueryDomain: "blocked",
+                        Blocked: true,
+                        BlockReason: err.Message);
+                case ErrorEvent err:
+                    throw new InvalidOperationException(err.Message);
+                case TextChunkEvent t:
+                    answer.Append(t.Chunk);
+                    break;
+                case ArtifactEvent a:
+                    artifacts.Add(a.Artifact);
+                    break;
+                case DoneEvent d:
+                    domain = d.QueryDomain;
+                    sources = d.Sources;
+                    toolsCalled = d.ToolsCalled;
+                    break;
             }
+            isFirstEvent = false;
         }
-
-        // Business metrics — increment once per completed query plus once
-        // per MCP tool invocation. Tags let dashboards slice by domain and
-        // tool name without further code changes.
-        var domainTag = new KeyValuePair<string, object?>("query.domain", domain);
-        _conversationCounter.Add(1, domainTag);
-        foreach (var tool in toolsCalled)
-            _toolCounter.Add(1,
-                new KeyValuePair<string, object?>("tool.name", tool),
-                domainTag);
-
-        // External evaluations — fire-and-forget so /query latency is
-        // unchanged. Captured AgentSpanContext lets us address the agent
-        // span specifically (not the HTTP root) when joining to DD's
-        // eval-metric API.
-        var toolResults = ExtractToolResultsFromResponse(response);
-        ScheduleEvaluations(effectiveQuery, answer, toolsCalled, toolResults, sources, domain);
 
         return new AgentResult(
-            Answer: answer,
+            Answer: answer.ToString(),
             Sources: sources,
             ToolsCalled: toolsCalled,
             QueryDomain: domain,
@@ -514,6 +441,8 @@ public class AgentService
         string deployment,
         List<AttachmentDto>? attachments = null,
         string? rumSessionId = null,
+        string? userId = null,
+        string? jobRole = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
         // See RunAgentAsync for why this prefers the real RUM session over
@@ -562,8 +491,16 @@ public class AgentService
 
         var inputMessage = BuildAgentInputMessage(augmentedQuery, imageAttachment);
 
-        var agent = await _agentHolder.GetAgentAsync(ct);
-        var session = await _sessions.GetOrCreateAsync(agent, sessionId, ct);
+        // Per-user targeted resolution — targetingKey is the user id,
+        // attributes carries the demo job_role value when the JWT has one.
+        // Falls back to the cached pod-wide default workflow when there's
+        // no matching per-user override — see SpecialistRegistry.
+        var targetingAttributes = jobRole is not null
+            ? new Dictionary<string, string> { ["job_role"] = jobRole }
+            : null;
+        var workflow = await _specialistRegistry.GetWorkflowForRequestAsync(userId, targetingAttributes, ct);
+        var history = await _sessions.GetOrCreateHistoryAsync(sessionId, ct);
+        history.Add(inputMessage);
 
         // Track tool-call lifecycle as the model emits FunctionCallContent
         // / FunctionResultContent updates. Start times are captured at
@@ -577,6 +514,14 @@ public class AgentService
         var fullAnswer = new System.Text.StringBuilder();
         Exception? streamError = null;
 
+        // ExecutorId (see AgentHolder — "router", "specialist-engineering",
+        // ...) of whichever agent most recently produced visible text —
+        // i.e. the specialist that actually answered this turn, for the
+        // per-turn prompt-version badge on DoneEvent below. The router's
+        // own updates carry only handoff FunctionCallContent, never
+        // TextContent, so this naturally settles on the answering specialist.
+        string? lastExecutorId = null;
+
         // Whether anything the user can already see (a tool chip or answer
         // text) has been yielded yet. A session-expired reconnect is only
         // safe to retry transparently while this is still false — once
@@ -585,8 +530,9 @@ public class AgentService
         var anyStreamed = false;
         var retriedMcpSession = false;
 
-        var updates = agent.RunStreamingAsync(inputMessage, session, cancellationToken: ct);
-        var enumerator = updates.GetAsyncEnumerator(ct);
+        var run = await InProcessExecution.RunStreamingAsync(workflow, history, sessionId: sessionId, cancellationToken: ct);
+        var events = run.WatchStreamAsync(ct);
+        var enumerator = events.GetAsyncEnumerator(ct);
 
         while (true)
         {
@@ -608,20 +554,20 @@ public class AgentService
                 _mcpReconnectCounter.Add(1,
                     new KeyValuePair<string, object?>("reason", "session_expired_stream"));
                 await enumerator.DisposeAsync();
+                await run.DisposeAsync();
                 await _mcpHolder.RefreshAsync(ct);
-                agent = await _agentHolder.GetAgentAsync(ct);
-                // Restored session JSON references AITool instances from the
-                // prior MCP client; recreate fresh against the new agent so
-                // tool call routing wires correctly (same reasoning as
-                // RunAgentAsync's retry path).
-                session = await agent.CreateSessionAsync(ct);
+                // Rebuilds every specialist's agent since McpClientHolder.
+                // Generation changed — same generation-check shape
+                // AgentHolder already used for the single-agent path.
+                workflow = await _specialistRegistry.GetWorkflowForRequestAsync(userId, targetingAttributes, ct);
                 toolStarts.Clear();
                 allSources.Clear();
                 toolsCalledOrdered.Clear();
                 toolResults.Clear();
                 fullAnswer.Clear();
-                updates = agent.RunStreamingAsync(augmentedQuery, session, cancellationToken: ct);
-                enumerator = updates.GetAsyncEnumerator(ct);
+                run = await InProcessExecution.RunStreamingAsync(workflow, history, sessionId: sessionId, cancellationToken: ct);
+                events = run.WatchStreamAsync(ct);
+                enumerator = events.GetAsyncEnumerator(ct);
                 continue;
             }
             catch (Exception ex)
@@ -631,7 +577,11 @@ public class AgentService
             }
             if (!moved) break;
 
-            var update = enumerator.Current;
+            // Only agent output events carry model content — lifecycle
+            // events (WorkflowStartedEvent, SuperStepEvent, ...) are
+            // ignored here.
+            if (enumerator.Current is not AgentResponseUpdateEvent updateEvent) continue;
+            var update = updateEvent.Update;
             foreach (var ev in HandleUpdate(update, toolStarts, allSources, toolsCalledOrdered, toolResults, fullAnswer))
             {
                 if (ev is ToolCallStartEvent startEv) argsJsonByCallId[startEv.Id] = startEv.ArgsJson;
@@ -646,32 +596,36 @@ public class AgentService
                     PublishContractAwardsIfApplicable(artifactEv.Artifact, sessionId, queryInput);
                 }
                 if (ev is ToolCallStartEvent or TextChunkEvent) anyStreamed = true;
+                if (ev is TextChunkEvent) lastExecutorId = updateEvent.ExecutorId;
                 yield return ev;
             }
         }
         await enumerator.DisposeAsync();
+        await run.DisposeAsync();
 
         if (streamError is not null)
         {
             var (errorMessage, errorCategory) = ClassifyStreamError(streamError, retriedMcpSession);
             _logger.LogWarning(
-                "agent.RunStreamingAsync failed category={Category} error_type={ErrorType}",
+                "agent workflow run failed category={Category} error_type={ErrorType}",
                 errorCategory, streamError.GetType().Name);
-            // Persist whatever the session accumulated before the failure
-            // (at minimum the user's own message) so a transient error or a
+            // Persist whatever history accumulated before the failure (at
+            // minimum the user's own message) so a transient error or a
             // client disconnect mid-stream doesn't silently wipe context for
-            // the next turn — previously this returned before ever calling
-            // SaveAsync, so a dropped connection made the agent "forget" the
-            // conversation up to that point. Use CancellationToken.None: `ct`
-            // may already be cancelled (e.g. client disconnect), and we still
-            // want this write to go through.
-            await _sessions.SaveAsync(agent, sessionId, session, CancellationToken.None);
+            // the next turn. Use CancellationToken.None: `ct` may already be
+            // cancelled (e.g. client disconnect), and we still want this
+            // write to go through.
+            await _sessions.SaveHistoryAsync(sessionId, history, CancellationToken.None);
             yield return new ErrorEvent(
                 errorMessage, TraceId: Activity.Current?.TraceId.ToString(), Category: errorCategory);
             yield break;
         }
 
-        await _sessions.SaveAsync(agent, sessionId, session, ct);
+        // Text-only history round trip — matches Python's agent-api exactly
+        // (services/agent-api/src/agent.py rebuilds history_messages from
+        // stored HumanMessage/AIMessage text, never replaying tool calls).
+        history.Add(new ChatMessage(ChatRole.Assistant, fullAnswer.ToString()));
+        await _sessions.SaveHistoryAsync(sessionId, history, ct);
 
         var domainTag = new KeyValuePair<string, object?>("query.domain", domain);
         _conversationCounter.Add(1, domainTag);
@@ -685,6 +639,20 @@ public class AgentService
 
         ScheduleEvaluations(effectiveQuery, fullAnswer.ToString(), distinctTools, toolResults, distinctSources, domain);
 
+        // Reads the pod-wide cached PromptHolder.Current for whichever
+        // specialist answered. Known gap: when GetWorkflowForRequestAsync
+        // built a per-user override agent (a targeting rule actually fired
+        // differently for this user), this still reports the pod-wide
+        // default's version/source rather than the override that literally
+        // answered — surfacing the override's resolved value here would
+        // require threading it out of AgentHolder.GetAgentForRequestAsync
+        // alongside the built agent. Acceptable for now: overrides are the
+        // rare case (see GetWorkflowForRequestAsync's own comment), and the
+        // badge is still correct whenever no per-user override fires.
+        PromptFetchResult? answeringPrompt = lastExecutorId is not null
+            ? _specialistRegistry.PromptHolders.GetValueOrDefault(lastExecutorId)?.Current
+            : null;
+
         yield return new DoneEvent(
             TraceId: GetTraceIdDecimal(),
             SpanId: GetSpanIdDecimal(),
@@ -692,7 +660,10 @@ public class AgentService
             Model: deployment,
             Sources: distinctSources,
             ToolsCalled: distinctTools,
-            QueryDomain: domain);
+            QueryDomain: domain,
+            PromptId: lastExecutorId,
+            PromptVersion: answeringPrompt?.Version,
+            PromptSource: answeringPrompt?.Source);
     }
 
     // Process one AgentResponseUpdate into zero-or-more StreamEvents. Pure
@@ -811,57 +782,6 @@ public class AgentService
             new KeyValuePair<string, object?>("query.domain", domain));
     }
 
-    // ── Extract source citations from the most recent agent response ─────────
-    // MCP tool results are nested JSON; each item often carries a "_source"
-    // field. Walk the assistant + tool messages and collect distinct _source
-    // values for the AgentResult.Sources list that the UI renders.
-    private static List<string> ExtractSourcesFromResponse(AgentResponse response)
-    {
-        var sources = new List<string>();
-        foreach (var message in response.Messages)
-        {
-            foreach (var content in message.Contents)
-            {
-                if (content is FunctionResultContent fr && fr.Result is not null)
-                {
-                    TryExtractSources(fr.Result.ToString() ?? "", sources);
-                }
-                else if (content is TextContent tc)
-                {
-                    TryExtractSources(tc.Text, sources);
-                }
-            }
-        }
-        return sources;
-    }
-
-    private static List<JsonElement> ExtractArtifactsFromResponse(AgentResponse response)
-    {
-        var artifacts = new List<JsonElement>();
-        foreach (var message in response.Messages)
-            foreach (var content in message.Contents)
-                if (content is FunctionResultContent fr && fr.Result is not null)
-                {
-                    var artifact = ChatArtifactParser.TryExtract(fr.Result.ToString() ?? "", null, fr.CallId);
-                    if (artifact is not null) artifacts.Add(artifact.Value);
-                }
-        return artifacts;
-    }
-
-    // Maps each tool call's id to its original arguments — used to recover
-    // the query context (e.g. ContractAwardsInput fields) for the Kafka
-    // contract_awards publish, since FunctionResultContent only carries the
-    // result, not the request that produced it.
-    private static Dictionary<string, object?> ExtractToolCallArgsByCallId(AgentResponse response)
-    {
-        var argsByCallId = new Dictionary<string, object?>();
-        foreach (var message in response.Messages)
-            foreach (var content in message.Contents)
-                if (content is FunctionCallContent fc)
-                    argsByCallId[fc.CallId] = fc.Arguments;
-        return argsByCallId;
-    }
-
     private void PublishContractAwardsIfApplicable(JsonElement artifact, string sessionId, object? queryInput)
     {
         if (!artifact.TryGetProperty("kind", out var kind) || kind.GetString() != "contract_awards") return;
@@ -869,45 +789,6 @@ public class AgentService
             ? tcid.GetString()
             : null;
         _contractAwardsPublisher.Publish(sessionId, toolCallId, queryInput, artifact.GetProperty("items"));
-    }
-
-    // Raw tool RESULTS captured from the agent response. LLM-judge evaluators
-    // (Groundedness) need this to verify answer claims against the actual data
-    // the tools returned. Each result is the JSON / text string the model
-    // received back from the tool — we cap each at 4KB to keep judge prompts
-    // sane.
-    private static List<string> ExtractToolResultsFromResponse(AgentResponse response)
-    {
-        const int maxChars = 4000;
-        var results = new List<string>();
-        foreach (var message in response.Messages)
-        {
-            foreach (var content in message.Contents)
-            {
-                if (content is FunctionResultContent fr && fr.Result is not null)
-                {
-                    var s = fr.Result.ToString() ?? "";
-                    if (s.Length > maxChars) s = s[..maxChars] + "…";
-                    results.Add(s);
-                }
-            }
-        }
-        return results;
-    }
-
-    private static List<string> ExtractToolsCalledFromResponse(AgentResponse response)
-    {
-        var seen = new HashSet<string>();
-        var result = new List<string>();
-        foreach (var message in response.Messages)
-        {
-            foreach (var content in message.Contents)
-            {
-                if (content is FunctionCallContent fc && seen.Add(fc.Name))
-                    result.Add(fc.Name);
-            }
-        }
-        return result;
     }
 
     private static void TryExtractSources(string maybeJson, List<string> sources)

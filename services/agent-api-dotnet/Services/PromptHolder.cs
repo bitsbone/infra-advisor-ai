@@ -12,7 +12,11 @@ namespace InfraAdvisor.AgentApi.Services;
 // (PromptRefreshBackgroundService) plus lazily on first use.
 public class PromptHolder
 {
-    public const string PromptId = "infra-advisor-system-prompt";
+    // Instance field, not a shared const — one PromptHolder now exists per
+    // managed prompt (router + 5 specialists, see SpecialistRegistry), each
+    // reading its own prompt_id from the same Datadog Prompt Registry
+    // Python's seed script already populated.
+    public string PromptId { get; }
 
     private readonly DatadogPromptManagementClient _client;
     private readonly PromptVersionFlags _flags;
@@ -24,11 +28,13 @@ public class PromptHolder
     private long _generation;
 
     public PromptHolder(
+        string promptId,
         DatadogPromptManagementClient client,
         PromptVersionFlags flags,
         string fallback,
         ILogger<PromptHolder> logger)
     {
+        PromptId = promptId;
         _client = client;
         _flags = flags;
         _fallback = fallback;
@@ -53,8 +59,14 @@ public class PromptHolder
         await _refreshLock.WaitAsync(ct);
         try
         {
-            var version = await _flags.ResolveVersionAsync(PromptId, ct);
-            var fetched = await _client.GetPromptTemplateAsync(PromptId, _fallback, version, ct);
+            // Pod-wide/default resolution — no per-user targeting context
+            // (see ResolveForRequestAsync for the per-request, per-user
+            // targeted variant). Resolution order: (1) the registry's own
+            // __llmobs__.prompt.<prompt_id> Feature Flag, (2) the REST
+            // registry fetch (latest version), (3) the hardcoded fallback —
+            // matches agent-api's observability/prompts.py exactly.
+            var fetched = await _flags.ResolveAsync(PromptId, targetingKey: null, attributes: null, ct)
+                ?? await _client.GetPromptTemplateAsync(PromptId, _fallback, ct);
 
             var prev = _current;
             if (prev is null || prev.Template != fetched.Template || prev.Version != fetched.Version)
@@ -70,5 +82,25 @@ public class PromptHolder
         {
             _refreshLock.Release();
         }
+    }
+
+    // Per-request, per-user targeted resolution — evaluates the Feature
+    // Flag fresh with the calling user's targeting_key/attributes (e.g. the
+    // demo job_role attribute) rather than using the pod-wide cached
+    // Current. Returns Current unchanged when there's no targeting context
+    // to evaluate, or when the flag doesn't resolve differently for this
+    // user (no targeting rule matched, or it matched the same version the
+    // pod-wide default already has) — the common case, kept cheap and
+    // cache-hitting. Only a genuine per-user override triggers the caller
+    // (AgentHolder.GetAgentForRequestAsync) to build an ad-hoc agent for
+    // just this turn.
+    public async Task<PromptFetchResult> ResolveForRequestAsync(
+        string? targetingKey, IReadOnlyDictionary<string, string>? attributes, CancellationToken ct)
+    {
+        if (targetingKey is null && (attributes is null || attributes.Count == 0))
+            return Current;
+
+        var resolved = await _flags.ResolveAsync(PromptId, targetingKey, attributes, ct);
+        return resolved ?? Current;
     }
 }

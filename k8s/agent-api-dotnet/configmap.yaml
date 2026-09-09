@@ -58,9 +58,19 @@ data:
   # IResponseEvaluator implementations and POSTed to DD's eval-metric API).
   # Set to "0" to disable, "1" to score every call. 0.1 = 10% sampling.
   EVAL_SAMPLE_RATE: "0.1"
-  # Fetch the system prompt from DD's (preview) Prompt Registry at startup
-  # instead of the hardcoded AgentSystemPrompt constant in Program.cs. Off by
-  # default — the registry API is still "unstable"/preview status, and the
-  # hardcoded constant always remains the fail-open fallback either way. See
+  # Fetch each specialist's system prompt from DD's (preview) Prompt
+  # Registry instead of its hardcoded fallback in SpecialistRegistry.cs. Off
+  # by default — the registry API is still "unstable"/preview status, and
+  # the hardcoded fallback always remains the fail-open path either way. See
   # Services/DatadogPromptManagementClient.cs.
   DD_PROMPT_MANAGEMENT_ENABLED: "false"
+  # Lets PromptVersionFlags evaluate each managed prompt's auto-provisioned
+  # `__llmobs__.prompt.<prompt_id>` Feature Flag (targeting rules keyed on
+  # e.g. the demo job_role user attribute) before falling back to the
+  # registry HTTP fetch. Mirrors agent-api's equivalent env var — same flag,
+  # same registry, both backends read it identically.
+  DD_EXPERIMENTAL_FLAGGING_PROVIDER_ENABLED: "true"
+  # Required for the flag's server-side evaluation metrics (impressions,
+  # variant distribution) to populate in Datadog's Feature Flags product —
+  # https://docs.datadoghq.com/feature_flags/guide/server_flag_evaluation_metrics/
+  DD_METRICS_OTEL_ENABLED: "true"

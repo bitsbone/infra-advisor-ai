@@ -13,9 +13,12 @@
     <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
 
     <!-- Microsoft.Extensions.AI — provider-neutral IChatClient pipeline.
-         UseFunctionInvocation + UseOpenTelemetry emit chat + execute_tool spans. -->
-    <PackageReference Include="Microsoft.Extensions.AI" Version="10.6.0" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.6.0" />
+         UseFunctionInvocation + UseOpenTelemetry emit chat + execute_tool spans.
+         Bumped to 10.9.0 alongside Microsoft.Agents.AI 1.20.0 below — that
+         package requires M.E.AI >= 10.9.0, staying on 10.6.0 here fails
+         restore with an NU1605 downgrade error. -->
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.9.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.9.0" />
 
     <!-- M.E.AI.Evaluation — LLM-as-judge evaluator framework. .Quality has
          the canonical Relevance / Coherence / Groundedness evaluators that
@@ -23,15 +26,20 @@
          IResponseEvaluator implementations. Each evaluator runs through
          the same Datadog External Evaluations API path as the
          deterministic evaluators (DatadogEvalsClient). -->
-    <PackageReference Include="Microsoft.Extensions.AI.Evaluation" Version="10.6.0" />
-    <PackageReference Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.6.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.Evaluation" Version="10.9.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.9.0" />
 
     <!-- Microsoft Agents Framework — ChatClientAgent, AgentSession, serialize/
          deserialize for Redis-backed session persistence. UseOpenTelemetry on
          the agent builder emits the invoke_agent span DD LLMObs uses as the
-         "agent" kind. -->
-    <PackageReference Include="Microsoft.Agents.AI" Version="1.6.0" />
-    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.6.0" />
+         "agent" kind. Upgraded 1.6.0 -> 1.20.0 specifically to pick up
+         Microsoft.Agents.AI.Workflows' HandoffWorkflowBuilder (absent at
+         1.6.0, confirmed by decompiling that version directly) — the native
+         router+specialist orchestration primitive, replacing what would
+         otherwise be a fully hand-rolled dispatcher. -->
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.20.0" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.20.0" />
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.20.0" />
 
     <!-- Official .NET MCP client. Replaces the hand-rolled JSON-RPC over HTTP
          in the previous Services/McpClientService.cs — mcpClient.ListToolsAsync()

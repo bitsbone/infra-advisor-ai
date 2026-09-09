@@ -247,180 +247,39 @@ builder.Services.AddSingleton<IEmbeddingGenerator<string, Embedding<float>>>(sp 
         .Build());
 
 // ── Agent (MAF) ───────────────────────────────────────────────────────────────
-// Single ChatClientAgent with all MCP tools. The model picks which tools
-// to call per turn. .UseOpenTelemetry(sourceName:) emits the invoke_agent
-// span on the ActivitySource registered in TelemetrySetup.cs.
-const string AgentSystemPrompt =
-    "You are InfraAdvisor, a technical AI assistant for consultants across " +
-    "AEC/O&M (Architecture, Engineering, Construction / Operations & Maintenance) " +
-    "practice areas at a global infrastructure consulting firm.\n\n" +
-    "Your expertise spans the full AEC/O&M project lifecycle: feasibility and planning, " +
-    "civil and structural engineering (bridges, highways, rail), MEP and environmental systems " +
-    "(water, wastewater, energy), construction project delivery, asset operations and maintenance, " +
-    "and management advisory (program management, BD, risk, compliance).\n\n" +
-    "You have access to tools covering bridges (FHWA NBI), disasters (FEMA), energy (EIA/ERCOT), " +
-    "water systems (EPA SDWIS/TWDB), Texas transportation (TxDOT), firm knowledge base, " +
-    "document drafting, and federal procurement intelligence (SAM.gov, USASpending.gov).\n\n" +
-    "Guidelines:\n" +
-    "1. Always cite the data source for factual claims (NBI structure numbers, PWSID, EIA plant IDs, " +
-    "FEMA declaration IDs, USASpending award IDs, SAM.gov solicitation numbers).\n" +
-    "2. Sort assets by descending risk: bridges by ascending sufficiency rating; water systems by " +
-    "descending violation count.\n" +
-    "3. Flag material risks explicitly — scour vulnerability, load rating deficiencies, repeat flood " +
-    "events, SDWA violations, grid stress periods.\n" +
-    "4. For business development queries, always call get_contract_awards before get_procurement_opportunities " +
-    "— understanding who won similar work informs positioning for open opportunities.\n" +
-    "5. When search_web_procurement returns results, flag medium-confidence extractions explicitly.\n" +
-    "6. NEVER ask the user for a date range — procurement tools default to the last 12 months automatically.\n" +
-    "7. For document drafts, call search_project_knowledge first for relevant templates and prior project context.\n" +
-    "8. Do not speculate about asset conditions not in the data — say \"not available in the dataset\".\n" +
-    "9. Respond in the same language the user writes in. Keep responses concise for data lookups; " +
-    "detailed for engineering analysis and document drafts.\n\n" +
-    // ── Few-shot tool-call examples ─────────────────────────────────────────────
-    // Concrete worked patterns the model can anchor on for the high-error
-    // decision points: FIPS state codes (not 2-letter abbrevs), AEC NAICS
-    // codes (not category names), the BD chain pattern, water query_type
-    // dispatch, the document-drafting chain. Keeping these tight — verbosity
-    // here costs every request's input tokens.
-    "Examples of correct tool calls:\n\n" +
+// Router + 5 tool-partitioned specialist agents (see SpecialistRegistry),
+// replacing the old single ChatClientAgent with all MCP tools.
+// .UseOpenTelemetry(sourceName:) (applied per specialist in AgentHolder)
+// emits the invoke_agent span on the ActivitySource registered in
+// TelemetrySetup.cs.
 
-    "User: \"Worst-rated bridges in California\"\n" +
-    "→ get_bridge_condition(state_code=\"06\", max_lowest_rating=4, limit=25)\n" +
-    "  (Note: state_code is 2-char FIPS with leading zero. CA=06, TX=48, FL=12, NY=36.)\n\n" +
-
-    "User: \"Find recent federal highway construction awards in Texas under NAICS 237310, " +
-    "then list open opportunities matching the same NAICS\"\n" +
-    "→ get_contract_awards(query=\"highway construction\", geography=\"TX\", naics_codes=[\"237310\"])\n" +
-    "→ get_procurement_opportunities(query=\"highway construction\", geography=\"TX\", naics_codes=[\"237310\"])\n" +
-    "  (BD pairing rule: awards FIRST so competitive context informs the open-opportunity " +
-    "list. Never ask the user for a date range.)\n\n" +
-
-    "User: \"Which Texas community water systems have SDWA violations serving 10K+ people?\"\n" +
-    "→ get_water_infrastructure(query_type=\"violations\", states=[\"TX\"], " +
-    "system_types=[\"CWS\"], has_violations=true, min_population_served=10000)\n" +
-    "  (query_type=\"violations\" — not \"water_systems\". CWS = Community Water System.)\n\n" +
-
-    "User: \"Draft an SOW for an IH-35 bridge rehabilitation project\"\n" +
-    "→ search_project_knowledge(query=\"bridge rehabilitation SOW IH-35\", " +
-    "document_types=[\"sow\", \"case_study\"])\n" +
-    "→ draft_document(document_type=\"scope_of_work\", context={...retrieved snippets...}, " +
-    "project_name=\"IH-35 Bridge Rehabilitation\")\n" +
-    "  (ALWAYS call search_project_knowledge first to pull templates + prior project " +
-    "context; pass retrieved content into context for draft_document.)\n\n" +
-
-    "User: \"Texas renewable energy generation share over the last 5 years\"\n" +
-    "→ get_energy_infrastructure(states=[\"TX\"], data_series=\"fuel_mix\", " +
-    "year_from=2019, year_to=2024)\n" +
-    "  (data_series=\"fuel_mix\" returns % share by fuel — what \"renewable share\" means. " +
-    "Use \"generation\" for raw MWh, \"capacity\" for installed MW.)";
-
-// ── Prompt management: fetch system prompt from DD's Prompt Registry ───────
-// PromptHolder refreshes periodically (PromptRefreshBackgroundService, ~60s)
-// so a version bump in the Datadog UI — including one pinned via a
-// prompt-version.* Feature Flag (PromptVersionFlags) — reaches a running
-// pod without a redeploy. Both are constructed directly here (not resolved
-// from DI) so the ActivityListener below can read PromptHolder's live state
-// before builder.Build() runs; PromptHolder is then registered as the
-// shared DI singleton so AgentHolder, the background refresh, and
-// GET /prompts/status all see the same instance.
+// ── Prompt management: router + 5 specialists, each reading its own prompt
+// from DD's Prompt Registry ─────────────────────────────────────────────
+// SpecialistRegistry builds one PromptHolder + one AgentHolder per
+// specialist (plus the router) and wires them into a native
+// HandoffWorkflowBuilder workflow — see SpecialistRegistry.cs. Each
+// PromptHolder refreshes periodically (PromptRefreshBackgroundService,
+// ~60s) so a version bump in the Datadog UI — including one pinned via a
+// Feature Flag (PromptVersionFlags) — reaches a running pod without a
+// redeploy. promptManagementClient/promptVersionFlags are cheap,
+// network-free constructions (unlike the old single-PromptHolder setup,
+// SpecialistRegistry itself now needs the real DI-registered IChatClient/
+// McpClientHolder/ILoggerFactory, so it's registered here but warmed up
+// and used by the ActivityListener only after builder.Build() below).
 using var promptBootstrapHttp = new HttpClient();
 var promptManagementClient = new DatadogPromptManagementClient(
     promptBootstrapHttp, NullLogger<DatadogPromptManagementClient>.Instance);
 var promptVersionFlags = new PromptVersionFlags(NullLogger<PromptVersionFlags>.Instance);
-var promptHolder = new PromptHolder(
-    promptManagementClient, promptVersionFlags, AgentSystemPrompt, NullLogger<PromptHolder>.Instance);
-// Bounded startup-time warm-up: must never block app startup past this
-// deadline regardless of what hangs inside (Feature Flags provider init,
-// registry HTTP call, DNS). PromptHolder's own fallback still applies —
-// the background refresh (PromptRefreshBackgroundService) retries after.
-using (var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-{
-    try
-    {
-        await promptHolder.RefreshAsync(startupCts.Token);
-    }
-    catch (OperationCanceledException)
-    {
-        Console.WriteLine("[prompt-management] initial warm-up did not complete within 5s — using fallback until the periodic refresh succeeds.");
-    }
-}
 
-builder.Services.AddSingleton(promptHolder);
+builder.Services.AddSingleton(sp => new SpecialistRegistry(
+    sp.GetRequiredService<IChatClient>(),
+    sp.GetRequiredService<McpClientHolder>(),
+    promptManagementClient,
+    promptVersionFlags,
+    sp.GetRequiredService<ILoggerFactory>(),
+    TelemetrySetup.ActivitySourceName));
 builder.Services.AddSingleton(promptVersionFlags);
 builder.Services.AddHostedService<PromptRefreshBackgroundService>();
-
-// AgentHolder builds (and rebuilds) the ChatClientAgent against the current
-// McpClientHolder tool list and PromptHolder's current prompt. Both holders'
-// Generation are tracked so the agent rebuilds once per change, not per
-// request — see AgentHolder.
-builder.Services.AddSingleton(sp => new AgentHolder(
-    chatClient:     sp.GetRequiredService<IChatClient>(),
-    mcpHolder:      sp.GetRequiredService<McpClientHolder>(),
-    promptHolder:   sp.GetRequiredService<PromptHolder>(),
-    agentName:      "infra-advisor",
-    otelSourceName: TelemetrySetup.ActivitySourceName));
-
-// ── Prompt-version/tracking + agent-span capture ────────────────────────
-// One ActivityListener does three jobs:
-//   1. Stamps a content-derived prompt version on chat + invoke_agent spans
-//      without exporting the prompt template itself.
-//   2. Stamps DD LLM Observability's prompt-tracking attribute (the
-//      OTel-path equivalent of ddtrace Python's LLMObs.annotate(prompt=...))
-//      so the LLM Obs UI shows which prompt template/version produced the
-//      span, and whether it came from the registry or the local fallback.
-//   3. Captures the invoke_agent span's (trace_id, span_id) into an
-//      AsyncLocal so AgentService can attach external-eval scores to the
-//      AGENT span (not the HTTP root) — DD requires both IDs on the
-//      eval-metric API's join_on.span field.
-static string ShortContentHash(string text)
-{
-    var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(text));
-    return Convert.ToHexString(bytes).Substring(0, 8).ToLowerInvariant();
-}
-
-// Reads PromptHolder.Current fresh on every activity rather than closing
-// over a startup-time snapshot — required now that PromptHolder refreshes
-// periodically; otherwise span tagging would go stale the moment a
-// background refresh picked up a new version.
-ActivitySource.AddActivityListener(new ActivityListener
-{
-    ShouldListenTo = source =>
-        source.Name == "Experimental.Microsoft.Extensions.AI" ||
-        source.Name == TelemetrySetup.ActivitySourceName,
-    ActivityStarted = activity =>
-    {
-        if (activity.OperationName is "invoke_agent" or "chat")
-        {
-            var current = promptHolder.Current;
-            // A content hash preserves prompt-version correlation without
-            // copying the system prompt into exported span attributes.
-            var promptVersion = current.Source is "registry" or "flag-pinned"
-                ? $"{current.Source}-{current.Version}"
-                : "v1-" + ShortContentHash(current.Template);
-            var promptTrackingJson = JsonSerializer.Serialize(new
-            {
-                id = PromptHolder.PromptId,
-                version = promptVersion,
-                template = current.Template,
-                source = current.Source,
-            });
-            activity.SetTag("prompt.version", promptVersion);
-            activity.SetTag("_dd.ml_obs.prompt_tracking", promptTrackingJson);
-        }
-        if (activity.OperationName == "invoke_agent")
-            AgentSpanContext.Capture(activity);
-
-        // DD LLM Observability session/conversation grouping (OTel path)
-        // requires gen_ai.conversation.id on every gen_ai span in the trace,
-        // not just the root — see AmbientSessionContext for why this can't
-        // be set at each auto-instrumented span's call site directly.
-        if (AmbientSessionContext.Current is { } sessionId)
-            activity.SetTag("gen_ai.conversation.id", sessionId);
-    },
-    Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
-});
-Console.WriteLine($"[prompt-management] system prompt source={promptHolder.Current.Source} " +
-                  $"version={promptHolder.Current.Version} ({promptHolder.Current.Template.Length} chars)");
 
 // ── Business metrics meter ────────────────────────────────────────────────────
 // Shared meter for endpoint-level counters (conversation + tool counters
@@ -546,6 +405,104 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
 
+// ── Prompt management warm-up + span tagging ──────────────────────────────────
+// Resolved from the built container (not constructed directly) so
+// SpecialistRegistry shares the exact same IChatClient/McpClientHolder
+// singletons every request uses — see the AddSingleton registration above.
+var specialistRegistry = app.Services.GetRequiredService<SpecialistRegistry>();
+
+// Bounded startup-time warm-up: must never block app startup past this
+// deadline regardless of what hangs inside (Feature Flags provider init,
+// registry HTTP call, DNS). Each PromptHolder's own fallback still applies —
+// the background refresh (PromptRefreshBackgroundService) retries after.
+using (var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+{
+    try
+    {
+        await specialistRegistry.WarmUpAsync(startupCts.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        Console.WriteLine("[prompt-management] initial warm-up did not complete within 5s — using fallback until the periodic refresh succeeds.");
+    }
+}
+
+// ── Prompt-version/tracking + agent-span capture ────────────────────────
+// One ActivityListener does three jobs:
+//   1. Stamps a content-derived prompt version on chat + invoke_agent spans
+//      without exporting the prompt template itself.
+//   2. Stamps DD LLM Observability's prompt-tracking attribute (the
+//      OTel-path equivalent of ddtrace Python's LLMObs.annotate(prompt=...))
+//      so the LLM Obs UI shows which prompt template/version produced the
+//      span, and whether it came from the registry or the local fallback.
+//   3. Captures the invoke_agent span's (trace_id, span_id) into an
+//      AsyncLocal so AgentService can attach external-eval scores to the
+//      AGENT span (not the HTTP root) — DD requires both IDs on the
+//      eval-metric API's join_on.span field.
+static string ShortContentHash(string text)
+{
+    var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(text));
+    return Convert.ToHexString(bytes).Substring(0, 8).ToLowerInvariant();
+}
+
+// gen_ai.agent.id is set by MAF's OpenTelemetryAgent on the invoke_agent
+// Activity (ilspycmd-confirmed against Microsoft.Agents.AI 1.20.0:
+// OpenTelemetryAgent.UpdateCurrentActivity tags "gen_ai.agent.id" =
+// AIAgent.Id) — the same string AgentHolder set as ChatClientAgentOptions.Id
+// ("router", "specialist-engineering", ...), so it doubles as a key into
+// SpecialistRegistry.PromptHolders to know which specialist's prompt
+// produced THIS span, now that .NET has 6 prompts instead of 1. A "chat"
+// span nests inside its invoke_agent parent, so it reads the tag off
+// Activity.Parent instead.
+ActivitySource.AddActivityListener(new ActivityListener
+{
+    ShouldListenTo = source =>
+        source.Name == "Experimental.Microsoft.Extensions.AI" ||
+        source.Name == TelemetrySetup.ActivitySourceName,
+    ActivityStarted = activity =>
+    {
+        if (activity.OperationName is "invoke_agent" or "chat")
+        {
+            var agentId = activity.OperationName == "invoke_agent"
+                ? activity.GetTagItem("gen_ai.agent.id") as string
+                : activity.Parent?.GetTagItem("gen_ai.agent.id") as string;
+            if (agentId is not null && specialistRegistry.PromptHolders.TryGetValue(agentId, out var holder))
+            {
+                var current = holder.Current;
+                // A content hash preserves prompt-version correlation without
+                // copying the system prompt into exported span attributes.
+                var promptVersion = current.Source is "registry" or "flag-pinned"
+                    ? $"{current.Source}-{current.Version}"
+                    : "v1-" + ShortContentHash(current.Template);
+                var promptTrackingJson = JsonSerializer.Serialize(new
+                {
+                    id = holder.PromptId,
+                    version = promptVersion,
+                    template = current.Template,
+                    source = current.Source,
+                });
+                activity.SetTag("prompt.version", promptVersion);
+                activity.SetTag("_dd.ml_obs.prompt_tracking", promptTrackingJson);
+            }
+        }
+        if (activity.OperationName == "invoke_agent")
+            AgentSpanContext.Capture(activity);
+
+        // DD LLM Observability session/conversation grouping (OTel path)
+        // requires gen_ai.conversation.id on every gen_ai span in the trace,
+        // not just the root — see AmbientSessionContext for why this can't
+        // be set at each auto-instrumented span's call site directly.
+        if (AmbientSessionContext.Current is { } sessionId)
+            activity.SetTag("gen_ai.conversation.id", sessionId);
+    },
+    Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+});
+foreach (var (id, holder) in specialistRegistry.PromptHolders)
+{
+    Console.WriteLine($"[prompt-management] {id}: source={holder.Current.Source} " +
+                      $"version={holder.Current.Version} ({holder.Current.Template.Length} chars)");
+}
+
 // ── Startup probes ────────────────────────────────────────────────────────────
 var appState = app.Services.GetRequiredService<AppState>();
 var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
@@ -600,6 +557,7 @@ app.MapPost("/query", async (
     var conversationId = httpContext.Request.Headers["X-Conversation-ID"].FirstOrDefault();
     var userId = SubClaim(httpContext);
     if (userId is null) return Results.Unauthorized();
+    var jobRole = JobRoleClaim(httpContext);
     var sessionId = body.SessionId ?? headerSessionId ?? Guid.NewGuid().ToString();
     if (!string.IsNullOrWhiteSpace(conversationId))
     {
@@ -642,6 +600,8 @@ app.MapPost("/query", async (
             deployment: deployment,
             attachments: attachments,
             rumSessionId: rumSessionId,
+            userId: userId,
+            jobRole: jobRole,
             ct: httpContext.RequestAborted);
     }
     catch (Exception ex)
@@ -706,6 +666,7 @@ app.MapPost("/query/stream", async (
     var conversationId = httpContext.Request.Headers["X-Conversation-ID"].FirstOrDefault();
     var userId = SubClaim(httpContext);
     if (userId is null) return Results.Unauthorized();
+    var jobRole = JobRoleClaim(httpContext);
     var sessionId = body.SessionId ?? headerSessionId ?? Guid.NewGuid().ToString();
     if (!string.IsNullOrWhiteSpace(conversationId))
     {
@@ -780,6 +741,8 @@ app.MapPost("/query/stream", async (
             deployment: deployment,
             rumSessionId: rumSessionId,
             attachments: attachments,
+            userId: userId,
+            jobRole: jobRole,
             ct: httpContext.RequestAborted))
         {
             // Accumulate side-effects we need post-stream.
@@ -1026,23 +989,24 @@ app.MapPost("/tools/{name}", async (
 
 // ── /prompts/status — read-only diagnostics for the admin UI ──────────────────
 // Mirrors agent-api's GET /admin/prompts/status shape ({prompt_id, backend,
-// version, source, flag_value}) so the UI's prompt-versions panel can render
-// both backends' rows in one table. Read-only — see PromptHolder.
-app.MapGet("/prompts/status", async (PromptHolder holder, PromptVersionFlags flags) =>
+// version, source}) so the UI's prompt-versions panel can render both
+// backends' rows in one table. Now one row per specialist (router + 5
+// domains) instead of one — see SpecialistRegistry.
+app.MapGet("/prompts/status", (SpecialistRegistry registry) =>
 {
-    var current = holder.Current;
-    var flagValue = await flags.ResolveVersionAsync(PromptHolder.PromptId);
-    return Results.Ok(new[]
+    var rows = new List<object>();
+    foreach (var (_, holder) in registry.PromptHolders)
     {
-        new
+        var current = holder.Current;
+        rows.Add(new
         {
-            prompt_id = PromptHolder.PromptId,
+            prompt_id = holder.PromptId,
             backend = "dotnet",
             version = current.Version,
             source = current.Source,
-            flag_value = flagValue,
-        },
-    });
+        });
+    }
+    return Results.Ok(rows);
 });
 
 // ── /eval/status — read-only diagnostics for the admin UI ─────────────────────
@@ -1208,6 +1172,13 @@ app.MapDelete("/session/{sessionId}", async (string sessionId, HttpContext httpC
 
 static string? SubClaim(HttpContext ctx) =>
     ctx.User?.FindFirst("sub")?.Value;
+
+// Demo OpenFeature targeting attribute embedded directly in the JWT by
+// auth-api (services/auth-api/src/auth.py's create_token) — MapInboundClaims
+// is false (see the JWT bearer setup above), so the claim name survives
+// as-is and needs no extra mapping config here.
+static string? JobRoleClaim(HttpContext ctx) =>
+    ctx.User?.FindFirst("job_role")?.Value;
 
 app.MapPost("/conversations", async (HttpContext httpContext, ConversationService conversationSvc) =>
 {

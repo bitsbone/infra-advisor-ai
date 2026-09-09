@@ -1,25 +1,34 @@
 using System.Text.Json;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using StackExchange.Redis;
 
 namespace InfraAdvisor.AgentApi.Services;
 
-// Redis-backed AgentSession persistence.
+// Redis-backed conversation history persistence.
 //
-// MAF's AgentSession carries the conversation context (message history,
-// memory provider state) for a single conversation. SerializeSessionAsync
-// turns it into a JsonElement we can stash; DeserializeSessionAsync
-// reconstitutes it.
+// GetOrCreateHistoryAsync/SaveHistoryAsync round-trip a plain
+// List<ChatMessage> (via AIJsonUtilities.DefaultOptions, the same
+// polymorphic-content JSON contract MAF's own AgentSession serialization
+// uses internally) rather than a single ChatClientAgent's AgentSession.
+//
+// Why not AgentSession anymore: AgentSession is tied to ONE AIAgent
+// instance. Since Workstream 1 replaced the single merged agent with a
+// HandoffWorkflowBuilder workflow spanning 6 agents (router + 5
+// specialists — see SpecialistRegistry), there is no longer one agent
+// whose AgentSession could represent "the conversation." Handoff
+// workflows also have no serialize/deserialize surface of their own for
+// cross-request persistence (ilspycmd-confirmed against the installed
+// Microsoft.Agents.AI.Workflows 1.20.0 package — HandoffAgentExecutor
+// keeps conversation state in an internal, in-memory-only StatefulExecutor
+// field). So this store now owns history directly: load the full message
+// list, pass it as the workflow's input on every turn (matching Python's
+// agent-api, which is stateless per call in exactly the same way), then
+// append the turn's messages and save.
 //
 // Keyed by TenantSessionKey.Create(jwtSub, conversationOrSessionId), never by
 // a public client identifier alone. Sessions persist for 24h past the last
 // write — same TTL as the model preference in MemoryService.
-//
-// On the agent path:
-//   1. GetOrCreateAsync at the start of /chat → AgentSession (restored if
-//      we've seen this conversationId before, else fresh).
-//   2. agent.RunAsync(query, session) mutates the session.
-//   3. SaveAsync at the end of /chat → Redis write-back.
 public class AgentSessionStore
 {
     private readonly IConnectionMultiplexer _redis;
@@ -35,8 +44,7 @@ public class AgentSessionStore
 
     internal static string KeyFor(string tenantSessionKey) => $"{KeyPrefix}:{tenantSessionKey}";
 
-    public async Task<AgentSession> GetOrCreateAsync(
-        AIAgent agent, string conversationId, CancellationToken ct)
+    public async Task<List<ChatMessage>> GetOrCreateHistoryAsync(string conversationId, CancellationToken ct)
     {
         try
         {
@@ -44,35 +52,35 @@ public class AgentSessionStore
             var json = await db.StringGetAsync(KeyFor(conversationId));
             if (!json.IsNullOrEmpty)
             {
-                using var doc = JsonDocument.Parse((string)json!);
-                return await agent.DeserializeSessionAsync(doc.RootElement);
+                var restored = JsonSerializer.Deserialize<List<ChatMessage>>(
+                    (string)json!, AIJsonUtilities.DefaultOptions);
+                if (restored is not null) return restored;
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(
-                "Failed to restore agent session; starting fresh error_type={ErrorType}",
+                "Failed to restore agent conversation history; starting fresh error_type={ErrorType}",
                 ex.GetType().Name);
         }
-        return await agent.CreateSessionAsync(ct);
+        return new List<ChatMessage>();
     }
 
-    public async Task SaveAsync(
-        AIAgent agent, string conversationId, AgentSession session, CancellationToken ct)
+    public async Task SaveHistoryAsync(string conversationId, List<ChatMessage> history, CancellationToken ct)
     {
         try
         {
-            var json = await agent.SerializeSessionAsync(session);
+            var json = JsonSerializer.Serialize(history, AIJsonUtilities.DefaultOptions);
             var db = _redis.GetDatabase();
             await db.StringSetAsync(
                 KeyFor(conversationId),
-                json.GetRawText(),
+                json,
                 TimeSpan.FromSeconds(TtlSeconds));
         }
         catch (Exception ex)
         {
             _logger.LogWarning(
-                "Failed to save agent session error_type={ErrorType}",
+                "Failed to save agent conversation history error_type={ErrorType}",
                 ex.GetType().Name);
         }
     }

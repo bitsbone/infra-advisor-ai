@@ -52,6 +52,12 @@ public sealed record ArtifactEvent(
 
 // Terminal event with trace + metadata the UI uses for the message
 // footer (feedback button, trace link, sources reconciliation).
+//
+// PromptId/PromptVersion/PromptSource identify which prompt actually
+// answered THIS turn (the last specialist the Handoff workflow routed to —
+// see AgentService's ExecutorId tracking) so the UI can show a per-turn
+// version badge, distinct from the admin-only aggregate /prompts/status
+// panel which only shows each specialist's current pod-wide default.
 public sealed record DoneEvent(
     string? TraceId,
     string? SpanId,
@@ -59,7 +65,10 @@ public sealed record DoneEvent(
     string Model,
     List<string> Sources,
     List<string> ToolsCalled,
-    string QueryDomain
+    string QueryDomain,
+    string? PromptId = null,
+    string? PromptVersion = null,
+    string? PromptSource = null
 ) : StreamEvent("done");
 
 // Surfaced when something fatal happens mid-stream. The UI shows the
