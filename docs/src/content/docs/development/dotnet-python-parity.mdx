@@ -20,7 +20,7 @@ Parity means a user can complete the same job and an investigator can answer equ
 | Layer | .NET | Python |
 |---|---|---|
 | Web framework | ASP.NET Core | FastAPI |
-| Agent | Microsoft Agent Framework single-agent path | LangGraph router plus specialists |
+| Agent | Microsoft Agent Framework router plus specialists (`HandoffWorkflowBuilder`) | LangGraph router plus specialists |
 | Model abstraction | Microsoft.Extensions.AI | LangChain Azure OpenAI |
 | MCP client | ModelContextProtocol.Client with cached holder | LangChain MCP adapter refreshed per request |
 | AI telemetry | OpenTelemetry, Microsoft AI decorators, OTLP | `ddtrace.auto` plus explicit `LLMObs` spans |
@@ -49,7 +49,7 @@ The memory formats are intentionally not interchangeable. Both derive a tenant-s
 | PostgreSQL and DBM evidence | ✓ | ✓ | Attribute/collector path versus ddtrace propagation |
 | Explicit AI Guard pre-flight | ✓ | ✓ | .NET HTTP client; Python Datadog SDK client |
 | Downstream automatic AI Guard coverage | — | framework-dependent | Verify supported Python integrations at runtime |
-| Prompt version | content hash | missing | .NET evaluator config can still use a separate env version |
+| Prompt version | registry/flag-resolved, content hash fallback | registry/flag-resolved, content hash fallback | Both read the same registry prompt_ids and `__llmobs__.prompt.<prompt_id>` flag — see [prompt tracking](/llm-engineering/monitoring/prompt-tracking/); external eval submissions' `prompt.version` tag is still a separate, unaligned source on the .NET side |
 | Response evaluator framework | five evaluators | missing | Largest quality-layer gap |
 | User feedback submission | ✓ | ✓ | Both attach categorical feedback to a span |
 | Faithfulness signal | histogram plus external groundedness judge | task annotation plus gauge | Not the same metric or delivery contract |
@@ -65,10 +65,10 @@ See [External evaluations](/infra-advisor-ai/llm-engineering/evaluations/externa
 
 ## Prioritized gaps
 
-1. **Standardize prompt identity.** Apply the same content-derived version algorithm to Python and to .NET evaluation tags without exporting templates or user content.
-2. **Design Python evaluation delivery.** Decide how background work preserves target span identity, failure diagnostics, and shutdown behavior before porting individual checks.
-3. **Add bounded business metrics.** Match names and dimension contracts only where the aggregate question is useful on both backends.
-4. **Calibrate quality signals.** Define whether Python faithfulness and .NET groundedness are comparable; rename or separate them if they are not.
+1. **Design Python evaluation delivery.** Decide how background work preserves target span identity, failure diagnostics, and shutdown behavior before porting individual checks.
+2. **Add bounded business metrics.** Match names and dimension contracts only where the aggregate question is useful on both backends.
+3. **Calibrate quality signals.** Define whether Python faithfulness and .NET groundedness are comparable; rename or separate them if they are not.
+4. **Align the external-eval prompt-version tag.** .NET's eval submissions still tag `prompt.version` from a separate `PROMPT_VERSION` env value rather than the per-specialist resolved version — a smaller, narrower version of the standardize-prompt-identity gap that closed for tracing/tagging but not yet for this one submission path.
 
 <Aside type="note">
 Implementation symmetry is not automatically an improvement. Python's per-request MCP client avoids the stale cached-session failure that motivated the .NET reconnect holder, while the .NET evaluator abstraction provides capabilities Python genuinely lacks.

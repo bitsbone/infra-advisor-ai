@@ -20,7 +20,7 @@ When a prompt changes, date ranges are a weak comparison boundary: deployments o
 
 Both backends hash the system prompt and export only the version — never the template itself.
 
-**.NET** (`Program.cs`) stamps a content hash on `invoke_agent`/`chat` OpenTelemetry activities:
+**.NET** (`Program.cs`) stamps a content hash on `invoke_agent`/`chat` OpenTelemetry activities. Since the router+specialist redesign (`Services/SpecialistRegistry.cs`) replaced the single merged agent with 6 agents (router + 5 specialists), each with its own `PromptHolder`, the `ActivityListener` first resolves *which* specialist produced the span — MAF's `OpenTelemetryAgent` already stamps `gen_ai.agent.id` on the `invoke_agent` activity (the same id `AgentHolder` set as `ChatClientAgentOptions.Id` — `"router"`, `"specialist-engineering"`, ...) — then looks up that specialist's `PromptHolder.Current` to compute the tag:
 
 ```csharp
 static string ShortContentHash(string text) =>
@@ -28,11 +28,17 @@ static string ShortContentHash(string text) =>
         .Substring(0, 8)
         .ToLowerInvariant();
 
-var promptVersion = "v1-" + ShortContentHash(AgentSystemPrompt);
+var agentId = activity.GetTagItem("gen_ai.agent.id") as string;
+var holder = specialistRegistry.PromptHolders[agentId];
+var promptVersion = holder.Current.Source is "registry" or "ff"
+    ? $"{holder.Current.Source}-{holder.Current.Version}"
+    : "v1-" + ShortContentHash(holder.Current.Template);
 
 if (activity.OperationName is "invoke_agent" or "chat")
     activity.SetTag("prompt.version", promptVersion);
 ```
+
+A `chat` span nests inside its `invoke_agent` parent, so it reads the same tag off `activity.Parent` instead of its own (M.E.AI's chat-client instrumentation doesn't itself know which agent invoked it).
 
 **Python** (`services/agent-api/src/observability/prompts.py`) uses the same hash convention, exposed via a shared `fetch_prompt(prompt_id, fallback_template)` resolver every prompt call site goes through:
 
@@ -51,24 +57,24 @@ The value changes when the prompt content changes, but the template itself is no
 `DD_PROMPT_MANAGEMENT_ENABLED` (an app config value, **not** a Datadog product toggle) gates whether `fetch_prompt()`/its .NET equivalent actually calls out to [Datadog's Prompt Registry](https://docs.datadoghq.com/llm_observability/configure/prompt_management/) at runtime, versus always using the hardcoded string constant already in the codebase:
 
 - **Disabled** (the default — `"false"` in both `k8s/agent-api/configmap.yaml` and `k8s/agent-api-dotnet/configmap.yaml` today): the hardcoded constant is used directly, tagged with `source: "fallback"`.
-- **Enabled**: Python calls `LLMObs.get_prompt(prompt_id, fallback=fallback_template)`; .NET's `DatadogPromptManagementClient` calls the registry's REST API directly (no native .NET SDK support exists for this yet). Both **fail open** — any registry/network error, including a missing `DD_API_KEY`, falls straight back to the hardcoded constant rather than blocking startup or a request, mirroring this project's `observability/ai_guard.py` fail-open pattern.
+- **Enabled**: Python calls `LLMObs.get_prompt(prompt_id, fallback=fallback_template)`, which — per [prompt targeting](/llm-engineering/monitoring/prompt-targeting/) — first tries the registry's own `__llmobs__.prompt.<prompt_id>` Feature Flag before falling through to a plain registry fetch. .NET's `PromptVersionFlags` evaluates the identical flag via the OpenFeature SDK (no native .NET Prompt Management SDK exists, so `DatadogPromptManagementClient` calls the registry's REST API directly for the non-flag path). Both **fail open** at every step — any flag, registry, or network error, including a missing `DD_API_KEY`, falls straight back to the hardcoded constant rather than blocking startup or a request, mirroring this project's `observability/ai_guard.py` fail-open pattern.
 
 This feature is fully built but **not turned on anywhere today** — both backends run entirely on their hardcoded fallback strings in every deployed environment. Turning it on is a configmap change (`DD_PROMPT_MANAGEMENT_ENABLED: "true"`), not a code change.
 
-### The prompt_id inventory — why there are 9, not a duplicated 2
+### The prompt_id inventory — now shared, not duplicated
 
-Python and .NET manage **different, non-overlapping sets** of prompt_ids in the registry — this reflects a genuine architecture difference, not the same prompts deployed two ways:
+Python and .NET now manage the **same core prompt_ids** in the registry — a deliberate outcome of giving .NET its own native router + 5-specialist design (`Services/SpecialistRegistry.cs`, via Microsoft Agent Framework's `HandoffWorkflowBuilder`), matching Python's `_TOOL_PARTITIONS` architecture exactly:
 
-| Backend | prompt_ids | Why |
+| prompt_id | Shared by | Notes |
 |---|---|---|
-| Python (`services/agent-api`) | `router`, `specialist-engineering`, `specialist-water_energy`, `specialist-business_development`, `specialist-document`, `specialist-general`, `describe-image`, `faithfulness-eval` (8 total) | A router + 5-specialist multi-agent design — each specialist gets a *partitioned* tool set (`_TOOL_PARTITIONS`), so each needs its own prompt. `describe-image` and `faithfulness-eval` are two smaller, single-purpose prompts elsewhere in the pipeline. |
-| .NET (`services/agent-api-dotnet`) | `infra-advisor-system-prompt` (1 total) | A single-agent design — one `ChatClientAgent` with every MCP tool available; the model itself decides which tool to call, with no routing/partitioning step. |
+| `router`, `specialist-engineering`, `specialist-water_energy`, `specialist-business_development`, `specialist-document`, `specialist-general` | Both backends | Each specialist gets a *partitioned* tool set — Python's `_TOOL_PARTITIONS`, .NET's `SpecialistRegistry.ToolPartitions` (identical domain lists). Both read the exact same registry entries, so a targeting rule or version pin applies symmetrically to whichever backend a request lands on. |
+| `describe-image`, `faithfulness-eval` | Python only | Two smaller, single-purpose prompts elsewhere in Python's pipeline, with no .NET equivalent. |
 
-Collapsing these into one shared prompt would require also collapsing Python's tool-partitioning logic — a real behavioral change, not just a registry cleanup. Some prose could reasonably be shared as sub-fragments (e.g. the bridge/NBI citation rules both backends state independently), but the *number* of registry entries differing (8 vs 1) is expected.
+.NET's fallback text per specialist (`SpecialistRegistry.FallbackPrompts`, used only when the registry is unreachable/disabled) doesn't need to be byte-identical to Python's `_SPECIALIST_SYSTEM_PROMPTS` — real parity comes from both backends reading the same registry entries once `DD_PROMPT_MANAGEMENT_ENABLED=true`, not from the fallback strings matching.
 
 ### Seeding the registry
 
-`services/agent-api/scripts/seed_prompt_registry.py` is a one-time, manually-run script (not part of app startup) that pushes today's hardcoded prompts into the registry as each one's `v1`, so `LLMObs.get_prompt()` has something real to resolve once `DD_PROMPT_MANAGEMENT_ENABLED=true` is turned on. It reads the .NET prompt directly out of `agent-api-dotnet/Program.cs` (rather than requiring a manually-pasted copy, which previously risked drifting from the real constant) and is safe to re-run — an existing prompt_id is skipped, not overwritten.
+`services/agent-api/scripts/seed_prompt_registry.py` is a one-time, manually-run script (not part of app startup) that pushes today's hardcoded Python prompts into the registry as each one's `v1`, so `LLMObs.get_prompt()` has something real to resolve once `DD_PROMPT_MANAGEMENT_ENABLED=true` is turned on. It seeds only once per prompt_id, not once per backend — since .NET now reads these same ids, there's nothing separate for it to seed. Safe to re-run: an existing prompt_id is skipped, not overwritten.
 
 Once a prompt is in the registry, [deploying a specific version per environment](/llm-engineering/monitoring/prompt-targeting/) — without a redeploy — is a separate, Feature-Flags-driven mechanism covered on its own page.
 
