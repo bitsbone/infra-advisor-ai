@@ -6,13 +6,14 @@ import {
   Flex,
   HStack,
   Link,
+  NativeSelect,
   Spinner,
   Text,
   Textarea,
   VStack,
 } from "@chakra-ui/react";
 import { Sparkles } from "lucide-react";
-import { getApiBase } from "../lib/api";
+import { BackendType, getApiBase, getBackend } from "../lib/api";
 import { getToken } from "../lib/auth";
 
 // Every protected endpoint requires a bearer token (services/agent-api and
@@ -230,10 +231,14 @@ export function Sandbox({ prefill }: { prefill?: SandboxPrefill | null }) {
   const [result, setResult] = useState<RunResult | null>(null);
   const [responseTab, setResponseTab] = useState<"response" | "request">("response");
 
-  // Respects the user's currently-selected backend (Chat.tsx's toolbar) —
-  // previously hardcoded to Python's /api regardless of selection, which
-  // silently broke MCP tool calls when the .NET backend was selected.
-  const apiBase = getApiBase();
+  // Independent of Chat.tsx's own backend toggle — the sandbox is for
+  // deliberately testing either backend's API surface, so it shouldn't be
+  // silently pinned to whichever backend the user's last chat happened to
+  // use (previously getApiBase() with no argument, which reads that same
+  // persisted chat-session default). Seeded from it once on mount purely
+  // as a reasonable starting point, then switched independently below.
+  const [backend, setBackendLocal] = useState<BackendType>(() => getBackend());
+  const apiBase = getApiBase(backend);
 
   const endpoint = ENDPOINTS.find((e) => e.id === selectedId) ?? ENDPOINTS[0];
 
@@ -319,11 +324,17 @@ export function Sandbox({ prefill }: { prefill?: SandboxPrefill | null }) {
       });
 
       const durationMs = Math.round(performance.now() - start);
+      // A Response body can only be consumed once — calling .json() and,
+      // on failure, .text() as a fallback throws "Failed to execute 'text'
+      // on 'Response': body stream already read" the moment the response
+      // isn't valid JSON, since the failed .json() call already consumed
+      // the stream. Read the raw text once, then try to parse it.
+      const rawText = await resp.text();
       let respBody: unknown;
       try {
-        respBody = await resp.json();
+        respBody = rawText ? JSON.parse(rawText) : null;
       } catch {
-        respBody = await resp.text();
+        respBody = rawText;
       }
 
       setResult({ status: resp.status, body: respBody, durationMs, requestBody: body });
@@ -427,13 +438,34 @@ export function Sandbox({ prefill }: { prefill?: SandboxPrefill | null }) {
           py={3}
           flexShrink={0}
         >
-          <HStack gap={2} mb={0.5}>
-            <Badge colorPalette={methodColor(endpoint.method)} variant="subtle" fontSize="xs" borderRadius="sm" px={1.5}>
-              {endpoint.method}
-            </Badge>
-            <Text fontSize="sm" fontFamily="mono" color="gray.700">
-              {apiBase}{endpoint.path}
-            </Text>
+          <HStack gap={2} mb={0.5} justify="space-between">
+            <HStack gap={2} minW={0}>
+              <Badge colorPalette={methodColor(endpoint.method)} variant="subtle" fontSize="xs" borderRadius="sm" px={1.5}>
+                {endpoint.method}
+              </Badge>
+              <Text fontSize="sm" fontFamily="mono" color="gray.700" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+                {apiBase}{endpoint.path}
+              </Text>
+            </HStack>
+            {/* Independent of Chat.tsx's backend toggle — lets the sandbox
+                test either backend regardless of which one the chat is
+                currently using. */}
+            <HStack gap={1.5} flexShrink={0}>
+              <Text fontSize="10px" color="gray.400" fontFamily="mono" letterSpacing="wide" textTransform="uppercase">Backend</Text>
+              <NativeSelect.Root size="xs" disabled={running}>
+                <NativeSelect.Field
+                  aria-label="Select backend to test"
+                  value={backend}
+                  onChange={(e) => setBackendLocal(e.target.value as BackendType)}
+                  fontFamily="mono"
+                  fontSize="xs"
+                >
+                  <option value="python">Python</option>
+                  <option value="dotnet">.NET</option>
+                </NativeSelect.Field>
+                <NativeSelect.Indicator />
+              </NativeSelect.Root>
+            </HStack>
           </HStack>
           <Text
             fontSize="xs"
