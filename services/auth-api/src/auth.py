@@ -23,6 +23,7 @@ class UserOut(BaseModel):
     is_admin: bool
     is_service_account: bool
     created_at: str  # ISO format
+    job_role: str | None = None
 
 
 RESET_TOKEN_EXPIRE_HOURS = 1
@@ -56,11 +57,18 @@ def reset_token_expiry() -> datetime:
 # ─── JWT helpers ──────────────────────────────────────────────────────────────
 
 def create_token(user: dict) -> str:
-    """Issue a signed JWT for the given user dict (as returned by DB helpers)."""
+    """Issue a signed JWT for the given user dict (as returned by DB helpers).
+
+    job_role rides in the JWT (not fetched separately) so both agent-api
+    backends can use it as an OpenFeature targeting attribute with zero
+    extra network calls — same staleness class as every other claim here:
+    a role change takes effect at the user's next login.
+    """
     expire = datetime.now(timezone.utc) + timedelta(hours=TOKEN_EXPIRE_HOURS)
     payload = {
         "sub": user["id"],
         "email": user["email"],
+        "job_role": user.get("job_role"),
         "exp": expire,
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=ALGORITHM)

@@ -1,4 +1,5 @@
 import os
+import random
 import uuid
 from datetime import datetime, timezone
 
@@ -8,6 +9,19 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
 DATABASE_URL: str = os.environ["DATABASE_URL"]
+
+# Sample job roles for the "public infrastructure engineering firm" demo
+# narrative — each maps 1:1 onto an existing specialist domain, so a
+# targeting rule on one of these ("Civil Engineer" -> engineering) produces
+# an intuitive, demoable result: pin a prompt version for a specific role
+# and watch only that role's queries pick it up.
+JOB_ROLES: list[str] = [
+    "Civil Engineer",
+    "Water & Energy Analyst",
+    "Business Development Manager",
+    "Contracts Administrator",
+    "Program Director",
+]
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -34,6 +48,11 @@ class UserRow(Base):
     )
     reset_token_hash = Column(Text, nullable=True)
     reset_token_expires = Column(DateTime(timezone=True), nullable=True)
+    # Demo OpenFeature targeting attribute — one of JOB_ROLES below, embedded
+    # in the JWT at login so both agent-api backends can use it as a
+    # targeting_key/attribute for the __llmobs__.prompt.<prompt_id> Feature
+    # Flag without a network round-trip. See main.py's AdminTab endpoints.
+    job_role = Column(Text, nullable=True)
 
 
 # ─── Schema bootstrap ─────────────────────────────────────────────────────────
@@ -53,15 +72,29 @@ def init_db() -> None:
                 reset_token_expires TIMESTAMPTZ
             )
         """))
-        # Add reset columns to existing tables (idempotent)
+        # Add reset/job_role columns to existing tables (idempotent)
         for col, typedef in [
             ("reset_token_hash", "TEXT"),
             ("reset_token_expires", "TIMESTAMPTZ"),
+            ("job_role", "TEXT"),
         ]:
             conn.execute(text(
                 f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col} {typedef}"
             ))
         conn.commit()
+
+    # Backfill a random demo job_role onto any existing user who doesn't
+    # have one yet (new signups get one explicitly at creation — see
+    # create_user). Safe to run on every startup: only touches NULLs. Done
+    # in Python (one UPDATE per row) rather than a single random-array SQL
+    # expression — simpler and avoids Postgres-array-literal edge cases for
+    # a one-time, small-N startup migration.
+    with SessionLocal() as db:
+        rows = db.query(UserRow).filter(UserRow.job_role.is_(None)).all()
+        for row in rows:
+            row.job_role = random.choice(JOB_ROLES)
+        if rows:
+            db.commit()
 
 
 # ─── CRUD helpers ─────────────────────────────────────────────────────────────
@@ -74,6 +107,7 @@ def _row_to_dict(row: UserRow) -> dict:
         "is_admin": row.is_admin,
         "is_service_account": row.is_service_account,
         "created_at": row.created_at.isoformat() if row.created_at else None,
+        "job_role": row.job_role,
     }
 
 
@@ -94,6 +128,7 @@ def create_user(
             password_hash=password_hash,
             is_admin=is_admin,
             is_service_account=is_service_account,
+            job_role=random.choice(JOB_ROLES),
         )
         db.add(user)
         db.commit()

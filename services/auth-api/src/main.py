@@ -22,6 +22,7 @@ from auth import (
     verify_password,
 )
 from database import (
+    JOB_ROLES,
     clear_reset_token,
     create_user,
     delete_user,
@@ -140,6 +141,7 @@ class AdminCreateUserRequest(BaseModel):
 class AdminPatchUserRequest(BaseModel):
     is_admin: bool | None = None
     is_service_account: bool | None = None
+    job_role: str | None = None
 
 
 class AdminSetPasswordRequest(BaseModel):
@@ -155,6 +157,7 @@ def _user_dict_to_out(u: dict) -> UserOut:
         is_admin=u["is_admin"],
         is_service_account=u["is_service_account"],
         created_at=u["created_at"],
+        job_role=u.get("job_role"),
     )
 
 
@@ -407,8 +410,8 @@ def admin_patch_user(
     body: AdminPatchUserRequest,
     admin: UserOut = Depends(require_admin),
 ):
-    if user_id == admin.id:
-        raise HTTPException(status_code=403, detail="You cannot modify your own account")
+    if user_id == admin.id and (body.is_admin is not None or body.is_service_account is not None):
+        raise HTTPException(status_code=403, detail="You cannot modify your own admin/service-account status")
 
     if get_user_by_id(user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -418,6 +421,10 @@ def admin_patch_user(
         fields["is_admin"] = body.is_admin
     if body.is_service_account is not None:
         fields["is_service_account"] = body.is_service_account
+    if body.job_role is not None:
+        if body.job_role not in JOB_ROLES:
+            raise HTTPException(status_code=400, detail=f"job_role must be one of {JOB_ROLES}")
+        fields["job_role"] = body.job_role
 
     updated = update_user(user_id, **fields)
     if updated is None:
