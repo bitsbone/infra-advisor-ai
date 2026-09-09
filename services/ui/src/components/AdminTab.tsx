@@ -1,20 +1,24 @@
-import React, { FormEvent, useEffect, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import {
+  ActionBar,
   Badge,
   Box,
   Button,
+  Checkbox,
   Dialog,
   Flex,
   HStack,
   IconButton,
   Input,
+  Menu,
   NativeSelect,
+  Portal,
   Spinner,
   Table,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { KeyRound, Trash2, Shield } from "lucide-react";
+import { KeyRound, MoreVertical, Trash2, Shield } from "lucide-react";
 import { JOB_ROLES, User, createUser, deleteUser, listUsers, patchUser, setUserPassword } from "../lib/auth";
 import { useAuth } from "../hooks/useAuth";
 import { EvalDiagnostics } from "./EvalDiagnostics";
@@ -48,11 +52,14 @@ function NativeCheckbox({ id, label, checked, onChange, disabled }: NativeCheckb
 }
 
 // ── Pending action type ───────────────────────────────────────────────────────
+// `users` is always an array — a single-row action just passes a one-element
+// array — so the confirmation dialog and handleConfirm have one code path
+// for both single and bulk (Action Bar) actions instead of two.
 
 type PendingAction =
-  | { kind: "grant-admin"; user: User }
-  | { kind: "revoke-admin"; user: User }
-  | { kind: "delete"; user: User }
+  | { kind: "grant-admin"; users: User[] }
+  | { kind: "revoke-admin"; users: User[] }
+  | { kind: "delete"; users: User[] }
   | null;
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -63,6 +70,13 @@ export function AdminTab() {
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [patchingUserId, setPatchingUserId] = useState<string | null>(null);
+
+  // Bulk selection — the current admin's own row is never selectable (every
+  // bulk action below is either destructive or an admin-role change, both
+  // already blocked for self at the single-row level).
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkJobRole, setBulkJobRole] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   // Add user form
   const [newEmail, setNewEmail] = useState("");
@@ -100,6 +114,45 @@ export function AdminTab() {
   }
 
   useEffect(() => { loadUsers(); }, []);
+
+  // ── Bulk selection ────────────────────────────────────────────────────────
+
+  const selectableUsers = useMemo(() => users.filter((u) => u.id !== currentUser?.id), [users, currentUser]);
+  const selectedUsers = useMemo(() => users.filter((u) => selectedIds.has(u.id)), [users, selectedIds]);
+  const allSelectableSelected = selectableUsers.length > 0 && selectableUsers.every((u) => selectedIds.has(u.id));
+  const someSelected = selectedIds.size > 0;
+
+  function toggleSelected(id: string, checked: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll(checked: boolean) {
+    setSelectedIds(checked ? new Set(selectableUsers.map((u) => u.id)) : new Set());
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    setBulkJobRole("");
+  }
+
+  async function handleBulkJobRole(jobRole: string) {
+    setBulkJobRole(jobRole);
+    if (!jobRole || selectedUsers.length === 0) return;
+    setBulkBusy(true);
+    try {
+      const updated = await Promise.all(selectedUsers.map((u) => patchUser(u.id, { job_role: jobRole })));
+      setUsers((prev) => prev.map((u) => updated.find((x) => x.id === u.id) ?? u));
+    } catch (err) {
+      setListError(err instanceof Error ? err.message : "Failed to update job role for selected users");
+    } finally {
+      setBulkBusy(false);
+      setBulkJobRole("");
+    }
+  }
 
   // ── Add user ──────────────────────────────────────────────────────────────
 
@@ -186,18 +239,20 @@ export function AdminTab() {
 
   async function handleConfirm() {
     if (!pendingAction) return;
+    const ids = pendingAction.users.map((u) => u.id);
     setConfirming(true);
     setConfirmError(null);
     try {
       if (pendingAction.kind === "delete") {
-        await deleteUser(pendingAction.user.id);
-        setUsers((prev) => prev.filter((u) => u.id !== pendingAction.user.id));
+        await Promise.all(ids.map((id) => deleteUser(id)));
+        setUsers((prev) => prev.filter((u) => !ids.includes(u.id)));
       } else {
         const isAdmin = pendingAction.kind === "grant-admin";
-        const updated = await patchUser(pendingAction.user.id, { is_admin: isAdmin });
-        setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+        const updated = await Promise.all(ids.map((id) => patchUser(id, { is_admin: isAdmin })));
+        setUsers((prev) => prev.map((u) => updated.find((x) => x.id === u.id) ?? u));
       }
       setPendingAction(null);
+      clearSelection();
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : "Action failed");
     } finally {
@@ -207,22 +262,29 @@ export function AdminTab() {
 
   // ── Dialog copy ───────────────────────────────────────────────────────────
 
+  function dialogSubject(): string {
+    if (!pendingAction) return "";
+    if (pendingAction.users.length === 1) return pendingAction.users[0].email;
+    return `${pendingAction.users.length} users`;
+  }
+
   function dialogTitle(): string {
     if (!pendingAction) return "";
-    const email = pendingAction.user.email;
-    if (pendingAction.kind === "grant-admin") return `Grant admin to ${email}?`;
-    if (pendingAction.kind === "revoke-admin") return `Remove admin from ${email}?`;
-    return `Delete ${email}?`;
+    const subject = dialogSubject();
+    if (pendingAction.kind === "grant-admin") return `Grant admin to ${subject}?`;
+    if (pendingAction.kind === "revoke-admin") return `Remove admin from ${subject}?`;
+    return `Delete ${subject}?`;
   }
 
   function dialogBody(): string {
     if (!pendingAction) return "";
-    const email = pendingAction.user.email;
+    const subject = dialogSubject();
+    const plural = pendingAction.users.length > 1;
     if (pendingAction.kind === "grant-admin")
-      return `${email} will be able to manage all users and access all admin features.`;
+      return `${subject} will be able to manage all users and access all admin features.`;
     if (pendingAction.kind === "revoke-admin")
-      return `${email} will lose admin access and be downgraded to a standard user.`;
-    return `The account for ${email} will be permanently deleted. This cannot be undone.`;
+      return `${subject} will lose admin access and be downgraded to standard user${plural ? "s" : ""}.`;
+    return `The account${plural ? "s" : ""} for ${subject} will be permanently deleted. This cannot be undone.`;
   }
 
   function dialogConfirmLabel(): string {
@@ -321,9 +383,21 @@ export function AdminTab() {
               <Text fontSize="sm" color="red.500">{listError}</Text>
             </Flex>
           ) : (
-            <Table.Root size="sm" minW="760px">
+            <Table.Root size="sm" minW="820px">
               <Table.Header>
                 <Table.Row bg="gray.50">
+                  <Table.ColumnHeader py={3} px={4} w="10">
+                    <Checkbox.Root
+                      size="sm"
+                      checked={allSelectableSelected ? true : someSelected ? "indeterminate" : false}
+                      disabled={selectableUsers.length === 0}
+                      onCheckedChange={(e) => toggleSelectAll(!!e.checked)}
+                      aria-label="Select all users"
+                    >
+                      <Checkbox.HiddenInput />
+                      <Checkbox.Control />
+                    </Checkbox.Root>
+                  </Table.ColumnHeader>
                   {["Email", "Roles", "Job Role", "Created", "Actions"].map((h) => (
                     <Table.ColumnHeader key={h} fontSize="xs" fontWeight="semibold" color="gray.500"
                       textTransform="uppercase" letterSpacing="wider" py={3} px={4}>
@@ -335,7 +409,7 @@ export function AdminTab() {
               <Table.Body>
                 {users.length === 0 ? (
                   <Table.Row>
-                    <Table.Cell colSpan={5} textAlign="center" py={8} color="gray.400" fontSize="sm">
+                    <Table.Cell colSpan={6} textAlign="center" py={8} color="gray.400" fontSize="sm">
                       No users found
                     </Table.Cell>
                   </Table.Row>
@@ -344,6 +418,22 @@ export function AdminTab() {
                     const isSelf = u.id === currentUser?.id;
                     return (
                       <Table.Row key={u.id} _hover={{ bg: "gray.50" }}>
+
+                        {/* Select — the current admin's own row is never
+                            selectable, matching the per-row restrictions
+                            already in place for admin/delete actions. */}
+                        <Table.Cell px={4} py={3}>
+                          <Checkbox.Root
+                            size="sm"
+                            checked={selectedIds.has(u.id)}
+                            disabled={isSelf}
+                            onCheckedChange={(e) => toggleSelected(u.id, !!e.checked)}
+                            aria-label={`Select ${u.email}`}
+                          >
+                            <Checkbox.HiddenInput />
+                            <Checkbox.Control />
+                          </Checkbox.Root>
+                        </Table.Cell>
 
                         {/* Email */}
                         <Table.Cell px={4} py={3}>
@@ -417,65 +507,60 @@ export function AdminTab() {
                           </Text>
                         </Table.Cell>
 
-                        {/* Actions */}
+                        {/* Actions — a single grouped menu instead of three
+                            separate row buttons. */}
                         <Table.Cell px={4} py={3}>
-                          <HStack gap={1}>
-                            {/* Password management is available for every account,
-                                including the current admin's own account. */}
-                            <Button
-                              size="xs"
-                              variant="ghost"
-                              colorPalette="blue"
-                              borderRadius="md"
-                              gap={1}
-                              title={`Set password for ${u.email}`}
-                              onClick={() => openPasswordDialog(u)}
-                            >
-                              <KeyRound size={13} />
-                              Password
-                            </Button>
-
-                            {/* Admin toggle */}
-                            <Button
-                              size="xs"
-                              variant="ghost"
-                              colorPalette={u.is_admin ? "orange" : "purple"}
-                              borderRadius="md"
-                              gap={1}
-                              disabled={isSelf}
-                              title={
-                                isSelf
-                                  ? "You cannot change your own admin role"
-                                  : u.is_admin
-                                  ? "Remove admin role"
-                                  : "Grant admin role"
-                              }
-                              onClick={() =>
-                                openConfirm(
-                                  u.is_admin
-                                    ? { kind: "revoke-admin", user: u }
-                                    : { kind: "grant-admin", user: u }
-                                )
-                              }
-                            >
-                              <Shield size={13} />
-                              {u.is_admin ? "Revoke" : "Grant"}
-                            </Button>
-
-                            {/* Delete */}
-                            <IconButton
-                              size="xs"
-                              variant="ghost"
-                              colorPalette="red"
-                              borderRadius="md"
-                              aria-label={`Delete ${u.email}`}
-                              title={isSelf ? "You cannot delete your own account" : `Delete ${u.email}`}
-                              disabled={isSelf}
-                              onClick={() => openConfirm({ kind: "delete", user: u })}
-                            >
-                              <Trash2 size={13} />
-                            </IconButton>
-                          </HStack>
+                          <Menu.Root>
+                            <Menu.Trigger asChild>
+                              <IconButton
+                                size="xs"
+                                variant="ghost"
+                                colorPalette="gray"
+                                borderRadius="md"
+                                aria-label={`Actions for ${u.email}`}
+                              >
+                                <MoreVertical size={14} />
+                              </IconButton>
+                            </Menu.Trigger>
+                            <Portal>
+                              <Menu.Positioner>
+                                <Menu.Content minW="10rem">
+                                  <Menu.Item
+                                    value="password"
+                                    onSelect={() => openPasswordDialog(u)}
+                                  >
+                                    <KeyRound size={13} />
+                                    Set password
+                                  </Menu.Item>
+                                  <Menu.Item
+                                    value="admin-toggle"
+                                    disabled={isSelf}
+                                    onSelect={() =>
+                                      openConfirm(
+                                        u.is_admin
+                                          ? { kind: "revoke-admin", users: [u] }
+                                          : { kind: "grant-admin", users: [u] }
+                                      )
+                                    }
+                                  >
+                                    <Shield size={13} />
+                                    {u.is_admin ? "Revoke admin" : "Grant admin"}
+                                  </Menu.Item>
+                                  <Menu.Separator />
+                                  <Menu.Item
+                                    value="delete"
+                                    disabled={isSelf}
+                                    color="fg.error"
+                                    _hover={{ bg: "bg.error", color: "fg.error" }}
+                                    onSelect={() => openConfirm({ kind: "delete", users: [u] })}
+                                  >
+                                    <Trash2 size={13} />
+                                    Delete user
+                                  </Menu.Item>
+                                </Menu.Content>
+                              </Menu.Positioner>
+                            </Portal>
+                          </Menu.Root>
                         </Table.Cell>
 
                       </Table.Row>
@@ -650,6 +735,76 @@ export function AdminTab() {
           </Dialog.Content>
         </Dialog.Positioner>
       </Dialog.Root>
+
+      {/* Bulk actions — appears once at least one (non-self) row is
+          selected. Job role is applied immediately (a benign demo
+          attribute, same reasoning as the inline per-row select above);
+          admin/delete route through the same confirmation dialog as their
+          single-row equivalents. */}
+      <ActionBar.Root open={someSelected} onOpenChange={(e) => !e.open && clearSelection()}>
+        <Portal>
+          <ActionBar.Positioner>
+            <ActionBar.Content>
+              <ActionBar.SelectionTrigger>
+                {selectedIds.size} selected
+              </ActionBar.SelectionTrigger>
+              <ActionBar.Separator />
+
+              <NativeSelect.Root size="xs" disabled={bulkBusy} minW="9rem">
+                <NativeSelect.Field
+                  aria-label="Set job role for selected users"
+                  value={bulkJobRole}
+                  onChange={(e) => handleBulkJobRole(e.target.value)}
+                  fontSize="xs"
+                >
+                  <option value="" disabled>Set job role…</option>
+                  {JOB_ROLES.map((role) => (
+                    <option key={role} value={role}>{role}</option>
+                  ))}
+                </NativeSelect.Field>
+                <NativeSelect.Indicator />
+              </NativeSelect.Root>
+
+              <Button
+                size="sm"
+                variant="outline"
+                colorPalette="purple"
+                disabled={bulkBusy}
+                onClick={() => openConfirm({ kind: "grant-admin", users: selectedUsers })}
+              >
+                <Shield size={13} />
+                Grant admin
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                colorPalette="orange"
+                disabled={bulkBusy}
+                onClick={() => openConfirm({ kind: "revoke-admin", users: selectedUsers })}
+              >
+                <Shield size={13} />
+                Revoke admin
+              </Button>
+              <Button
+                size="sm"
+                variant="surface"
+                colorPalette="red"
+                disabled={bulkBusy}
+                onClick={() => openConfirm({ kind: "delete", users: selectedUsers })}
+              >
+                <Trash2 size={13} />
+                Delete
+              </Button>
+
+              <ActionBar.CloseTrigger asChild>
+                <IconButton size="sm" variant="ghost" aria-label="Clear selection" onClick={clearSelection}>
+                  ×
+                </IconButton>
+              </ActionBar.CloseTrigger>
+            </ActionBar.Content>
+          </ActionBar.Positioner>
+        </Portal>
+      </ActionBar.Root>
     </Box>
   );
 }
