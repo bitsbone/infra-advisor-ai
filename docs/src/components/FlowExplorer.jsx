@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow } from '@xyflow/react';
+import { BaseEdge, Background, Controls, EdgeLabelRenderer, Handle, MarkerType, Position, ReactFlow, getSmoothStepPath } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './flow-explorer.css';
 
@@ -50,6 +50,34 @@ function ExplorerNode({ data }) {
 
 const NODE_TYPES = { explorer: ExplorerNode };
 
+// Default ReactFlow edge labels are single-line SVG text sized to a
+// background rect — with nodes packed ~50px apart, any label longer than a
+// couple of words (e.g. "user id + job_role", "EvaluationContext") overflows
+// straight into the neighboring node cards instead of wrapping. Rendering
+// the label through EdgeLabelRenderer instead gives us a normal HTML/CSS
+// element (wraps, breaks long unbroken words) positioned over the canvas
+// rather than constrained to the SVG text's own bounding box.
+function ExplorerEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, markerEnd, label }) {
+  const [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  return (
+    <>
+      <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} />
+      {label && (
+        <EdgeLabelRenderer>
+          <div
+            className="flow-edge__label nodrag nopan"
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`, opacity: style?.opacity }}
+          >
+            {label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
+const EDGE_TYPES = { explorer: ExplorerEdge };
+
 function prepareFlow(flow, selectedId, onSelect) {
   const connected = new Set([selectedId]);
   for (const edge of flow.edges) {
@@ -60,7 +88,7 @@ function prepareFlow(flow, selectedId, onSelect) {
   const nodes = flow.nodes.map((node, index) => ({
     id: node.id,
     type: 'explorer',
-    position: node.position ?? { x: (node.column ?? index) * 245, y: (node.row ?? 0) * 145 },
+    position: node.position ?? { x: (node.column ?? index) * 300, y: (node.row ?? 0) * 145 },
     draggable: false,
     deletable: false,
     selectable: false,
@@ -83,7 +111,7 @@ function prepareFlow(flow, selectedId, onSelect) {
     return {
       id: `${flow.id}-edge-${index}`,
       ...edge,
-      type: edge.type || 'smoothstep',
+      type: edge.type || 'explorer',
       deletable: false,
       focusable: true,
       animated: active,
@@ -142,6 +170,7 @@ export default function FlowExplorer({
             nodes={prepared.nodes}
             edges={prepared.edges}
             nodeTypes={NODE_TYPES}
+            edgeTypes={EDGE_TYPES}
             fitView
             fitViewOptions={{ padding: 0.2, minZoom: 0.5, maxZoom: 1.15 }}
             minZoom={0.4}

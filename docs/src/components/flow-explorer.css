@@ -16,8 +16,13 @@
 .flow-explorer__canvas { min-width: 0; min-height: 27rem; border-bottom: 1px solid var(--sl-color-gray-5); background: radial-gradient(circle at 50% 0%,color-mix(in srgb,var(--sl-color-accent) 8%,transparent),transparent 45%); }
 .flow-explorer .react-flow { --xy-background-color: transparent; --xy-edge-stroke: var(--sl-color-gray-4); --xy-controls-button-background-color: var(--sl-color-gray-6); --xy-controls-button-background-color-hover: var(--sl-color-gray-5); --xy-controls-button-color: var(--sl-color-gray-1); --xy-controls-button-border-color: var(--sl-color-gray-5); }
 .flow-explorer .react-flow__edge-path { stroke-width: 1.6; }
-.flow-explorer .react-flow__edge-text { fill: var(--sl-color-gray-2); font-size: 10px; }
-.flow-explorer .react-flow__edge-textbg { fill: var(--sl-color-gray-6); }
+/* Edge labels render through EdgeLabelRenderer (ExplorerEdge in
+   FlowExplorer.jsx) as plain HTML instead of the default single-line SVG
+   text — that's what lets a label like "user id + job_role" wrap onto
+   multiple lines and break long unbroken words (e.g. "EvaluationContext")
+   instead of overflowing straight into the neighboring node cards, which
+   sit as little as ~50-100px apart. */
+.flow-explorer .flow-edge__label { position: absolute; max-width: 6.5rem; padding: .2rem .4rem; border-radius: .4rem; color: var(--sl-color-gray-2); background: color-mix(in srgb,var(--sl-color-gray-6) 88%,transparent); font-size: .58rem; line-height: 1.25; text-align: center; overflow-wrap: anywhere; pointer-events: none; }
 .flow-explorer .react-flow__node { border: 0; background: transparent; }
 .flow-node:focus-visible { outline: 3px solid var(--sl-color-accent-high); outline-offset: 3px; }
 .flow-node { width: 12rem; min-height: 6.15rem; padding: .75rem .8rem; border: 1px solid color-mix(in srgb,var(--node-accent) 55%,var(--sl-color-gray-5)); border-radius: .85rem; color: var(--sl-color-white); background: linear-gradient(145deg,var(--node-tint),color-mix(in srgb,var(--sl-color-gray-6) 94%,transparent)); box-shadow: 0 12px 28px rgba(0,0,0,.16); font: inherit; text-align: left; cursor: pointer; transition: opacity .18s ease,transform .18s ease,box-shadow .18s ease; }
