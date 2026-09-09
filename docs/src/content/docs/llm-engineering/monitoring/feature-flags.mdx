@@ -1,0 +1,48 @@
+---
+title: Feature Flags in this project
+description: What Datadog Feature Flags is, the OpenFeature SDK pattern both backends use to evaluate it, and where this project actually uses it today
+docType: concept
+audience:
+  - agent-developer
+  - observability-engineer
+maturity: partial
+verifiedOn: 2026-09-09
+datadogDocs: https://docs.datadoghq.com/feature_flags/
+sidebar:
+  order: 5
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Datadog's Feature Flags product lets you change application behavior for some or all users without a redeploy — a boolean, string, number, or object-typed flag, evaluated per request against a targeting context (a `targeting_key` identifying the caller, plus arbitrary attributes), with server-side evaluation metrics and correlation into traces. This page covers the general integration pattern; [prompt targeting](/llm-engineering/monitoring/prompt-targeting/) covers the one concrete flag this project actually evaluates today.
+
+<Aside type="note">
+This project's only real flag usage right now is prompt-version targeting. The pattern below (provider registration, fail-open evaluation, `DD_PROMPT_MANAGEMENT_ENABLED`-style gating) is written generically because it's the same shape any future flag in this codebase would follow — not because more flags exist yet.
+</Aside>
+
+## The OpenFeature SDK, not a Datadog-specific client
+
+Both backends evaluate flags through the vendor-neutral [OpenFeature SDK](https://openfeature.dev/) with Datadog's own provider registered against it, rather than a Datadog-only flag client:
+
+- **Python**: `openfeature-sdk` + `ddtrace`'s bundled provider (`ddtrace.internal.openfeature._provider.DataDogProvider`, wired up internally by `ddtrace.llmobs.LLMObs.get_prompt()` — see [prompt targeting](/llm-engineering/monitoring/prompt-targeting/) for exactly where).
+- **.NET**: the `OpenFeature` NuGet package + `Datadog.FeatureFlags.OpenFeature`'s `DatadogProvider`, registered explicitly in `Services/PromptVersionFlags.cs`.
+
+Using OpenFeature rather than a Datadog-specific SDK means the same application code would work against a different provider (LaunchDarkly, a self-hosted one, etc.) if the underlying flag backend ever changed — this project doesn't rely on that portability today, but it's a property of the integration choice worth knowing about.
+
+## The pattern: scoped registration, fail-open evaluation
+
+Both backends follow the same three rules, established while building prompt-version targeting and worth keeping for any future flag:
+
+1. **Register the provider lazily, scoped to a domain, and only when actually needed.** An earlier version of `PromptVersionFlags.cs` registered Datadog's OpenFeature provider unconditionally at startup — this caused a real production incident where app startup hung on provider initialization even with the feature disabled. Both backends now gate provider registration behind the same flag that gates the feature itself (`DD_PROMPT_MANAGEMENT_ENABLED=true`), and Python scopes its registration to its own OpenFeature "domain" (`api.set_provider(provider, domain)`) rather than replacing the SDK's global default provider, so it can't interfere with an unrelated flag evaluation elsewhere in the app.
+2. **Every evaluation call is wrapped and fails open.** A Feature Flags outage, a missing API key, a provider not yet ready — none of these may block a request. Both backends catch every exception around flag evaluation and fall through to whatever the pre-flag behavior would have been (see prompt targeting's resolution order: flag → registry HTTP fetch → hardcoded fallback).
+3. **A bounded startup timeout, never an unbounded wait.** Provider registration gets a timeout (3s in .NET's `PromptVersionFlags`); the caller proceeds on timeout rather than blocking indefinitely, logging a warning instead.
+
+## Targeting context: `targeting_key` and `attributes`
+
+An `EvaluationContext` carries a `targeting_key` (typically a stable user or entity id) and a dict of arbitrary `attributes` a targeting rule can match on. This project passes the requesting user's id as `targeting_key` and, where relevant, a `job_role` attribute (see [prompt targeting's job_role section](/llm-engineering/monitoring/prompt-targeting/#targeting-on-the-job_role-demo-attribute)) — evaluated fresh per request, not cached, since a per-user targeting decision can't be resolved against a fixed-interval timer the way a pod-wide default can.
+
+## Where this project actually uses it today
+
+Exactly one flag family: `__llmobs__.prompt.<prompt_id>`, auto-provisioned by Datadog's Prompt Management product (one per managed prompt, no manual creation) and evaluated as an object value resolving `{prompt_id, version, template}` in one call. See [prompt targeting](/llm-engineering/monitoring/prompt-targeting/) for the full resolution order, per-backend evaluation code, and how to set a targeting rule.
+
+An earlier version of this project also built a separate, hand-rolled integer flag (`prompt-version.<prompt_id>`) before discovering the registry's own flag already existed and was documented — that custom flag is gone; see prompt targeting's own history note.

@@ -6,7 +6,7 @@ audience:
   - application-developer
   - security-engineer
 maturity: stable
-verifiedOn: 2026-08-27
+verifiedOn: 2026-09-09
 sidebar:
   order: 6
 ---
@@ -22,7 +22,7 @@ The Auth API owns users and bearer tokens. Agent and client services consume val
 | Administrator | list/create/update/delete users; set password | Controlled account management |
 | Runtime | `/health`, `/livez`, `/readyz` | Diagnostics and shallow probes |
 
-Use the running OpenAPI schema for exact bodies. JWT `sub` is the stable user identity consumed by other services.
+Use the running OpenAPI schema for exact bodies. JWT `sub` is the stable user identity consumed by other services. The JWT also carries `email` and `job_role` — the latter a demo OpenFeature targeting attribute (one of 5 sample roles for the "public infrastructure engineering firm" narrative, editable per-user by an administrator) both agent-api backends read directly off the decoded token with no extra network call. See [prompt targeting](/infra-advisor-ai/llm-engineering/monitoring/prompt-targeting/#targeting-on-the-job_role-demo-attribute).
 
 ## Registration and bootstrap
 

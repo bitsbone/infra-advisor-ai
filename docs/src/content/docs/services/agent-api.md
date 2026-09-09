@@ -6,7 +6,7 @@ audience:
   - application-developer
   - observability-engineer
 maturity: stable
-verifiedOn: 2026-08-27
+verifiedOn: 2026-09-09
 sidebar:
   order: 1
 ---
@@ -29,7 +29,7 @@ authenticated request
   → schedule optional faithfulness task
 ```
 
-Specialists cover transportation, water/energy, business development, document work, and general questions. Tool partitioning narrows each agent's choices; it is a deliberate contrast with the .NET single-agent path.
+Specialists cover engineering, water/energy, business development, document work, and general questions. Tool partitioning narrows each agent's choices — [agent-api-dotnet](/infra-advisor-ai/services/agent-api-dotnet/) now implements the identical router+specialist topology (via Microsoft Agent Framework's `HandoffWorkflowBuilder`), sharing these same prompt_ids in the registry, so this is no longer a Python-only design.
 
 ## Endpoint groups
 

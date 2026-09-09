@@ -6,12 +6,12 @@ audience:
   - application-developer
   - observability-engineer
 maturity: stable
-verifiedOn: 2026-08-27
+verifiedOn: 2026-09-09
 sidebar:
   order: 2
 ---
 
-The .NET Agent API exposes the same user-facing jobs as Python through a different architecture. ASP.NET Core hosts a Microsoft Agent Framework agent with Microsoft.Extensions.AI decorators, project retrieval, a cached MCP client, and OpenTelemetry export.
+The .NET Agent API exposes the same user-facing jobs as Python through a different framework. ASP.NET Core hosts a Microsoft Agent Framework router + 5 tool-partitioned specialist agents (`Services/SpecialistRegistry.cs`), wired via `Microsoft.Agents.AI.Workflows`' `HandoffWorkflowBuilder`, alongside Microsoft.Extensions.AI decorators, project retrieval, a cached MCP client, and OpenTelemetry export.
 
 ## Request path
 
@@ -22,13 +22,13 @@ authenticated request
   → transcribe audio / prepare image content
   → deterministic domain classification
   → retrieve project context
-  → one agent reasons over the full MCP tool catalog
+  → the router hands off to one tool-partitioned specialist, which reasons over its allowed MCP tools
   → extract sources and artifacts
   → persist and stream/return result
   → sample registered response evaluators
 ```
 
-This is not the Python router/specialist topology. The comparison is valuable precisely because the client outcome can align while orchestration and traces differ.
+This now matches Python's router/specialist topology, including the same registry `prompt_id`s (`router`, `specialist-<domain>`) — see [.NET and Python parity](/infra-advisor-ai/development/dotnet-python-parity/) and [prompt tracking](/infra-advisor-ai/llm-engineering/monitoring/prompt-tracking/) for how the two converged.
 
 ## Client contract
 
@@ -43,9 +43,9 @@ New conversations default to `gpt-5.4-mini`. `AVAILABLE_MODELS` controls the ord
 
 ## Stateful boundaries
 
-`ConversationService` verifies JWT ownership before a conversation influences agent state, then repeats the owner predicate during writes. Redis uses an opaque tenant/session hash for Microsoft agent sessions and selected model state.
+`ConversationService` verifies JWT ownership before a conversation influences agent state, then repeats the owner predicate during writes. Redis stores conversation history as a plain `List<ChatMessage>` (`AgentSessionStore`) under an opaque tenant/session hash — text-only, matching Python's own history reconstruction exactly (no tool-call replay). This replaced MAF's per-agent `AgentSession` serialization once the router+specialist redesign meant no single agent could represent "the conversation" anymore, and a `HandoffWorkflowBuilder` workflow has no cross-request persistence surface of its own.
 
-`McpClientHolder` caches the .NET MCP session. If a session-expired failure occurs before unsafe response progress, the service serializes a refresh and retries once. `AgentHolder` rebuilds the agent when the tool-list generation changes. Python does not need the same holder because its adapter creates a fresh client lifecycle per request.
+`McpClientHolder` caches the .NET MCP session. If a session-expired failure occurs before unsafe response progress, the service serializes a refresh and retries once. `AgentHolder` (one instance per specialist, held by `SpecialistRegistry`) rebuilds its agent when the tool-list or prompt generation changes, and additionally supports a per-request, per-user-targeted rebuild (`GetAgentForRequestAsync`) for [Feature Flag-targeted prompt versions](/infra-advisor-ai/llm-engineering/monitoring/prompt-targeting/). Python does not need the same holder because its adapter creates a fresh client lifecycle per request.
 
 ## Evaluation pipeline
 
