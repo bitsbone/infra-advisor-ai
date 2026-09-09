@@ -8,13 +8,14 @@ import {
   HStack,
   IconButton,
   Input,
+  NativeSelect,
   Spinner,
   Table,
   Text,
   VStack,
 } from "@chakra-ui/react";
 import { KeyRound, Trash2, Shield } from "lucide-react";
-import { User, createUser, deleteUser, listUsers, patchUser, setUserPassword } from "../lib/auth";
+import { JOB_ROLES, User, createUser, deleteUser, listUsers, patchUser, setUserPassword } from "../lib/auth";
 import { useAuth } from "../hooks/useAuth";
 import { EvalDiagnostics } from "./EvalDiagnostics";
 import { AiGuardDiagnostics } from "./AiGuardDiagnostics";
@@ -61,6 +62,7 @@ export function AdminTab() {
   const [users, setUsers] = useState<User[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
+  const [patchingUserId, setPatchingUserId] = useState<string | null>(null);
 
   // Add user form
   const [newEmail, setNewEmail] = useState("");
@@ -322,7 +324,7 @@ export function AdminTab() {
             <Table.Root size="sm" minW="760px">
               <Table.Header>
                 <Table.Row bg="gray.50">
-                  {["Email", "Roles", "Created", "Actions"].map((h) => (
+                  {["Email", "Roles", "Job Role", "Created", "Actions"].map((h) => (
                     <Table.ColumnHeader key={h} fontSize="xs" fontWeight="semibold" color="gray.500"
                       textTransform="uppercase" letterSpacing="wider" py={3} px={4}>
                       {h}
@@ -333,7 +335,7 @@ export function AdminTab() {
               <Table.Body>
                 {users.length === 0 ? (
                   <Table.Row>
-                    <Table.Cell colSpan={4} textAlign="center" py={8} color="gray.400" fontSize="sm">
+                    <Table.Cell colSpan={5} textAlign="center" py={8} color="gray.400" fontSize="sm">
                       No users found
                     </Table.Cell>
                   </Table.Row>
@@ -372,6 +374,38 @@ export function AdminTab() {
                               <Text fontSize="xs" color="gray.400">User</Text>
                             )}
                           </HStack>
+                        </Table.Cell>
+
+                        {/* Job role — demo OpenFeature targeting attribute, embedded in
+                            the JWT at next login. Editable inline, including for the
+                            current admin's own account (unlike the admin/service-account
+                            toggles below, this is a benign demo attribute). */}
+                        <Table.Cell px={4} py={3}>
+                          <NativeSelect.Root size="xs" disabled={patchingUserId === u.id}>
+                            <NativeSelect.Field
+                              aria-label={`Job role for ${u.email}`}
+                              value={u.job_role ?? ""}
+                              onChange={async (e) => {
+                                const jobRole = e.target.value;
+                                setPatchingUserId(u.id);
+                                try {
+                                  const updated = await patchUser(u.id, { job_role: jobRole });
+                                  setUsers((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                                } catch (err) {
+                                  setListError(err instanceof Error ? err.message : "Failed to update job role");
+                                } finally {
+                                  setPatchingUserId(null);
+                                }
+                              }}
+                              fontFamily="mono"
+                              fontSize="xs"
+                            >
+                              {JOB_ROLES.map((role) => (
+                                <option key={role} value={role}>{role}</option>
+                              ))}
+                            </NativeSelect.Field>
+                            <NativeSelect.Indicator />
+                          </NativeSelect.Root>
                         </Table.Cell>
 
                         {/* Created */}

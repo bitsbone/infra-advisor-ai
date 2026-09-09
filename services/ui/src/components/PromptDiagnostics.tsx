@@ -12,7 +12,6 @@ interface PromptRow {
   backend: "python" | "dotnet";
   version: string | number | null;
   source: string;
-  flag_value: number;
 }
 
 // Polling cadence matches EvalDiagnostics — cheap endpoints, admins are
@@ -119,7 +118,6 @@ export function PromptDiagnostics() {
                 <Table.ColumnHeader>Backend</Table.ColumnHeader>
                 <Table.ColumnHeader>Version</Table.ColumnHeader>
                 <Table.ColumnHeader>Source</Table.ColumnHeader>
-                <Table.ColumnHeader>Flag override</Table.ColumnHeader>
               </Table.Row>
             </Table.Header>
             <Table.Body>
@@ -138,13 +136,16 @@ export function PromptDiagnostics() {
                       <Badge
                         variant="subtle"
                         fontSize="2xs"
-                        colorPalette={r.source === "fallback" ? "orange" : r.source === "flag-pinned" ? "green" : "gray"}
+                        colorPalette={
+                          r.source === "fallback"
+                            ? "orange"
+                            : r.source === "ff" || r.source === "flag-pinned"
+                              ? "green"
+                              : "gray"
+                        }
                       >
                         {r.source}
                       </Badge>
-                    </Table.Cell>
-                    <Table.Cell fontSize="xs" color="gray.500">
-                      {r.flag_value > 0 ? `v${r.flag_value}` : "none (default)"}
                     </Table.Cell>
                   </Table.Row>
                 ))}

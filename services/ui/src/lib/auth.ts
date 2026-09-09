@@ -27,7 +27,20 @@ export interface User {
   is_admin: boolean;
   is_service_account: boolean;
   created_at: string;
+  job_role: string | null;
 }
+
+// Sample job roles for the "public infrastructure engineering firm" demo
+// narrative — mirrors services/auth-api/src/database.py's JOB_ROLES exactly.
+// Each maps 1:1 onto an existing specialist domain so a targeting rule on
+// one of these produces an intuitive, demoable result.
+export const JOB_ROLES = [
+  "Civil Engineer",
+  "Water & Energy Analyst",
+  "Business Development Manager",
+  "Contracts Administrator",
+  "Program Director",
+] as const;
 
 // ── Token helpers ─────────────────────────────────────────────────────────────
 
@@ -160,7 +173,7 @@ export async function deleteUser(id: string): Promise<void> {
 
 export async function patchUser(
   id: string,
-  data: { is_admin?: boolean; is_service_account?: boolean },
+  data: { is_admin?: boolean; is_service_account?: boolean; job_role?: string },
 ): Promise<User> {
   const res = await fetch(`${AUTH_BASE}/admin/users/${id}`, {
     method: "PATCH",

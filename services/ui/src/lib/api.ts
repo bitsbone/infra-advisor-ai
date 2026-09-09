@@ -281,6 +281,12 @@ export type StreamEvent =
       sources: string[];
       tools_called: string[];
       query_domain: string;
+      // Which prompt actually answered this turn (the specialist the
+      // router handed off to) — for the per-turn version badge. Optional:
+      // absent on older backends/edge cases where nothing streamed text.
+      prompt_id?: string | null;
+      prompt_version?: string | null;
+      prompt_source?: string | null;
     }
   | { event: "error"; message: string; trace_id: string | null; category?: string | null };
 

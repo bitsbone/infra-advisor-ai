@@ -95,6 +95,9 @@ interface Message {
   traceId?: string | null;
   spanId?: string | null;
   attachments?: Attachment[];
+  promptId?: string | null;
+  promptVersion?: string | null;
+  promptSource?: string | null;
 }
 
 const TOOL_META: Record<string, { label: string; document_type: string; description: string; source_url?: string; data_notes?: string }> = {
@@ -396,6 +399,9 @@ interface MessageActionsProps {
   domain?: string;
   traceId?: string | null;
   spanId?: string | null;
+  promptId?: string | null;
+  promptVersion?: string | null;
+  promptSource?: string | null;
 }
 
 // Plain-text debugging dump of every tool call in a message: name, args,
@@ -419,7 +425,7 @@ function formatStepsForCopy(steps: StreamStep[], toolMeta: Record<string, ToolDi
     .join("\n\n");
 }
 
-function MessageActions({ content, backend, steps, toolMeta, domain, traceId, spanId }: MessageActionsProps) {
+function MessageActions({ content, backend, steps, toolMeta, domain, traceId, spanId, promptId, promptVersion, promptSource }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
   const [copiedReasoning, setCopiedReasoning] = useState(false);
   const [feedback, setFeedback] = useState<"up" | "down" | "reported" | null>(null);
@@ -573,6 +579,16 @@ function MessageActions({ content, backend, steps, toolMeta, domain, traceId, sp
         >
           <ChartNoAxesGantt size={13} />
         </Link>
+      )}
+      {promptId && (
+        <Badge
+          variant="subtle"
+          fontSize="2xs"
+          colorPalette={promptSource === "fallback" ? "orange" : promptSource === "ff" || promptSource === "flag-pinned" ? "green" : "gray"}
+          title={`This turn was answered by "${promptId}" — resolved version ${promptVersion ?? "unknown"} (source: ${promptSource ?? "unknown"})`}
+        >
+          {promptId}{promptVersion ? ` v${promptVersion}` : ""}
+        </Badge>
       )}
     </HStack>
       {feedbackStatus !== "idle" && (
@@ -988,6 +1004,9 @@ export function Chat() {
               traceId: evt.trace_id,
               spanId: evt.span_id,
               bridges: extractBridgeData(m.content),
+              promptId: evt.prompt_id,
+              promptVersion: evt.prompt_version,
+              promptSource: evt.prompt_source,
             }));
             if (evt.model && evt.model !== selectedModel) setSelectedModel(evt.model);
             break;
@@ -1399,6 +1418,9 @@ export function Chat() {
                           toolMeta={TOOL_META}
                           traceId={msg.traceId}
                           spanId={msg.spanId}
+                          promptId={msg.promptId}
+                          promptVersion={msg.promptVersion}
+                          promptSource={msg.promptSource}
                         />
                       )}
                     </Box>
