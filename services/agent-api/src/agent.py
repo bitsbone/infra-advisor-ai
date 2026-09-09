@@ -412,6 +412,27 @@ def _summarize_tool_result(raw: str) -> str | None:
     return None
 
 
+def _tool_result_is_error(raw: str) -> bool:
+    """Structural error check for a tool_call_end chip's status — parses the
+    JSON and looks for a truthy top-level "error" key, the same shape
+    _summarize_tool_result already checks for its "error" summary.
+
+    Deliberately NOT a substring search (`'"error"' in raw`, the prior
+    implementation): several MCP tools (e.g. get_procurement_opportunities)
+    return a nested `meta.partial_errors` list carrying real per-source
+    error objects (`{"error": "..."}`) even on an otherwise-successful,
+    simply-empty-results call — a substring match against the full raw text
+    would misclassify that as a failed tool call. Only a top-level "error"
+    key (and non-falsy — an explicit `"error": null` defensive field is not
+    an error) means this call itself failed.
+    """
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return False
+    return isinstance(parsed, dict) and bool(parsed.get("error"))
+
+
 # ─── Multimodal attachment handling ────────────────────────────────────────────
 #
 # Both modalities cascade to plain text BEFORE the specialist agent ever runs
@@ -559,6 +580,8 @@ async def run_agent(
     deployment: str,
     rum_session_id: str | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    user_id: str | None = None,
+    job_role: str | None = None,
 ) -> dict[str, Any]:
     """Execute a multi-agent query pipeline with specialist routing.
 
@@ -659,7 +682,9 @@ async def run_agent(
             specialist_tools = list(all_tools)
 
         system_prompt, specialist_prompt_meta = fetch_prompt(
-            f"specialist-{specialist_name}", _SPECIALIST_SYSTEM_PROMPTS[specialist_name]
+            f"specialist-{specialist_name}", _SPECIALIST_SYSTEM_PROMPTS[specialist_name],
+            targeting_key=user_id,
+            attributes={"job_role": job_role} if job_role else None,
         )
 
         # Inject handoff context as a strategy hint when router added useful context
@@ -782,6 +807,8 @@ async def run_agent_stream(
     deployment: str,
     rum_session_id: str | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    user_id: str | None = None,
+    job_role: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Streaming counterpart to run_agent — same router → specialist pipeline,
     but yields SSE-event dicts live as the specialist's LangGraph executor runs,
@@ -902,7 +929,9 @@ async def run_agent_stream(
                 specialist_tools = list(all_tools)
 
             system_prompt, specialist_prompt_meta = fetch_prompt(
-                f"specialist-{specialist_name}", _SPECIALIST_SYSTEM_PROMPTS[specialist_name]
+                f"specialist-{specialist_name}", _SPECIALIST_SYSTEM_PROMPTS[specialist_name],
+                targeting_key=user_id,
+                attributes={"job_role": job_role} if job_role else None,
             )
             if decision.handoff_context and decision.handoff_context != effective_query:
                 system_prompt = f"{system_prompt}\n\n[Routing context]: {decision.handoff_context}"
@@ -952,6 +981,18 @@ async def run_agent_stream(
                     elif kind == "on_tool_start":
                         run_id = str(ev.get("run_id", ""))
                         name = ev.get("name", "")
+                        if not name:
+                            # Seen once as a persisted-conversation bug report
+                            # (blank tool-call chips on reopen) with no
+                            # confirmed root cause yet — LangChain's
+                            # on_tool_start event is expected to always carry
+                            # a "name", so log loudly rather than silently
+                            # persisting/rendering an empty label.
+                            logger.warning(
+                                "on_tool_start event missing name run_id=%s event_keys=%s",
+                                run_id, list(ev.keys()),
+                            )
+                            name = "unknown_tool"
                         tool_names_by_run[run_id] = name
                         tool_starts[run_id] = time.monotonic()
                         if name and name not in tools_called:
@@ -968,6 +1009,16 @@ async def run_agent_stream(
                     elif kind in ("on_tool_end", "on_tool_error"):
                         run_id = str(ev.get("run_id", ""))
                         name = tool_names_by_run.get(run_id, ev.get("name", ""))
+                        if not name:
+                            # See the on_tool_start warning above — a run_id
+                            # that never registered a start name (or an
+                            # empty top-level "name" fallback) previously
+                            # produced a blank tool-call chip, invisibly.
+                            logger.warning(
+                                "%s event resolved no tool name run_id=%s known_run_ids=%s",
+                                kind, run_id, list(tool_names_by_run.keys()),
+                            )
+                            name = "unknown_tool"
                         duration_ms = (time.monotonic() - tool_starts.get(run_id, time.monotonic())) * 1000
 
                         if kind == "on_tool_error":
@@ -976,7 +1027,7 @@ async def run_agent_stream(
                         else:
                             output = ev.get("data", {}).get("output")
                             result_content = getattr(output, "content", output)
-                            status = "error" if isinstance(result_content, str) and '"error"' in result_content else "ok"
+                            status = "error" if isinstance(result_content, str) and _tool_result_is_error(result_content) else "ok"
 
                         context_chunks.append(str(result_content)[:500])
                         call_sources = _extract_sources_from_tool_content(result_content)
@@ -1041,6 +1092,9 @@ async def run_agent_stream(
             "sources": sources,
             "tools_called": tools_called,
             "query_domain": query_domain,
+            "prompt_id": f"specialist-{specialist_name}",
+            "prompt_version": specialist_prompt_meta.get("version"),
+            "prompt_source": specialist_prompt_meta.get("tags", {}).get("source"),
         }
 
     except Exception as exc:

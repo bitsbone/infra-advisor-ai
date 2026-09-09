@@ -529,6 +529,7 @@ async def query(
     """Run the InfraAdvisor agent against a user query."""
     session_id = x_session_id or body.session_id or str(uuid.uuid4())
     user_id = _user["sub"]
+    job_role = _user.get("job_role")
     _require_owned_conversation(x_conversation_id, user_id)
     attachments = _validate_attachments(body.attachments)
     agent_session_key = tenant_session_key(user_id, x_conversation_id or session_id)
@@ -555,6 +556,8 @@ async def query(
             deployment=deployment,
             rum_session_id=x_dd_rum_session_id,
             attachments=attachments,
+            user_id=user_id,
+            job_role=job_role,
         )
     except Exception as exc:
         trace_id = current_trace_id()
@@ -637,6 +640,7 @@ async def query_stream(
     shape as agent-api-dotnet's /query/stream (Program.cs)."""
     session_id = x_session_id or body.session_id or str(uuid.uuid4())
     user_id = _user["sub"]
+    job_role = _user.get("job_role")
     _require_owned_conversation(x_conversation_id, user_id)
     attachments = _validate_attachments(body.attachments)
     agent_session_key = tenant_session_key(user_id, x_conversation_id or session_id)
@@ -683,6 +687,8 @@ async def query_stream(
             deployment=deployment,
             rum_session_id=x_dd_rum_session_id,
             attachments=attachments,
+            user_id=user_id,
+            job_role=job_role,
         ):
             event_name = evt["event"]
 

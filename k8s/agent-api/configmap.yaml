@@ -48,6 +48,15 @@ data:
   # hardcoded strings always remain the fail-open fallback either way. See
   # observability/prompts.py and scripts/seed_prompt_registry.py.
   DD_PROMPT_MANAGEMENT_ENABLED: "false"
+  # Lets ddtrace's LLMObs.get_prompt() evaluate each managed prompt's
+  # auto-provisioned `__llmobs__.prompt.<prompt_id>` Feature Flag (targeting
+  # rules keyed on e.g. the demo job_role user attribute) before falling
+  # back to the env-resolve/registry HTTP path. See observability/prompts.py.
+  DD_EXPERIMENTAL_FLAGGING_PROVIDER_ENABLED: "true"
+  # Required for the flag's server-side evaluation metrics (impressions,
+  # variant distribution) to populate in Datadog's Feature Flags product —
+  # https://docs.datadoghq.com/feature_flags/guide/server_flag_evaluation_metrics/
+  DD_METRICS_OTEL_ENABLED: "true"
   AZURE_OPENAI_DEPLOYMENT: "gpt-5.4-mini"
   # Honor Azure Retry-After responses before surfacing a retryable chat error.
   AZURE_OPENAI_MAX_RETRIES: "5"

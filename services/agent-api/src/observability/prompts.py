@@ -6,6 +6,19 @@ always pass their own hardcoded string as fallback_template, which remains
 the source of truth and the fail-open path — a registry outage or
 misconfiguration must never prevent a prompt from resolving.
 
+Per-user version targeting goes through the registry's own auto-provisioned
+Feature Flag, not a custom one: Datadog's Prompt Management product creates
+one Feature Flag per managed prompt named `__llmobs__.prompt.<prompt_id>`
+the moment that prompt exists in the registry. ddtrace's own
+LLMObs.get_prompt() already evaluates this flag internally (see
+ddtrace/llmobs/_prompts/manager.py's _fetch_from_ff) whenever
+DD_EXPERIMENTAL_FLAGGING_PROVIDER_ENABLED=true and DD_ENV is set — passing
+targeting_key/attributes straight through to it is all fetch_prompt needs
+to do; there is no separate flag client to maintain here (this file used to
+own a custom `prompt-version.<prompt_id>` integer flag via a hand-rolled
+OpenFeature client in feature_flags.py — removed once the native flag was
+confirmed to already exist and do this).
+
 See scripts/seed_prompt_registry.py for the one-time script that pushes
 today's hardcoded prompts into the registry as each prompt's v1.
 """
@@ -16,8 +29,6 @@ import os
 from typing import Any
 
 from ddtrace.llmobs import LLMObs
-
-from .feature_flags import resolve_prompt_version
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +51,13 @@ def content_version(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
 
 
-def fetch_prompt(prompt_id: str, fallback_template: str) -> tuple[str, dict[str, Any]]:
+def fetch_prompt(
+    prompt_id: str,
+    fallback_template: str,
+    *,
+    targeting_key: str | None = None,
+    attributes: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
     """Resolve a prompt's effective template text plus its LLMObs annotation dict.
 
     Fail-open: any registry/network error (including DD_API_KEY missing,
@@ -48,19 +65,20 @@ def fetch_prompt(prompt_id: str, fallback_template: str) -> tuple[str, dict[str,
     falls through to fallback_template with source="fallback" tagged
     explicitly, mirroring observability.ai_guard's fail-open philosophy.
 
-    A Feature Flags-pinned version (see observability/feature_flags.py)
-    takes precedence over the default env-resolve/latest behavior when set —
-    this is what lets a prompt version be deployed per environment without
-    a redeploy. See docs/src/content/docs/llm-engineering/monitoring/
-    prompt-targeting.mdx.
+    targeting_key/attributes are forwarded straight to LLMObs.get_prompt(),
+    which evaluates the registry's own `__llmobs__.prompt.<prompt_id>`
+    Feature Flag internally — this is what lets a targeting rule (e.g. on
+    the demo job_role user attribute) pin a different version per user
+    without a redeploy. See docs/src/content/docs/llm-engineering/
+    monitoring/prompt-targeting.mdx.
     """
     if _PROMPT_MANAGEMENT_ENABLED:
-        pinned_version = resolve_prompt_version(prompt_id)
         try:
-            managed = (
-                LLMObs.get_prompt(prompt_id, version=pinned_version, fallback=fallback_template)
-                if pinned_version
-                else LLMObs.get_prompt(prompt_id, fallback=fallback_template)
+            managed = LLMObs.get_prompt(
+                prompt_id,
+                fallback=fallback_template,
+                targeting_key=targeting_key,
+                **(attributes or {}),
             )
             template = managed.template if isinstance(managed.template, str) else fallback_template
             annotation = managed.to_annotation_dict()
@@ -69,7 +87,6 @@ def fetch_prompt(prompt_id: str, fallback_template: str) -> tuple[str, dict[str,
                 "backend": "python",
                 "version": annotation.get("version"),
                 "source": annotation.get("tags", {}).get("source", "registry"),
-                "flag_value": pinned_version,
             }
             return template, annotation
         except Exception:
@@ -88,6 +105,5 @@ def fetch_prompt(prompt_id: str, fallback_template: str) -> tuple[str, dict[str,
         "backend": "python",
         "version": fallback_annotation["version"],
         "source": "fallback",
-        "flag_value": 0,
     }
     return fallback_template, fallback_annotation
