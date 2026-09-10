@@ -531,6 +531,22 @@ public class AgentService
         var retriedMcpSession = false;
 
         var run = await InProcessExecution.RunStreamingAsync(workflow, history, sessionId: sessionId, cancellationToken: ct);
+        // HandoffStartExecutor (like every ChatProtocolExecutor) only takes a
+        // turn when it receives an explicit TurnToken — sending just the
+        // message history buffers it via AddMessagesAsync and stops there.
+        // InProcessExecution.RunAsync (non-streaming) auto-sends one for
+        // chat-protocol workflows; RunStreamingAsync does not (confirmed by
+        // decompiling InProcessExecutionEnvironment 1.20.0 — RunAsync routes
+        // through BeginRunHandlingChatProtocolAsync, which appends
+        // `new TurnToken(true)` when the input isn't already one;
+        // RunStreamingAsync's EnqueueAndStreamAsync path has no equivalent).
+        // Without this, the turn silently never runs: no router/specialist
+        // invocation, no tool calls, no answer, no error — just a 200 with
+        // nothing streamed. `true` also turns on AgentResponseUpdateEvent
+        // emission for this turn, since SpecialistRegistry's
+        // HandoffWorkflowBuilder never calls EmitAgentResponseUpdateEvents()
+        // itself.
+        await run.TrySendMessageAsync(new TurnToken(true));
         var events = run.WatchStreamAsync(ct);
         var enumerator = events.GetAsyncEnumerator(ct);
 
@@ -566,6 +582,7 @@ public class AgentService
                 toolResults.Clear();
                 fullAnswer.Clear();
                 run = await InProcessExecution.RunStreamingAsync(workflow, history, sessionId: sessionId, cancellationToken: ct);
+                await run.TrySendMessageAsync(new TurnToken(true));
                 events = run.WatchStreamAsync(ct);
                 enumerator = events.GetAsyncEnumerator(ct);
                 continue;
