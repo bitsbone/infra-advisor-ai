@@ -663,6 +663,7 @@ async def query_stream(
         tools_called: list[str] = []
         sources: list[str] = []
         artifacts: list[dict] = []
+        error_message: str | None = None
 
         # Tool-call / pipeline-step reasoning, accumulated as step/
         # tool_call_start/tool_call_end events arrive so it can be persisted
@@ -747,12 +748,18 @@ async def query_stream(
                 if artifact:
                     artifacts.append(artifact)
             elif event_name == "error":
+                # A mid-stream abort (AI Guard block, etc.) never appends to
+                # answer_parts, so full_answer stays empty — without this,
+                # the persisted assistant message has no content and no
+                # steps, so a reload shows a blank bubble with the block
+                # reason gone (it only ever lived in this SSE payload).
+                error_message = evt.get("message")
                 evt = {**evt, "trace_id": current_trace_id()}
 
             payload = json.dumps({k: v for k, v in evt.items() if k != "event"})
             yield f"event: {event_name}\ndata: {payload}\n\n"
 
-        full_answer = "".join(answer_parts)
+        full_answer = "".join(answer_parts) or (error_message or "")
         append_exchange_with_attachments(
             agent_session_key,
             body.query,

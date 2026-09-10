@@ -718,6 +718,7 @@ app.MapPost("/query/stream", async (
     var doneSources = new List<string>();
     string? finalTraceId = null;
     string? finalSpanId = null;
+    string? errorMessage = null;
     var artifacts = new List<JsonElement>();
 
     // Tool-call / pipeline-step reasoning, accumulated as StepEvent/
@@ -778,6 +779,15 @@ app.MapPost("/query/stream", async (
                     finalTraceId = d.TraceId;
                     finalSpanId = d.SpanId;
                     break;
+                case ErrorEvent ee:
+                    // An AI Guard block (or any other mid-stream abort) never
+                    // emits a TextChunkEvent, so fullAnswer stays empty —
+                    // without this, the persisted assistant message has no
+                    // content and no steps, so a reload shows a blank bubble
+                    // with the block reason gone (it only ever lived in the
+                    // SSE payload, never saved anywhere).
+                    errorMessage = ee.Message;
+                    break;
             }
 
             // Serialize without the EventName field (it goes on the SSE
@@ -802,8 +812,12 @@ app.MapPost("/query/stream", async (
 
     if (!string.IsNullOrWhiteSpace(conversationId))
     {
+        // A mid-stream abort (AI Guard block, etc.) never appends to
+        // fullAnswer — fall back to the error message so the persisted row
+        // isn't a silently blank assistant turn on reload.
+        var persistedAnswer = fullAnswer.Length > 0 ? fullAnswer.ToString() : (errorMessage ?? "");
         await conversationSvc.SaveMessagesAsync(
-            conversationId, userId, body.Query, fullAnswer.ToString(),
+            conversationId, userId, body.Query, persistedAnswer,
             doneSources, finalTraceId, finalSpanId, stepRecords, attachments, artifacts);
     }
 

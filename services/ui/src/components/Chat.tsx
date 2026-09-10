@@ -1038,8 +1038,18 @@ export function Chat() {
             // means the pipeline aborted, so nothing will ever send its "done".
             // Without this, e.g. an AI Guard block on the raw query would leave
             // the "route_query" chip spinning forever alongside the error banner.
+            //
+            // Also put the message into the assistant bubble's own content —
+            // an error (e.g. an AI Guard block) never sends a text_chunk, so
+            // without this the bubble stays permanently empty. It previously
+            // only showed via the separate `error` banner state below, which
+            // is never persisted — a reload showed a mysterious blank bubble
+            // with no indication anything was blocked. Both backends now
+            // persist this same message as the assistant's content, so this
+            // keeps the live view consistent with what a reload will show.
             patchAssistant((m) => ({
               ...m,
+              content: m.content || evt.message,
               steps: m.steps.map((s) => (s.status === "running" ? { ...s, status: "error" } : s)),
             }));
             setError({ message: evt.message, traceId: evt.trace_id });
