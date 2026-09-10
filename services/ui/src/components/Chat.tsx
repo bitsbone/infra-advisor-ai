@@ -17,6 +17,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, ChevronLeft, Bug, Paperclip, Mic, Square } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
 import { ApiError, Attachment, BackendType, BridgeData, ContractAwardsArtifact, ConversationDetail, ConversationSummary, FeedbackRating, StoredStepDto, StreamEvent, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQueryStream, setBackend, setModel, setSessionId, submitFeedback, uploadMedia } from "../lib/api";
@@ -640,9 +641,31 @@ function MarkdownContent({ content }: { content: string }) {
           color: "var(--chakra-colors-gray-500)",
           margin: "0.5em 0",
         },
+        // GFM pipe tables (remarkGfm below) — without this, table syntax
+        // rendered as a single run-on paragraph of literal "|"/"-"
+        // characters instead of an actual table.
+        "& table": {
+          display: "block",
+          overflowX: "auto",
+          maxWidth: "100%",
+          borderCollapse: "collapse",
+          marginBottom: "0.75em",
+          fontSize: "0.9em",
+        },
+        "& th, & td": {
+          border: "1px solid var(--chakra-colors-gray-200)",
+          padding: "0.35em 0.6em",
+          textAlign: "left",
+          verticalAlign: "top",
+        },
+        "& th": {
+          background: "var(--chakra-colors-gray-50)",
+          fontWeight: 600,
+        },
+        "& tr:nth-of-type(even) td": { background: "var(--chakra-colors-gray-50)" },
       }}
     >
-      <ReactMarkdown>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
     </Box>
   );
 }
