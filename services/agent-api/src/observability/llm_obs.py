@@ -69,12 +69,21 @@ def tag_agent_run(
     query_domain: str,
     tools_called: list[str],
     cost_usd: float | None = None,
+    job_role: str | None = None,
+    targeting_key: str | None = None,
 ) -> None:
     """Annotate an agent span with bounded operational metadata only.
 
     Must be called while the LLMObs.agent() context manager is still open
     so that span is the active span — not after ainvoke() returns. Raw prompts
     and answers remain provider inputs/outputs and are never copied here.
+
+    job_role/targeting_key are the same values fetch_prompt() used to
+    resolve this turn's prompt-version Feature Flag (see observability/
+    prompts.py) — tagging them here makes it possible to verify from trace
+    data *why* a given version was served, not just which version was
+    (prompt.version, already tagged via LLMObs.annotation_context, only
+    records the outcome).
     """
     try:
         LLMObs.annotate(
@@ -85,6 +94,8 @@ def tag_agent_run(
                 "response.characters": str(len(answer)),
                 "agent.tools_called": ",".join(tools_called),
                 **({"llm.cost_usd": str(cost_usd)} if cost_usd is not None else {}),
+                **({"job_role": job_role} if job_role else {}),
+                **({"targeting_key": targeting_key} if targeting_key else {}),
             },
         )
     except Exception as exc:  # pragma: no cover

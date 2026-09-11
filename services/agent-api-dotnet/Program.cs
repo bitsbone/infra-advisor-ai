@@ -483,6 +483,15 @@ ActivitySource.AddActivityListener(new ActivityListener
                 });
                 activity.SetTag("prompt.version", promptVersion);
                 activity.SetTag("_dd.ml_obs.prompt_tracking", promptTrackingJson);
+
+                // Makes the targeting attribute that drove THIS resolution
+                // verifiable from trace data, not just the outcome —
+                // otherwise a trace shows which version answered but not
+                // why (see AmbientTargetingContext).
+                if (AmbientTargetingContext.TargetingKey is { } targetingKey)
+                    activity.SetTag("targeting_key", targetingKey);
+                if (AmbientTargetingContext.JobRole is { } jobRoleTag)
+                    activity.SetTag("job_role", jobRoleTag);
             }
         }
         if (activity.OperationName == "invoke_agent")

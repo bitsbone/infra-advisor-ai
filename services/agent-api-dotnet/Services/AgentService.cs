@@ -448,6 +448,7 @@ public class AgentService
         // See RunAgentAsync for why this prefers the real RUM session over
         // the tenant-scoped sessionId.
         AmbientSessionContext.Set(rumSessionId ?? sessionId);
+        AmbientTargetingContext.Set(userId, jobRole);
 
         _logger.LogDebug(
             "[stream] starting; ct already cancelled: {AlreadyCancelled}",

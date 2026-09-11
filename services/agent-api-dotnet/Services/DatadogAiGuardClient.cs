@@ -86,6 +86,14 @@ public class DatadogAiGuardClient
         var action = "ALLOW";
         string? reason = null;
         string? error = null;
+        string[]? attackCategories = null;
+
+        // Our pre-flight check only ever evaluates the raw user query today —
+        // ddtrace's SDK also reports "tool" for tool-call content, which we
+        // don't check yet. Wired as a constant now rather than over-building
+        // for a case we don't have (confirmed via a real Python-backend
+        // trace — see docs/llm-engineering/ai-guard.mdx).
+        activity?.SetTag("ai_guard.target", "prompt");
 
         try
         {
@@ -124,6 +132,12 @@ public class DatadogAiGuardClient
                 var attrs = doc.RootElement.GetProperty("data").GetProperty("attributes");
                 action = attrs.TryGetProperty("action", out var a) ? a.GetString() ?? "ALLOW" : "ALLOW";
                 reason = attrs.TryGetProperty("reason", out var r) ? r.GetString() : null;
+                if (attrs.TryGetProperty("tags", out var tagsEl) && tagsEl.ValueKind == JsonValueKind.Array)
+                    attackCategories = tagsEl.EnumerateArray()
+                        .Select(t => t.GetString())
+                        .Where(t => t is not null)
+                        .Select(t => t!)
+                        .ToArray();
             }
         }
         catch (Exception ex)
@@ -134,10 +148,32 @@ public class DatadogAiGuardClient
         finally
         {
             var durationMs = (int)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds;
+            var blocked = success && action is "DENY" or "ABORT";
             activity?.SetTag("ai_guard.action", action);
             activity?.SetTag("ai_guard.reason", reason);
             activity?.SetTag("ai_guard.duration_ms", durationMs);
             activity?.SetTag("ai_guard.success", success);
+            // Presence signals a block — matches ddtrace's own convention
+            // (no "false" tag when allowed), confirmed against a real trace.
+            if (blocked) activity?.SetTag("ai_guard.blocked", "true");
+            if (attackCategories is { Length: > 0 })
+                activity?.SetTag("ai_guard.attack_categories", attackCategories);
+
+            // ddtrace's own context-manager marks the span as errored for a
+            // real AIGuardAbortError exception — confirmed on a live trace
+            // (blocked, not just a transport failure, ends up status:error
+            // with a captured exception). Our manual Activity needs this
+            // set explicitly for the same two cases.
+            if (error is not null)
+                activity?.SetStatus(ActivityStatusCode.Error, error);
+            else if (blocked)
+                activity?.SetStatus(ActivityStatusCode.Error, reason);
+
+            // ddtrace also stamps these on the trace's root span so a
+            // trace/monitor query can find "requests with an AI Guard
+            // evaluation" without opening this child span.
+            TagRootSpan(activity, "ai_guard.event", "true");
+            TagRootSpan(activity, "ai_guard.calling_service", Observability.TelemetrySetup.ActivitySourceName);
 
             _log.Record(new AiGuardSubmissionEntry(
                 Timestamp: startedAt,
@@ -157,6 +193,20 @@ public class DatadogAiGuardClient
         // Fail open: a transport/parse error should never block a legitimate
         // request. Only an explicit DENY/ABORT from a successful call blocks.
         return new AiGuardEvaluation(success ? action : "ALLOW", reason ?? error);
+    }
+
+    // Walks up to the trace's local-root span (ASP.NET Core's own
+    // auto-instrumented request Activity, from OpenTelemetry.Instrumentation
+    // .AspNetCore — still open for the whole request) and tags it, mirroring
+    // ddtrace's span_bus.get_root_span() root-only tagging. No AsyncLocal
+    // capture needed here (unlike AgentSpanContext/AmbientSessionContext):
+    // the root Activity is still current/reachable via .Parent at this
+    // point in the request, not read back later after it's gone.
+    private static void TagRootSpan(Activity? start, string key, string? value)
+    {
+        var root = start ?? Activity.Current;
+        while (root?.Parent is not null) root = root.Parent;
+        root?.SetTag(key, value);
     }
 
     private static string? GetTraceIdDecimal()

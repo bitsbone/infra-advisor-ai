@@ -731,6 +731,8 @@ async def run_agent(
                 answer=answer,
                 query_domain=query_domain,
                 tools_called=tools_called,
+                job_role=job_role,
+                targeting_key=user_id,
             )
             LLMObs.annotate(
                 span=agent_span,
@@ -1060,6 +1062,8 @@ async def run_agent_stream(
                     answer=answer,
                     query_domain=query_domain,
                     tools_called=tools_called,
+                    job_role=job_role,
+                    targeting_key=user_id,
                 )
                 LLMObs.annotate(
                     span=agent_span,
