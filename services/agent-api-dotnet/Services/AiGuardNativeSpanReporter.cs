@@ -76,7 +76,7 @@ public sealed class AiGuardNativeSpanReporter
 
         try
         {
-            var (traceId, parentId) = GetCurrentIds();
+            var (traceId, parentId, traceIdHigh) = GetCurrentIds();
             if (traceId == 0)
             {
                 _logger.LogDebug("AiGuardNativeSpanReporter: no active trace context, skipping");
@@ -84,7 +84,7 @@ public sealed class AiGuardNativeSpanReporter
             }
 
             var spanId = NewSpanId();
-            var bytes = Encode(traceId, spanId, parentId, data);
+            var bytes = Encode(traceId, spanId, parentId, traceIdHigh, data);
 
             using var req = new HttpRequestMessage(HttpMethod.Post, $"{_agentUrl.TrimEnd('/')}/v0.4/traces");
             req.Content = new ByteArrayContent(bytes);
@@ -110,21 +110,31 @@ public sealed class AiGuardNativeSpanReporter
         }
     }
 
-    private static (ulong traceId, ulong parentId) GetCurrentIds()
+    // traceIdHigh is the upper 64 bits of the W3C 128-bit trace ID, as the
+    // 16-char hex string Datadog's own `_dd.p.tid` propagation tag uses
+    // (confirmed present, e.g. "6aa38bad00000000", on the Python reference
+    // trace). Our wire-format `trace_id` field only carries the low 64 bits
+    // (all v0.4 supports); without `_dd.p.tid` alongside it, the backend
+    // can't reconstruct the full 128-bit ID other spans in this same trace
+    // already carry, breaking cross-linking to the LLM/Agent Observability
+    // trace — confirmed live ("Could not find corresponding trace in Agent
+    // Observability" on this span's detail panel).
+    private static (ulong traceId, ulong parentId, string? traceIdHigh) GetCurrentIds()
     {
         var current = Activity.Current;
-        if (current is null) return (0, 0);
+        if (current is null) return (0, 0, null);
 
         var traceHex = current.TraceId.ToString();
         var traceId = traceHex.Length == 32
             && ulong.TryParse(traceHex[16..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var t)
             ? t : 0;
+        var traceIdHigh = traceHex.Length == 32 ? traceHex[..16] : null;
 
         var spanHex = current.SpanId.ToString();
         var parentId = ulong.TryParse(spanHex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var p)
             ? p : 0;
 
-        return (traceId, parentId);
+        return (traceId, parentId, traceIdHigh);
     }
 
     private static ulong NewSpanId()
@@ -148,7 +158,7 @@ public sealed class AiGuardNativeSpanReporter
     // `meta_struct` as a plain nested map — {"ai_guard": {"messages": [...],
     // "attack_categories": [...], "tag_probs": {...}}} — sibling to `meta`/
     // `metrics`, not a special pre-encoded byte-blob format.
-    private byte[] Encode(ulong traceId, ulong spanId, ulong parentId, SpanData data)
+    private byte[] Encode(ulong traceId, ulong spanId, ulong parentId, string? traceIdHigh, SpanData data)
     {
         var buffer = new ArrayBufferWriter<byte>();
         var writer = new MessagePackWriter(buffer);
@@ -170,11 +180,16 @@ public sealed class AiGuardNativeSpanReporter
         writer.Write("error"); writer.Write(data.Error ? 1 : 0);
 
         writer.Write("meta");
-        writer.WriteMapHeader(data.Meta.Count);
+        writer.WriteMapHeader(data.Meta.Count + (traceIdHigh is not null ? 1 : 0));
         foreach (var (k, v) in data.Meta)
         {
             writer.Write(k);
             writer.Write(v);
+        }
+        if (traceIdHigh is not null)
+        {
+            writer.Write("_dd.p.tid");
+            writer.Write(traceIdHigh);
         }
 
         // meta_struct's per-key VALUES must be msgpack `bin` (a length-prefixed

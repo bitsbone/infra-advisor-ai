@@ -498,6 +498,7 @@ jobs:
             --location eastus \
             --template-file infra/bicep/main.bicep \
             --parameters infra/bicep/parameters/dev.bicepparam \
+            --parameters tsCreator="${{ github.actor }}" tsTeam="platform-engineering" tsPurpose="ci-automated-deploy" \
             --parameters deployAcaAgenticPoc=true \
             --parameters acaOpenAiApiKey="${{ secrets.AZURE_OPENAI_API_KEY }}" \
             --parameters acaDatadogApiKey="${{ secrets.DD_API_KEY }}" \
