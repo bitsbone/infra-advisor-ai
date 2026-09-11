@@ -96,7 +96,8 @@ check-env: ## Verify all required env vars are set before deploying
 		POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB \
 		DD_POSTGRES_PASSWORD \
 		DATABASE_URL JWT_SECRET \
-		MAILPIT_UI_USERNAME MAILPIT_UI_PASSWORD; do \
+		MAILPIT_UI_USERNAME MAILPIT_UI_PASSWORD \
+		TS_CREATOR TS_TEAM; do \
 		if [ -z "$$(eval echo \$$$$var)" ]; then \
 			echo "  ERROR: $$var is not set"; \
 			MISSING=1; \
@@ -111,11 +112,16 @@ check-env: ## Verify all required env vars are set before deploying
 
 deploy-infra: ## Deploy Azure Bicep IaC (AKS, AI Search, OpenAI, etc.)
 	@echo "→ Deploying Azure infrastructure (subscription-scoped)..."
+	@if [ -z "$(TS_CREATOR)" ] || [ -z "$(TS_TEAM)" ]; then \
+		echo "  ERROR: TS_CREATOR and TS_TEAM must be set — required by the shared sandbox tag-governance policy (see docs/src/content/docs/deployment/tag-governance.md)"; \
+		exit 1; \
+	fi
 	az deployment sub create \
 		--location $(LOCATION) \
 		--template-file infra/bicep/main.bicep \
 		--parameters infra/bicep/parameters/dev.bicepparam \
 		--parameters datadogApiKey=$(DD_API_KEY) datadogSite=$(DD_SITE) \
+		--parameters tsCreator=$(TS_CREATOR) tsTeam=$(TS_TEAM) tsPurpose="$(TS_PURPOSE)" \
 		--verbose
 	@echo "✓ Azure infrastructure deployed"
 

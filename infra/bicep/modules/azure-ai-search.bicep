@@ -9,15 +9,18 @@ param location string
 @description('Environment tag value (e.g. dev, staging, prod)')
 param environment string
 
+@description('Shared ts_creator/ts_team/ts_purpose tags from the root template, unioned with this module\'s own tags')
+param commonTags object = {}
+
 var searchServiceName = 'srch-infra-advisor-${environment}'
 
 resource searchService 'Microsoft.Search/searchServices@2023-11-01' = {
   name: searchServiceName
   location: location
-  tags: {
+  tags: union(commonTags, {
     environment: environment
     project: 'infra-advisor-ai'
-  }
+  })
   sku: {
     name: 'standard'
   }

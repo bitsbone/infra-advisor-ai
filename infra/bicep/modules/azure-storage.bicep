@@ -17,17 +17,20 @@ param location string
 @description('Environment tag value (e.g. dev, staging, prod)')
 param environment string
 
+@description('Shared ts_creator/ts_team/ts_purpose tags from the root template, unioned with this module\'s own tags')
+param commonTags object = {}
+
 // Storage account name: 3-24 chars, lowercase + numbers only
 var accountName = 'stinfraadv${environment}'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: accountName
   location: location
-  tags: {
+  tags: union(commonTags, {
     environment: environment
     project: 'infra-advisor-ai'
     managedBy: 'bicep'
-  }
+  })
   sku: {
     name: 'Standard_LRS'
   }

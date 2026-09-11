@@ -24,15 +24,18 @@ param whisperLocation string = 'eastus2'
 @description('Environment tag value (e.g. dev, staging, prod)')
 param environment string
 
+@description('Shared ts_creator/ts_team/ts_purpose tags from the root template, unioned with this module\'s own tags')
+param commonTags object = {}
+
 var openAiAccountName = 'oai-infra-advisor-${environment}'
 
 resource openAiAccount 'Microsoft.CognitiveServices/accounts@2024-04-01-preview' = {
   name: openAiAccountName
   location: location
-  tags: {
+  tags: union(commonTags, {
     environment: environment
     project: 'infra-advisor-ai'
-  }
+  })
   kind: 'OpenAI'
   sku: {
     name: 'S0'
@@ -136,11 +139,11 @@ var whisperAccountName = 'oai-infra-advisor-whisper-${environment}'
 resource whisperAccount 'Microsoft.CognitiveServices/accounts@2024-04-01-preview' = {
   name: whisperAccountName
   location: whisperLocation
-  tags: {
+  tags: union(commonTags, {
     environment: environment
     project: 'infra-advisor-ai'
     purpose: 'whisper-transcription'
-  }
+  })
   kind: 'OpenAI'
   sku: {
     name: 'S0'

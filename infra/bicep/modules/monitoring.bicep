@@ -36,15 +36,18 @@ param location string
 @description('Environment tag value (e.g. dev, staging, prod)')
 param environment string
 
+@description('Shared ts_creator/ts_team/ts_purpose tags from the root template, unioned with this module\'s own tags')
+param commonTags object = {}
+
 var workspaceName = 'law-infra-advisor-${environment}'
 
 resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: workspaceName
   location: location
-  tags: {
+  tags: union(commonTags, {
     environment: environment
     project: 'infra-advisor-ai'
-  }
+  })
   properties: {
     sku: {
       name: 'PerGB2018'

@@ -41,16 +41,19 @@ param searchApiKey string
 @description('Azure AI Search index name')
 param searchIndexName string = 'infra-advisor-knowledge'
 
+@description('Shared ts_creator/ts_team/ts_purpose tags from the root template, unioned with this module\'s own tags')
+param commonTags object = {}
+
 var factoryName = 'adf-infra-advisor-${environment}'
 var runIdExpr = '@pipeline().RunId'
 
 resource dataFactory 'Microsoft.DataFactory/factories@2018-06-01' = {
   name: factoryName
   location: location
-  tags: {
+  tags: union(commonTags, {
     environment: environment
     project: 'infra-advisor-ai'
-  }
+  })
   identity: {
     type: 'SystemAssigned'
   }

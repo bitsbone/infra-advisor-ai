@@ -88,6 +88,9 @@ param ddRumClientToken string
 @description('Datadog RUM site, e.g. us3.datadoghq.com')
 param ddRumSite string = 'us3.datadoghq.com'
 
+@description('Shared ts_creator/ts_team/ts_purpose tags from the root template, unioned with this module\'s own tags')
+param commonTags object = {}
+
 var envName = 'cae-agentic-poc-${environment}'
 var managedAppName = 'aca-agentic-poc-managed'
 var sidecarAppName = 'aca-agentic-poc-sidecar'
@@ -96,7 +99,7 @@ var sidecarAppName = 'aca-agentic-poc-sidecar'
 // 'latest' string that never changes and isn't useful for the UI's
 // "deployed version" display.
 var imageTag = split(containerImage, ':')[1]
-var tags = {
+var tags = union(commonTags, {
   environment: environment
   // Datadog's native Azure integration (and specifically the ACA
   // serverless/APM correlation view) reads the Azure resource tag `env`
@@ -108,7 +111,7 @@ var tags = {
   project: 'infra-advisor-ai'
   purpose: 'aca-otel-datadog-poc'
   'ese-tola': 'true'
-}
+})
 
 // ─── Shared Container Apps Environment ────────────────────────────────────
 // openTelemetryConfiguration here only serves aca-agentic-poc-managed — see

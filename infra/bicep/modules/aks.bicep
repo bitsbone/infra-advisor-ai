@@ -15,6 +15,9 @@ param nodeCount int = 3
 @description('VM size for each node')
 param nodeVmSize string = 'Standard_D2s_v3'
 
+@description('Shared ts_creator/ts_team/ts_purpose tags from the root template, unioned with this module\'s own tags')
+param commonTags object = {}
+
 var clusterName = 'aks-infra-advisor-${environment}'
 var dnsPrefix = 'infra-advisor-${environment}'
 // Explicit node RG name avoids the auto-generated MC_... prefix.
@@ -27,10 +30,10 @@ var nodeResourceGroupName = 'rg-tola-infra-advisor-ai-nodes'
 resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-02-01' = {
   name: clusterName
   location: location
-  tags: {
+  tags: union(commonTags, {
     environment: environment
     project: 'infra-advisor-ai'
-  }
+  })
   identity: {
     type: 'SystemAssigned'
   }
@@ -65,6 +68,16 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-02-01' = {
         osSKU: 'Ubuntu'
         enableAutoScaling: false
         type: 'VirtualMachineScaleSets'
+        // Node pool tags DO propagate to the pool's own ARM resource, but not
+        // to everything AKS provisions underneath it — the node resource
+        // group itself, its VMSS, and its NICs are owned/managed by the AKS
+        // resource provider's own control loop, not by us. The shared
+        // sandbox tag-governance policy (infra/bicep/governance/) explicitly
+        // excludes the node RG (see nodeResourceGroupName below, and
+        // docs/src/content/docs/resource-group-migration.md for the
+        // ownership-boundary background) rather than fighting AKS for
+        // control of resources it re-tags/recreates on its own schedule.
+        tags: commonTags
       }
     ]
   }

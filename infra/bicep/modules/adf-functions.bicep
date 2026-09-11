@@ -50,16 +50,19 @@ param datadogApiKey string = ''
 @description('Datadog site (e.g. us3.datadoghq.com)')
 param datadogSite string = 'us3.datadoghq.com'
 
+@description('Shared ts_creator/ts_team/ts_purpose tags from the root template, unioned with this module\'s own tags')
+param commonTags object = {}
+
 var functionAppName = 'func-adf-infra-advisor-${environment}'
 var appServicePlanName = 'plan-adf-infra-advisor-${environment}'
 
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: appServicePlanName
   location: location
-  tags: {
+  tags: union(commonTags, {
     environment: environment
     project: 'infra-advisor-ai'
-  }
+  })
   sku: {
     name: 'Y1'
     tier: 'Dynamic'
@@ -73,10 +76,10 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: functionAppName
   location: location
-  tags: {
+  tags: union(commonTags, {
     environment: environment
     project: 'infra-advisor-ai'
-  }
+  })
   kind: 'functionapp,linux'
   identity: {
     type: 'SystemAssigned'

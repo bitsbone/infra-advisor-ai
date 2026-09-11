@@ -76,4 +76,4 @@ make deploy-k8s
 
 The first command provisions Azure resources. The remaining commands connect to AKS, create out-of-band Kubernetes secrets from the local environment, and apply workloads. Review the [deployment quickstart](/infra-advisor-ai/deployment/quickstart/) before running them.
 
-All provisioned resources carry environment and project tags; module-specific tags identify management or experiment purpose. Inspect the deployed state and Bicep diff before treating this reference as proof of what is live.
+All provisioned resources carry environment and project tags; module-specific tags identify management or experiment purpose. They also carry `ts_creator`/`ts_team`/`ts_purpose` from `main.bicep`'s `commonTags`, satisfying the shared sandbox subscription's tag-governance policy — see [tag governance](/deployment/tag-governance/) for the enforcement details and the AKS-managed-resource exemption boundary. Inspect the deployed state and Bicep diff before treating this reference as proof of what is live.

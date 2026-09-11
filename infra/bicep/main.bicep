@@ -29,6 +29,35 @@ param aksNodeCount int = 3
 param aksNodeVmSize string = 'Standard_D2s_v3'
 
 // ---------------------------------------------------------------------------
+// Shared sandbox tag governance — ts_creator/ts_team/ts_purpose. These feed
+// the shared, subscription-scoped Azure Policy initiative under
+// infra/bicep/governance/ (deployed and assigned separately, not by this
+// template) which requires non-empty ts_creator/ts_team on every project
+// resource group in the sandbox and inherits them onto taggable resources.
+// Tagging compliantly here means this project's resources already carry the
+// required tags before that policy's own inheritance/remediation runs.
+// ---------------------------------------------------------------------------
+
+@description('Person or team accountable for this deployment — required by the shared sandbox tag-governance policy. Pass via CLI --parameters or an env-derived value; never commit a real name to a .bicepparam file.')
+@minLength(1)
+param tsCreator string
+
+@description('Team that owns this deployment — required by the shared sandbox tag-governance policy.')
+@minLength(1)
+param tsTeam string
+
+@description('Free-text purpose of this deployment — audited but not enforced by the shared sandbox tag-governance policy.')
+param tsPurpose string = ''
+
+var commonTags = union(
+  {
+    ts_creator: tsCreator
+    ts_team: tsTeam
+  },
+  empty(tsPurpose) ? {} : { ts_purpose: tsPurpose }
+)
+
+// ---------------------------------------------------------------------------
 // ACA agentic POC params — the secrets here (openAiApiKey, datadogApiKey,
 // uiUsername/uiPassword, ddRum*) have NO default and must be passed via
 // CLI --parameters at
@@ -138,11 +167,11 @@ param deployAdfMigration bool = false
 resource resourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = {
   name: 'rg-tola-infra-advisor-ai'
   location: location
-  tags: {
+  tags: union(commonTags, {
     environment: environment
     project: 'infra-advisor-ai'
     managedBy: 'bicep'
-  }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +186,7 @@ module aks 'modules/aks.bicep' = {
     environment: environment
     nodeCount: aksNodeCount
     nodeVmSize: aksNodeVmSize
+    commonTags: commonTags
   }
 }
 
@@ -170,6 +200,7 @@ module search 'modules/azure-ai-search.bicep' = {
   params: {
     location: location
     environment: environment
+    commonTags: commonTags
   }
 }
 
@@ -183,6 +214,7 @@ module openAi 'modules/azure-openai.bicep' = {
   params: {
     location: location
     environment: environment
+    commonTags: commonTags
   }
 }
 
@@ -216,6 +248,7 @@ module storage 'modules/azure-storage.bicep' = {
   params: {
     location: location
     environment: environment
+    commonTags: commonTags
   }
 }
 
@@ -229,6 +262,7 @@ module monitoring 'modules/monitoring.bicep' = {
   params: {
     location: location
     environment: environment
+    commonTags: commonTags
   }
 }
 
@@ -250,6 +284,7 @@ module adfFunctions 'modules/adf-functions.bicep' = if (deployAdfMigration) {
     eiaApiKey: eiaApiKey
     datadogApiKey: datadogApiKey
     datadogSite: datadogSite
+    commonTags: commonTags
   }
 }
 
@@ -267,6 +302,7 @@ module dataFactory 'modules/data-factory.bicep' = if (deployAdfMigration) {
     functionAppHostKey: deployAdfMigration ? adfFunctions.outputs.functionAppHostKey : ''
     searchEndpoint: search.outputs.endpoint
     searchApiKey: search.outputs.adminKey
+    commonTags: commonTags
   }
 }
 
@@ -293,6 +329,7 @@ module acaAgenticPoc 'modules/aca-agentic-poc.bicep' = if (deployAcaAgenticPoc) 
     ddRumApplicationId: acaDdRumApplicationId
     ddRumClientToken: acaDdRumClientToken
     ddRumSite: acaDdRumSite
+    commonTags: commonTags
   }
 }
 
