@@ -73,6 +73,12 @@
          by /auth/login validate on /query without a round-trip. -->
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
 
+    <!-- Hand-rolled encoder for the Datadog Agent's native v0.4/traces msgpack
+         protocol (see Services/AiGuardNativeSpanReporter.cs) — used only to
+         attach a real meta_struct.ai_guard payload to one experimental span,
+         since neither OpenTelemetry nor dd-trace-dotnet's public API can. -->
+    <PackageReference Include="MessagePack" Version="3.1.8" />
+
     <!-- Serilog: structured JSON logs so the DD Agent's log collector parses
          them with dd.trace_id/dd.span_id properties injected by the DD .NET
          tracer (DD_LOGS_INJECTION=true). DD docs Serilog tab:

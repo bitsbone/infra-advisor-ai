@@ -29,6 +29,7 @@ public class DatadogAiGuardClient
     private readonly HttpClient _http;
     private readonly ILogger<DatadogAiGuardClient> _logger;
     private readonly AiGuardSubmissionLog _log;
+    private readonly AiGuardNativeSpanReporter _nativeSpanReporter;
     private readonly string? _apiKey;
     private readonly string? _appKey;
     private readonly string _site;
@@ -40,11 +41,13 @@ public class DatadogAiGuardClient
     public DatadogAiGuardClient(
         HttpClient http,
         ILogger<DatadogAiGuardClient> logger,
-        AiGuardSubmissionLog log)
+        AiGuardSubmissionLog log,
+        AiGuardNativeSpanReporter nativeSpanReporter)
     {
         _http = http;
         _logger = logger;
         _log = log;
+        _nativeSpanReporter = nativeSpanReporter;
         _apiKey = Environment.GetEnvironmentVariable("DD_API_KEY");
         _appKey = Environment.GetEnvironmentVariable("DD_APPLICATION_KEY");
         _site = Environment.GetEnvironmentVariable("DD_SITE") ?? "datadoghq.com";
@@ -92,6 +95,7 @@ public class DatadogAiGuardClient
         string? reason = null;
         string? error = null;
         string[]? attackCategories = null;
+        var tagProbs = new Dictionary<string, double>();
 
         // Our pre-flight check only ever evaluates the raw user query today —
         // ddtrace's SDK also reports "tool" for tool-call content, which we
@@ -143,6 +147,10 @@ public class DatadogAiGuardClient
                         .Where(t => t is not null)
                         .Select(t => t!)
                         .ToArray();
+                if (attrs.TryGetProperty("tag_probs", out var tagProbsEl) && tagProbsEl.ValueKind == JsonValueKind.Object)
+                    foreach (var prop in tagProbsEl.EnumerateObject())
+                        if (prop.Value.ValueKind is JsonValueKind.Number)
+                            tagProbs[prop.Name] = prop.Value.GetDouble();
             }
         }
         catch (Exception ex)
@@ -193,6 +201,30 @@ public class DatadogAiGuardClient
             _logger.LogInformation(
                 "ai_guard.evaluate action={Action} success={Success} duration_ms={DurationMs} dd.trace_id={TraceId} dd.span_id={SpanId}",
                 action, success, durationMs, traceIdDecimal, spanIdDecimal);
+
+            // Experimental, additive, best-effort — see AiGuardNativeSpanReporter.
+            // Never awaited into the request path's error handling; the reporter
+            // itself swallows all failures.
+            _ = _nativeSpanReporter.ReportAsync(new AiGuardNativeSpanReporter.SpanData(
+                StartedAt: startedAt,
+                Duration: DateTimeOffset.UtcNow - startedAt,
+                Error: error is not null || blocked,
+                Meta: new Dictionary<string, string>
+                {
+                    ["ai_guard.target"] = "prompt",
+                    ["ai_guard.action"] = action,
+                    ["ai_guard.success"] = success.ToString(),
+                    ["language"] = "dotnet",
+                }.Concat(reason is not null
+                        ? new[] { new KeyValuePair<string, string>("ai_guard.reason", reason) }
+                        : [])
+                    .Concat(blocked
+                        ? new[] { new KeyValuePair<string, string>("ai_guard.blocked", "true") }
+                        : [])
+                    .ToDictionary(kv => kv.Key, kv => kv.Value),
+                Messages: messages.Select(m => new AiGuardNativeSpanReporter.Message(m.Role, m.Content)).ToList(),
+                AttackCategories: attackCategories ?? [],
+                TagProbs: tagProbs));
         }
 
         // Fail open: a transport/parse error should never block a legitimate

@@ -307,6 +307,11 @@ builder.Services.AddHttpClient<DatadogEvalsClient>();
 // traces to Datadog on its own (see DatadogAiGuardClient).
 builder.Services.AddSingleton<AiGuardSubmissionLog>();
 builder.Services.AddHttpClient<DatadogAiGuardClient>();
+// Experimental, off-by-default (DD_AI_GUARD_NATIVE_SPAN_ENABLED): a second,
+// standalone span submitted directly via the Agent's native v0.4/traces
+// protocol so it can carry meta_struct, the one thing OTel/dd-trace-dotnet's
+// public API can't produce — see AiGuardNativeSpanReporter for the full story.
+builder.Services.AddHttpClient<AiGuardNativeSpanReporter>();
 builder.Services.AddSingleton<IResponseEvaluator, CitationPresentEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, BdToolOrderingEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, ToolRoutingAccuracyEvaluator>();

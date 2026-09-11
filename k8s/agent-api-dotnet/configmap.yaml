@@ -74,3 +74,10 @@ data:
   # variant distribution) to populate in Datadog's Feature Flags product —
   # https://docs.datadoghq.com/feature_flags/guide/server_flag_evaluation_metrics/
   DD_METRICS_OTEL_ENABLED: "true"
+  # Experimental: submits a second "ai_guard" span directly via the Agent's
+  # native v0.4/traces protocol, carrying a real meta_struct.ai_guard payload
+  # so Datadog's Security > AI Guard detail side panel can render for a
+  # .NET-originated evaluation (OTel has no equivalent wire concept for
+  # meta_struct). Sibling to the existing OTel-based ai_guard span, not a
+  # replacement. Being live-tested now — see AiGuardNativeSpanReporter.cs.
+  DD_AI_GUARD_NATIVE_SPAN_ENABLED: "true"
