@@ -77,7 +77,12 @@ public class DatadogAiGuardClient
             return new AiGuardEvaluation("ALLOW", "AI Guard disabled");
         }
 
-        using var activity = ActivitySource.StartActivity("ai_guard.evaluate", ActivityKind.Client);
+        // Span name (not just resource) must be the bare "ai_guard" — Datadog's
+        // Security > AI Guard investigate page filters on resource_name:ai_guard
+        // exactly (confirmed via its query string), and OTel's span name becomes
+        // the APM resource_name on ingestion. ddtrace's own span uses this same
+        // bare name, confirmed against a live Python-backend trace.
+        using var activity = ActivitySource.StartActivity("ai_guard", ActivityKind.Client);
         var traceIdDecimal = GetTraceIdDecimal();
         var spanIdDecimal = GetSpanIdDecimal();
 
