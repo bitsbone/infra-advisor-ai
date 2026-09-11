@@ -1,4 +1,6 @@
-namespace InfraAdvisor.AgentApi.Services;
+using InfraAdvisor.AgentApi.Services;
+
+namespace InfraAdvisor.AgentApi.Observability;
 
 // Periodically re-resolves every specialist's prompt-version flag +
 // registry fetch (router + 5 specialists — see SpecialistRegistry), so a

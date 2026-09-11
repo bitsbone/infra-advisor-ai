@@ -6,7 +6,7 @@ audience:
   - application-developer
   - security-engineer
 maturity: partial
-verifiedOn: 2026-08-27
+verifiedOn: 2026-09-11
 sidebar:
   order: 7
 ---
@@ -26,7 +26,7 @@ This is a safety boundary, not an observability evaluation. Post-response qualit
 | Input checked | Raw user query | Raw user query |
 | Block result | Abort exception becomes a blocked response | `DENY` or `ABORT` becomes a blocked response |
 | Failure policy | Fail open | Fail open |
-| Local diagnostics | Application logs | APM activity, logs, `/ai-guard/status` |
+| Local diagnostics | Application logs, native AI Guard trace | APM activity, logs, `/ai-guard/status`, optional native trace |
 
 ### Python SDK path
 
@@ -36,13 +36,15 @@ The service also runs Datadog auto-instrumentation. Supported downstream model o
 
 ### .NET HTTP path
 
-`DatadogAiGuardClient` posts the same one-message transcript to the regional AI Guard evaluate endpoint. Both query modes call it before any agent work. Because the HTTP API does not produce native AI Guard traces, the service adds three local signals:
+`DatadogAiGuardClient` posts the same one-message transcript to the regional AI Guard evaluate endpoint. Both query modes call it before any agent work. Because the HTTP API does not produce native AI Guard traces, the service adds local signals:
 
-- a child `ai_guard.evaluate` APM activity with bounded decision metadata;
+- a child `ai_guard.evaluate` APM activity with bounded decision metadata — the span APM dashboards and monitors query;
 - a trace-correlated structured log;
 - a recent-outcome buffer exposed by `GET /ai-guard/status`.
 
-These signals prove that the application called the API; they do not make the request appear as an SDK-generated AI Guard trace.
+These signals prove that the application called the API and are enough for most operational purposes, but they cannot make the request render in Datadog's Security → AI Guard product page. That page's detail panel requires `meta_struct`, a field in Datadog's native trace-agent protocol with no OTLP equivalent — confirmed by reading both `ddtrace-python`'s own AI Guard implementation and `dd-trace-dotnet`'s OpenTelemetry-to-span bridge, neither of which has a path to populate it from an OTLP-instrumented service. Python's SDK gets `meta_struct` for free, since the same native tracer instruments both APM and AI Guard from one process.
+
+`AiGuardNativeSpanReporter` closes that specific gap experimentally: off by default (`DD_AI_GUARD_NATIVE_SPAN_ENABLED`), it speaks the Datadog Agent's native `v0.4/traces` protocol directly, submitting a second, separately-named `ai_guard` span that carries a real `meta_struct.ai_guard` payload alongside the trace-id propagation tag (`_dd.p.tid`) needed to keep it part of the same distributed trace as everything else. It is a best-effort, fire-and-forget addition — any failure is logged and never affects the evaluate call's result.
 
 ## Understand the fail-open choice
 
@@ -59,7 +61,7 @@ Missing credentials, client initialization failure, transport errors, and malfor
 </ObservationChecklist>
 
 <Aside type="caution">
-The current pre-flight sends raw user text to AI Guard. Treat the application and Datadog account configuration as part of the same data-processing boundary, and do not copy the text into custom span tags or logs.
+The current pre-flight sends raw user text to AI Guard. Treat the application and Datadog account configuration as part of the same data-processing boundary, and do not copy the text into custom span tags or logs. The optional native span (`AiGuardNativeSpanReporter`) is an exception by necessity: Datadog's Security → AI Guard page requires the evaluated message text in its `meta_struct` payload, so enabling that reporter extends this data boundary to include the raw query in trace data — weigh that before enabling it outside a controlled environment.
 </Aside>
 
 See Datadog's current [AI Guard setup guide](https://docs.datadoghq.com/security/ai_guard/setup/) for supported automatic integrations, SDKs, and HTTP API behavior. Continue to [Data security and access](../security-rbac/) for telemetry that is allowed past the guard.

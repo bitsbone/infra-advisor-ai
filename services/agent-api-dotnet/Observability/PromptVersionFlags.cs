@@ -2,7 +2,7 @@ using Datadog.FeatureFlags.OpenFeature;
 using OpenFeature;
 using OpenFeature.Model;
 
-namespace InfraAdvisor.AgentApi.Services;
+namespace InfraAdvisor.AgentApi.Observability;
 
 // Evaluates the Datadog Prompt Registry's own auto-provisioned
 // `__llmobs__.prompt.<prompt_id>` Feature Flag — one per managed prompt,

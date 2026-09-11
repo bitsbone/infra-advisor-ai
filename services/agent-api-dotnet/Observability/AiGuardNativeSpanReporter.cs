@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using MessagePack;
 
-namespace InfraAdvisor.AgentApi.Services;
+namespace InfraAdvisor.AgentApi.Observability;
 
 // EXPERIMENTAL, additive-only span reporter.
 //

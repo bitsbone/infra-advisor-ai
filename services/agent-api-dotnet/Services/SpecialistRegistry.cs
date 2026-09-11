@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
+using InfraAdvisor.AgentApi.Observability;
 
 namespace InfraAdvisor.AgentApi.Services;
 

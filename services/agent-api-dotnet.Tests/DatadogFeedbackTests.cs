@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text.Json;
-using InfraAdvisor.AgentApi.Services;
+using InfraAdvisor.AgentApi.Observability;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 

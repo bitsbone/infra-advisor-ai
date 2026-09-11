@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace InfraAdvisor.AgentApi.Services;
+namespace InfraAdvisor.AgentApi.Observability;
 
 // Thread-safe ring buffer of recent eval-submission outcomes for the
 // admin diagnostics panel. The eval pipeline is fire-and-forget at the

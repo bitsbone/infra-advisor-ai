@@ -1,6 +1,6 @@
 using System.Threading;
 
-namespace InfraAdvisor.AgentApi.Services;
+namespace InfraAdvisor.AgentApi.Observability;
 
 // Datadog's LLM Observability session/conversation grouping for
 // OTel-based instrumentation requires gen_ai.conversation.id to be set on

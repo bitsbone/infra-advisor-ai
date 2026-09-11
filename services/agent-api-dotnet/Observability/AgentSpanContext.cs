@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 
-namespace InfraAdvisor.AgentApi.Services;
+namespace InfraAdvisor.AgentApi.Observability;
 
 // Captures the invoke_agent span's IDs into an AsyncLocal so that code
 // running AFTER agent.RunAsync (where Activity.Current has reverted to the

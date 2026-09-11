@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace InfraAdvisor.AgentApi.Services;
+namespace InfraAdvisor.AgentApi.Observability;
 
 // Thread-safe ring buffer of recent AI Guard evaluation outcomes for the
 // admin diagnostics panel. AI Guard's HTTP API path sends no traces to

@@ -8,6 +8,7 @@ using Microsoft.Extensions.AI;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using InfraAdvisor.AgentApi.Models;
+using InfraAdvisor.AgentApi.Observability;
 using InfraAdvisor.AgentApi.Services.Evaluators;
 using StreamEvent = InfraAdvisor.AgentApi.Models.StreamEvent;
 

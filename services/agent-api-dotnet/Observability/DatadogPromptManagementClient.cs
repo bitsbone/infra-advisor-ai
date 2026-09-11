@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace InfraAdvisor.AgentApi.Services;
+namespace InfraAdvisor.AgentApi.Observability;
 
 // Thin HTTP client wrapping DD's (preview/"unstable") Prompt Registry API —
 // same shape confirmed from ddtrace's own Python implementation

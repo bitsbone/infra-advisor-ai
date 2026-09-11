@@ -1,6 +1,6 @@
 using System.Threading;
 
-namespace InfraAdvisor.AgentApi.Services;
+namespace InfraAdvisor.AgentApi.Observability;
 
 // Makes the current request's OpenFeature targeting context (user id +
 // job_role, see PromptVersionFlags/SpecialistRegistry.GetWorkflowForRequestAsync)

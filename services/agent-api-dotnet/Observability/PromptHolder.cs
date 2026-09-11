@@ -1,4 +1,4 @@
-namespace InfraAdvisor.AgentApi.Services;
+namespace InfraAdvisor.AgentApi.Observability;
 
 // Holds the currently effective system prompt + refreshes it periodically
 // from Datadog's Prompt Registry (via DatadogPromptManagementClient),
