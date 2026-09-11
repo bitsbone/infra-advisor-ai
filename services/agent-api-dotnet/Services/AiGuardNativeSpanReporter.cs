@@ -177,40 +177,57 @@ public sealed class AiGuardNativeSpanReporter
             writer.Write(v);
         }
 
+        // meta_struct's per-key VALUES must be msgpack `bin` (a length-prefixed
+        // binary blob whose contents are themselves separately msgpack-encoded)
+        // — NOT a directly-nested map. Confirmed against the real Agent's own
+        // decoder: an earlier attempt that wrote a plain nested map here was
+        // rejected with "msgp: attempted to decode type \"map\" with method for
+        // \"bin\" at 0/0/MetaStruct/ai_guard". dd-trace-dotnet's own internal
+        // Span.SetMetaStruct(string key, byte[] value) signature — pre-encoded
+        // bytes, not an object — was the correct hint all along.
         writer.Write("meta_struct");
         writer.WriteMapHeader(1);
         writer.Write("ai_guard");
+        writer.Write(EncodeAiGuardStruct(data));
+
+        writer.Flush();
+        return buffer.WrittenSpan.ToArray();
+    }
+
+    private static byte[] EncodeAiGuardStruct(SpanData data)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        var writer = new MessagePackWriter(buffer);
+
+        var structFieldCount = 1
+            + (data.AttackCategories.Count > 0 ? 1 : 0)
+            + (data.TagProbs.Count > 0 ? 1 : 0);
+        writer.WriteMapHeader(structFieldCount);
+
+        writer.Write("messages");
+        writer.WriteArrayHeader(data.Messages.Count);
+        foreach (var m in data.Messages)
         {
-            var structFieldCount = 1
-                + (data.AttackCategories.Count > 0 ? 1 : 0)
-                + (data.TagProbs.Count > 0 ? 1 : 0);
-            writer.WriteMapHeader(structFieldCount);
+            writer.WriteMapHeader(2);
+            writer.Write("role"); writer.Write(m.Role);
+            writer.Write("content"); writer.Write(m.Content);
+        }
 
-            writer.Write("messages");
-            writer.WriteArrayHeader(data.Messages.Count);
-            foreach (var m in data.Messages)
-            {
-                writer.WriteMapHeader(2);
-                writer.Write("role"); writer.Write(m.Role);
-                writer.Write("content"); writer.Write(m.Content);
-            }
+        if (data.AttackCategories.Count > 0)
+        {
+            writer.Write("attack_categories");
+            writer.WriteArrayHeader(data.AttackCategories.Count);
+            foreach (var c in data.AttackCategories) writer.Write(c);
+        }
 
-            if (data.AttackCategories.Count > 0)
+        if (data.TagProbs.Count > 0)
+        {
+            writer.Write("tag_probs");
+            writer.WriteMapHeader(data.TagProbs.Count);
+            foreach (var (k, v) in data.TagProbs)
             {
-                writer.Write("attack_categories");
-                writer.WriteArrayHeader(data.AttackCategories.Count);
-                foreach (var c in data.AttackCategories) writer.Write(c);
-            }
-
-            if (data.TagProbs.Count > 0)
-            {
-                writer.Write("tag_probs");
-                writer.WriteMapHeader(data.TagProbs.Count);
-                foreach (var (k, v) in data.TagProbs)
-                {
-                    writer.Write(k);
-                    writer.Write(v);
-                }
+                writer.Write(k);
+                writer.Write(v);
             }
         }
 
