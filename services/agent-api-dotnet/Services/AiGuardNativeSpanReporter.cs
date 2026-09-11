@@ -200,6 +200,7 @@ public sealed class AiGuardNativeSpanReporter
         var writer = new MessagePackWriter(buffer);
 
         var structFieldCount = 1
+            + (data.Messages.Count > 0 ? 1 : 0)
             + (data.AttackCategories.Count > 0 ? 1 : 0)
             + (data.TagProbs.Count > 0 ? 1 : 0);
         writer.WriteMapHeader(structFieldCount);
@@ -211,6 +212,24 @@ public sealed class AiGuardNativeSpanReporter
             writer.WriteMapHeader(2);
             writer.Write("role"); writer.Write(m.Role);
             writer.Write("content"); writer.Write(m.Content);
+        }
+
+        // The web UI's list/investigate view surfaces `@ai_guard.current` as
+        // a column — the V1 envelope's single "message currently being
+        // evaluated" field, distinct from V2's `messages` array above. The
+        // detail side panel accepts either shape (isEither(isEvaluationEnvelopeV1,
+        // isEvaluationEnvelopeV2)) and already renders correctly with just
+        // `messages`, but the list view's Content column showed "No content"
+        // for this span — confirmed live — which V1's `current` likely
+        // drives instead. Sending both costs nothing and satisfies whichever
+        // view reads which field, rather than guessing which one to pick.
+        if (data.Messages.Count > 0)
+        {
+            var current = data.Messages[^1];
+            writer.Write("current");
+            writer.WriteMapHeader(2);
+            writer.Write("role"); writer.Write(current.Role);
+            writer.Write("content"); writer.Write(current.Content);
         }
 
         if (data.AttackCategories.Count > 0)

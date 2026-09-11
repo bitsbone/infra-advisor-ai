@@ -80,12 +80,19 @@ public class DatadogAiGuardClient
             return new AiGuardEvaluation("ALLOW", "AI Guard disabled");
         }
 
-        // Span name (not just resource) must be the bare "ai_guard" — Datadog's
-        // Security > AI Guard investigate page filters on resource_name:ai_guard
-        // exactly (confirmed via its query string), and OTel's span name becomes
-        // the APM resource_name on ingestion. ddtrace's own span uses this same
-        // bare name, confirmed against a live Python-backend trace.
-        using var activity = ActivitySource.StartActivity("ai_guard", ActivityKind.Client);
+        // Deliberately NOT named bare "ai_guard" — Datadog's Security > AI
+        // Guard investigate page filters on resource_name:ai_guard exactly,
+        // and AiGuardNativeSpanReporter now submits a second, purpose-built
+        // span under that exact name (carrying meta_struct, which this OTel
+        // Activity structurally cannot). Using the same name here produced
+        // two rows in that list view for one evaluation — one fully
+        // populated (this span, via the mature OTLP pipeline) and one blank
+        // ("No content", confirmed live) since the raw v0.4 submission
+        // doesn't populate every list-view column the same way. This span
+        // keeps its own distinct resource name and remains the one APM/
+        // dashboards/monitors query against; AiGuardNativeSpanReporter's
+        // span is now the sole "ai_guard" for the Security product surface.
+        using var activity = ActivitySource.StartActivity("ai_guard.evaluate", ActivityKind.Client);
         var traceIdDecimal = GetTraceIdDecimal();
         var spanIdDecimal = GetSpanIdDecimal();
 
