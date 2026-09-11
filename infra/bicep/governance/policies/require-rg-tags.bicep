@@ -4,15 +4,17 @@
 // Deny-capable; ts_purpose as Audit-only) rather than writing one hardcoded
 // definition per tag.
 //
-// `tags[parameters('tagName')]` is Azure Policy's own documented syntax for
-// parameterizing a tag-key lookup inside a `field` expression — the policy
-// engine parses the `parameters(...)` reference embedded in the field string
-// itself at evaluation time; it is not a Bicep/ARM template function call
-// and Bicep passes it through as a literal string unchanged. This mirrors
-// how Microsoft's own built-in "Require a tag on resource groups" policy is
-// written. Not yet validated against a live subscription — confirm with
-// `az policy definition create` (or the what-if step in the parent plan)
-// before enabling Deny.
+// A parameterized tag-key lookup inside a `field` expression must be
+// wrapped as a real ARM template expression — `[concat('tags[', parameters
+// ('tagName'), ']')]` — evaluated once at assignment time to produce the
+// literal field string (e.g. "tags[ts_creator]"). A bare string containing
+// the text `parameters('tagName')` with no `[...]` wrapper does NOT count
+// as using the parameter — confirmed live: `az deployment sub create`
+// rejected an earlier version of this file with "UnusedPolicyParameters:
+// tagName ... not used in the policy rule" for exactly that reason. The
+// `effect` parameter below (`'[parameters(\'effect\')]'`) was already
+// correctly wrapped and never hit this error, which is what pointed to
+// the fix.
 
 targetScope = 'subscription'
 
@@ -58,11 +60,11 @@ resource policy 'Microsoft.Authorization/policyDefinitions@2021-06-01' = {
           {
             anyOf: [
               {
-                field: 'tags[parameters(\'tagName\')]'
+                field: '[concat(\'tags[\', parameters(\'tagName\'), \']\')]'
                 exists: 'false'
               }
               {
-                field: 'tags[parameters(\'tagName\')]'
+                field: '[concat(\'tags[\', parameters(\'tagName\'), \']\')]'
                 equals: ''
               }
             ]

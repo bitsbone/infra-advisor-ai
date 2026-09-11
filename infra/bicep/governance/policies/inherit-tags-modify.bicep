@@ -10,11 +10,14 @@
 // per-resource overrides (the `if.exists: false` condition gates the whole
 // modify effect).
 //
+// `field` values use `[concat('tags[', parameters('tagName'), ']')]` — a
+// real ARM template expression, not a bare string — see
+// require-rg-tags.bicep for why the bracket-wrapping is required (confirmed
+// live: the unwrapped form fails deployment with "UnusedPolicyParameters").
+//
 // The role assigned for remediation must be exactly Tag Contributor
 // (least privilege — not Contributor). The GUID below is Azure's built-in
-// Tag Contributor role; confirm against a live subscription
-// (`az role definition list --name "Tag Contributor"`) before deploying,
-// same caveat as require-rg-tags.bicep's field syntax.
+// Tag Contributor role.
 
 targetScope = 'subscription'
 
@@ -41,7 +44,7 @@ resource policy 'Microsoft.Authorization/policyDefinitions@2021-06-01' = {
     }
     policyRule: {
       if: {
-        field: 'tags[parameters(\'tagName\')]'
+        field: '[concat(\'tags[\', parameters(\'tagName\'), \']\')]'
         exists: 'false'
       }
       then: {
@@ -54,7 +57,7 @@ resource policy 'Microsoft.Authorization/policyDefinitions@2021-06-01' = {
           operations: [
             {
               operation: 'addOrReplace'
-              field: 'tags[parameters(\'tagName\')]'
+              field: '[concat(\'tags[\', parameters(\'tagName\'), \']\')]'
               value: '[resourcegroup().tags[parameters(\'tagName\')]]'
             }
           ]
