@@ -1050,6 +1050,7 @@ export function Chat() {
             patchAssistant((m) => ({
               ...m,
               content: m.content || evt.message,
+              traceId: m.traceId ?? evt.trace_id,
               steps: m.steps.map((s) => (s.status === "running" ? { ...s, status: "error" } : s)),
             }));
             setError({ message: evt.message, traceId: evt.trace_id });

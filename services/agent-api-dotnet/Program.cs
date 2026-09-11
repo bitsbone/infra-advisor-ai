@@ -796,6 +796,10 @@ app.MapPost("/query/stream", async (
                     // with the block reason gone (it only ever lived in the
                     // SSE payload, never saved anywhere).
                     errorMessage = ee.Message;
+                    // Also capture the trace id so the persisted message keeps
+                    // its "View trace" link on reload — an error never sends a
+                    // DoneEvent, so finalTraceId would otherwise stay null.
+                    finalTraceId ??= ee.TraceId;
                     break;
             }
 
