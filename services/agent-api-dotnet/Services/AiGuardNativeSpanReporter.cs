@@ -48,7 +48,12 @@ public sealed class AiGuardNativeSpanReporter
         _logger = logger;
         _enabled = Environment.GetEnvironmentVariable("DD_AI_GUARD_NATIVE_SPAN_ENABLED")
             ?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
-        _agentUrl = Environment.GetEnvironmentVariable("DD_TRACE_AGENT_URL")
+        // Deliberately NOT "DD_TRACE_AGENT_URL" — the admission-controller-injected
+        // dd-trace-dotnet tracer already reads that var in this pod, pointed at a
+        // Unix domain socket (unix:///var/run/datadog/apm.socket) for its own AAP
+        // telemetry. Reusing that name here made this reporter pick up the unix://
+        // URL and fail with "the 'unix' scheme is not supported" (confirmed live).
+        _agentUrl = Environment.GetEnvironmentVariable("DD_AI_GUARD_NATIVE_AGENT_URL")
             ?? "http://datadog-agent.datadog.svc.cluster.local:8126";
         _service = Environment.GetEnvironmentVariable("DD_SERVICE")
             ?? Observability.TelemetrySetup.ActivitySourceName;
