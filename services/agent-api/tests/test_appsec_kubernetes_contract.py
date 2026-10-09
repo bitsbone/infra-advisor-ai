@@ -75,8 +75,15 @@ def test_cluster_agent_contract_supports_pinned_security_injection():
     target = features["apm"]["instrumentation"]["targets"][0]
 
     assert admission == {"enabled": True, "mutateUnlabelled": False}
-    assert target["namespaceSelector"]["matchLabels"] == {
-        "kubernetes.io/metadata.name": "infra-advisor"
+    # Prod and the dev namespace get the same injection, and nothing else does.
+    assert target["namespaceSelector"] == {
+        "matchExpressions": [
+            {
+                "key": "kubernetes.io/metadata.name",
+                "operator": "In",
+                "values": ["infra-advisor", "infra-advisor-dev"],
+            }
+        ]
     }
     assert target["podSelector"]["matchLabels"] == {"app": "agent-api-dotnet"}
     assert set(target["ddTraceVersions"]) == {"dotnet"}
