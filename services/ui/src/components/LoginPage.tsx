@@ -90,7 +90,7 @@ export function LoginPage() {
   const isLogin = mode === "login";
 
   return (
-    <Flex h="100vh" bg="gray.50" align="center" justify="center" px={4}>
+    <Flex flex="1" minH={0} bg="gray.50" align="center" justify="center" px={4}>
       <Box
         bg="white"
         borderWidth="1px"

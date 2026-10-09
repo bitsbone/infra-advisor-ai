@@ -26,5 +26,9 @@ LABEL org.opencontainers.image.title="ui" \
       org.opencontainers.image.source="https://github.com/bitsbone/infra-advisor-ai"
 
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Rendered by the nginx entrypoint (envsubst) into /etc/nginx/conf.d/default.conf at start.
+# The same image serves prod and dev; only these runtime variables differ.
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+ENV K8S_NAMESPACE=infra-advisor
+ENV APP_ENV=prod
 EXPOSE 80

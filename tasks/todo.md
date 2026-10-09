@@ -106,22 +106,22 @@ Superseded an earlier unauthorized draft of this file that assumed a dual-domain
 
 ## Phase 3 — App changes (shipped to prod first, inert there)
 
-- [ ] **UI runtime config (one image for both envs).**
+- [x] **UI runtime config (one image for both envs).** Done: `services/ui/nginx/default.conf.template`, `/env-config.js`, `src/lib/app-config.ts`; UI Deployment sets `APP_ENV` from its own `tags.datadoghq.com/env` label and `K8S_NAMESPACE` from `metadata.namespace` (Downward API). Verified by running the image as prod and dev (env-config body, `Cache-Control: no-store`, rendered upstream FQDNs, `nginx -t`). Non-prod responses also carry `X-Robots-Tag: noindex, nofollow`.
   - Convert `nginx.conf` to `/etc/nginx/templates/default.conf.template`, which the nginx image runs through envsubst at start. Upstreams become `<svc>.${K8S_NAMESPACE}.svc.cluster.local`.
   - nginx serves `/env-config.js`, generated from a template, with `window.__APP_CONFIG__ = { env, ddEnv }`.
   - `datadog-rum.ts` reads `env` from it, falling back to `VITE_DD_ENV` for local dev.
   - Sourcemap upload keys on service + version, so it's unaffected.
   - The same image SHA can be promoted from dev to prod without a rebuild.
-- [ ] **RUM env tag (item 1).** RUM `env` comes from runtime config, so prod reports `env:prod` and dev reports `env:dev`. `allowedTracingUrls` is origin-relative already, so RUM↔APM correlation works on both hostnames.
-- [ ] **Non-prod banner (item 3).**
+- [x] **RUM env tag (item 1).** RUM `env` comes from runtime config, so prod reports `env:prod` and dev reports `env:dev`. `allowedTracingUrls` is origin-relative already, so RUM↔APM correlation works on both hostnames.
+- [x] **Non-prod banner (item 3).** `EnvironmentBanner.tsx`; `npm run build` passes. Not yet eyeballed in a browser — check on the first dev deploy.
   - Add a slim Chakra v3 banner, for example "DEV environment · `<short sha>` · test data only", in `App.tsx` above `AppInner`, so it shows on the login page and in chat. It renders only when `env !== "prod"`.
   - Replace the three hardcoded `h="100vh"` (`App.tsx:24`, `Chat.tsx:1146`, `LoginPage.tsx:93`) with a flex-column layout, so the banner doesn't cause overflow.
   - Keep the existing `data-testid`s.
-- [ ] **Kafka kill switch (item 4).**
+- [x] **Kafka kill switch (item 4).** Python `kafka_config.py` (+ `tests/test_kafka_switch.py`, 11 tests incl. lifespan); .NET `KafkaSettings.cs` with conditional DI and a no-op publisher (+ startup test asserting no `KafkaConsumerService`). Prod ConfigMaps set `KAFKA_ENABLED: "true"` explicitly.
   - Add `KAFKA_ENABLED` (default `true`) to agent-api (consumer thread and contract-awards producer) and agent-api-dotnet (`KafkaConsumerService`, `ContractAwardsEventPublisher`).
   - When it's `false`, both no-op and log once at startup. Dev sets it to `false`.
   - Add tests in both stacks.
-- [ ] **auth-api.** `APP_BASE_URL` and `ALLOWED_ORIGINS` are already env-driven, so no code change is needed. Confirm the reset-link host comes from config.
+- [x] **auth-api.** Confirmed: `main.py:174` builds reset links from `APP_BASE_URL`; CORS from `ALLOWED_ORIGINS`. `APP_BASE_URL` and `ALLOWED_ORIGINS` are already env-driven, so no code change is needed. Confirm the reset-link host comes from config.
 
 ## Phase 4 — Dev overlay, datastores and seeding (item 5)
 
