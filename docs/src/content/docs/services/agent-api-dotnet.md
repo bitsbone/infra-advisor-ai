@@ -61,7 +61,7 @@ At `EVAL_SAMPLE_RATE`, the service runs five `IResponseEvaluator` implementation
 
 ## Telemetry and security
 
-The application emits OpenTelemetry through OTLP HTTP to the Datadog Agent. ASP.NET Core, HTTP, Npgsql, and Microsoft AI instrumentation combine with explicit project activities. `TelemetryPrivacy.EnableSensitiveData=false` keeps message and attachment content out of generated AI spans.
+The application emits OpenTelemetry through OTLP HTTP to the Datadog Agent. ASP.NET Core, HTTP, Npgsql, and Microsoft AI instrumentation combine with explicit project activities. `TelemetryPrivacy.EnableSensitiveData=true` exports message content on generated AI spans; Sensitive Data Scanner redacts at intake. A `query-processing` workflow activity is the Agent Observability root for each request and carries the query and answer as `input.value`/`output.value`.
 
 The Datadog Admission Controller injects a pinned .NET profiler for App and API Protection. `DD_APM_TRACING_ENABLED=false` prevents that profiler from creating a second application trace tree; OpenTelemetry remains the APM source.
 

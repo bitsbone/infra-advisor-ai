@@ -61,6 +61,9 @@ The request workflow adds meaning around auto-instrumented children:
 
 ```python
 with LLMObs.workflow("query-processing") as workflow:
+    LLMObs.annotate(span=workflow, input_data=query)
+    tools = await mcp_client.get_tools()  # opens an MCP session — keep it inside the workflow
+
     with LLMObs.task("load-history") as history_span:
         history = await load_history(session_id)
         LLMObs.annotate(span=history_span, tags={"history.turns": len(history)})
@@ -71,21 +74,31 @@ with LLMObs.workflow("query-processing") as workflow:
 
     with LLMObs.agent(f"specialist-{decision.specialist}"):
         result = await react_agent.ainvoke(...)
+
+    LLMObs.annotate(span=workflow, output_data=answer)
 ```
 
 Do not wrap an automatically instrumented model or tool call in another manual `LLMObs.llm()` or `LLMObs.tool()` span. That produces duplicate operations without adding meaning.
 
 Annotate while the context manager is active. An annotation made after the `with` block targets a span that has already closed.
 
+## Give every root span readable input and output
+
+The Agent Observability trace list shows each trace's **root** span input and output, not the content of the chat span deep inside it. Tags alone leave the row reading "No content" even when the nested OpenAI span holds the full prompt and answer. InfraAdvisor sets `input_data` (the effective user query) and `output_data` (the final answer) on the `query-processing` workflow and the specialist agent span, and sets the chosen specialist as the router's output.
+
+The ddtrace MCP integration traces every MCP client session as its own `workflow` span, and that span's input is the session's `read_stream`/`write_stream` objects. Any `get_tools()` call made outside an explicit workflow becomes a root trace whose only content is `{"read_stream": "MemoryObjectReceiveStream(...)"}`. Keep MCP session work inside the request workflow. Standalone operations such as the startup probe, `GET /tools`, and the sandbox `POST /tools/{name}` each get their own named workflow (`mcp-startup-probe`, `list-mcp-tools`, `sandbox-tool-call`) with meaningful input and output.
+
 ## Keep capture intentional
 
 Automatic integrations can capture prompts, completions, model metadata, token counts, and tool inputs or outputs. That is useful for debugging only when the service's data policy allows it.
 
-InfraAdvisor disables Agent Observability payload capture on the provider-adapter MCP deployment. That service retains ordinary APM timing and bounded metrics without copying external provider bodies into Agent Observability. Changing this boundary requires an explicit privacy review and updated tests.
+InfraAdvisor is a demo environment that relies on Datadog Sensitive Data Scanner to redact at intake. Agent-api spans therefore carry query and answer content. InfraAdvisor still disables Agent Observability payload capture on the provider-adapter MCP deployment. That service retains ordinary APM timing and bounded metrics without copying external provider bodies into Agent Observability. Changing this boundary requires an explicit privacy review and updated tests.
 
 <ObservationChecklist title="Verify the Python path">
   <ul>
     <li>The trace begins with `query-processing`, not an isolated LLM call.</li>
+    <li>The trace list shows the user's question as input and the final answer as output for `query-processing` rows.</li>
+    <li>No root rows show `read_stream` as their input.</li>
     <li>The router and selected specialist appear as agent operations.</li>
     <li>LangChain, OpenAI, and MCP operations nest beneath the explicit orchestration spans.</li>
     <li>Domain and source-count tags are present without secrets or raw provider payloads.</li>
@@ -100,6 +113,8 @@ InfraAdvisor disables Agent Observability payload capture on the provider-adapte
 | Library spans exist but no workflow | Explicit orchestration wrapper did not run |
 | Duplicate model or tool spans | An auto-instrumented call was also wrapped manually |
 | Tags missing | Annotation ran after the span closed |
+| Trace list shows "No content" | Root span was annotated with tags only — add `input_data`/`output_data` |
+| Root input is `{"read_stream": ...}` | An MCP session (`get_tools()`, tool call) ran outside any workflow span |
 | Agentless export fails | `DD_API_KEY` or direct-ingestion configuration is missing |
 
 Continue to [Spans and traces](../../monitoring/spans-and-traces/) to investigate the resulting tree or [External evaluations](../../evaluations/external/) to attach project-defined quality signals.

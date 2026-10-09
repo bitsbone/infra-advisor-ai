@@ -610,7 +610,6 @@ async def run_agent(
         }
 
     llm = build_llm(deployment)
-    all_tools = await mcp_client.get_tools()
 
     # LLMObs session grouping should key off the real Datadog RUM session
     # (enables LLMObs <-> RUM correlation) when the client sent one — session_id
@@ -618,6 +617,11 @@ async def run_agent(
     # a RUM session, and the two only coincide by accident for the web client.
     llmobs_session_id = rum_session_id or session_id
     with LLMObs.workflow("query-processing", session_id=llmobs_session_id) as workflow_span:
+        # Listing tools opens an MCP client session, which ddtrace traces as its
+        # own LLMObs workflow — inside this span it nests instead of surfacing
+        # as a root trace whose only input is the session's stream objects.
+        all_tools = await mcp_client.get_tools()
+
         # Cascade both modalities to plain text — nested inside the workflow
         # span so transcribe-audio/describe-image show up as its children in
         # the trace, matching load-history/extract-sources. See
@@ -627,6 +631,7 @@ async def run_agent(
 
         LLMObs.annotate(
             span=workflow_span,
+            input_data=effective_query,
             tags={
                 "query.domain": query_domain,
                 "query.characters": str(len(effective_query)),
@@ -661,6 +666,8 @@ async def run_agent(
             decision = await _run_router(effective_query, llm)
             LLMObs.annotate(
                 span=router_span,
+                input_data=effective_query,
+                output_data=decision.specialist,
                 tags={
                     "router.specialist": decision.specialist,
                     "query.domain": query_domain,
@@ -775,6 +782,7 @@ async def run_agent(
         # Annotate workflow with final output
         LLMObs.annotate(
             span=workflow_span,
+            output_data=answer,
             tags={
                 "tools_called": ",".join(tools_called),
                 "specialist": specialist_name,
@@ -874,6 +882,7 @@ async def run_agent_stream(
 
             LLMObs.annotate(
                 span=workflow_span,
+                input_data=effective_query,
                 tags={
                     "query.domain": query_domain,
                     "query.characters": str(len(effective_query)),
@@ -906,6 +915,8 @@ async def run_agent_stream(
                 decision = await _run_router(effective_query, llm)
                 LLMObs.annotate(
                     span=router_span,
+                    input_data=effective_query,
+                    output_data=decision.specialist,
                     tags={
                         "router.specialist": decision.specialist,
                         "query.domain": query_domain,
@@ -1075,6 +1086,7 @@ async def run_agent_stream(
 
             LLMObs.annotate(
                 span=workflow_span,
+                output_data=answer,
                 tags={
                     "tools_called": ",".join(tools_called),
                     "specialist": specialist_name,

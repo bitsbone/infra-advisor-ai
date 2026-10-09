@@ -13,27 +13,27 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 
-def test_agent_annotation_uses_only_bounded_metadata():
+def test_agent_annotation_records_query_and_answer_as_io():
+    """The LLM Obs trace list renders a root's input/output — agent spans carry
+    the same query/answer the auto-instrumented chat spans already do."""
     from observability.llm_obs import tag_agent_run
 
-    sentinel_prompt = "PRIVATE-PROMPT-DO-NOT-TRACE"
-    sentinel_answer = "PRIVATE-ANSWER-DO-NOT-TRACE"
     annotate = MagicMock()
 
     with patch("observability.llm_obs.LLMObs.annotate", annotate):
         tag_agent_run(
             span=MagicMock(),
-            query=sentinel_prompt,
-            answer=sentinel_answer,
+            query="Which bridges in Travis County are structurally deficient?",
+            answer="Three bridges are rated poor.",
             query_domain="engineering",
             tools_called=["get_bridge_condition"],
         )
 
-    exported = repr(annotate.call_args_list)
-    assert sentinel_prompt not in exported
-    assert sentinel_answer not in exported
-    assert "query.characters" in exported
-    assert "response.characters" in exported
+    kwargs = annotate.call_args.kwargs
+    assert kwargs["input_data"] == "Which bridges in Travis County are structurally deficient?"
+    assert kwargs["output_data"] == "Three bridges are rated poor."
+    assert "query.characters" in kwargs["tags"]
+    assert "response.characters" in kwargs["tags"]
 
 
 def test_custom_agent_sources_have_no_sensitive_attribute_keys():
@@ -49,8 +49,6 @@ def test_custom_agent_sources_have_no_sensitive_attribute_keys():
         '"session.rum_id"',
         '"audio.blob_url"',
         '"image.blob_url"',
-        "input_data=",
-        "output_data=",
     ):
         assert forbidden not in combined
 
