@@ -318,6 +318,8 @@ jobs:
 
       - name: Apply k8s manifests for changed services
         # Picks up ConfigMap/Deployment-spec/Service/HPA edits under k8s/<service>/.
+        # Each service directory is a Kustomize base (see k8s/overlays/prod), so
+        # it's applied with -k; `-f <dir>` would choke on kustomization.yaml.
         # Previously nothing in CI ever ran this — only a manual `make deploy-k8s`
         # did — so manifest changes (e.g. new ConfigMap keys) could sit committed
         # but never actually reach the cluster until someone remembered to run it
@@ -326,13 +328,13 @@ jobs:
         # in these manifests are :latest — the next step immediately overrides
         # to the SHA-pinned tag, so this apply never causes an unpinned rollout.
         run: |
-          [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]        && kubectl apply -f k8s/mcp-server/
-          [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ] && kubectl apply -f k8s/mcp-server-dotnet/
-          [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && kubectl apply -f k8s/agent-api/
-          [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && kubectl apply -f k8s/agent-api-dotnet/
-          [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && kubectl apply -f k8s/auth-api/
-          [ "${{ needs.changes.outputs.load-generator }}" == "true" ]     && kubectl apply -f k8s/load-generator/
-          [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && kubectl apply -f k8s/ui/
+          [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]        && kubectl apply -k k8s/mcp-server
+          [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ] && kubectl apply -k k8s/mcp-server-dotnet
+          [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && kubectl apply -k k8s/agent-api
+          [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && kubectl apply -k k8s/agent-api-dotnet
+          [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && kubectl apply -k k8s/auth-api
+          [ "${{ needs.changes.outputs.load-generator }}" == "true" ]     && kubectl apply -k k8s/load-generator
+          [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && kubectl apply -k k8s/ui
           true  # ensure step always exits 0
 
       - name: Pin each changed deployment to the just-built image SHA

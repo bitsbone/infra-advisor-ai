@@ -11,7 +11,7 @@
 //
 // Deployment approach:
 //   1. Apply the Redis Deployment and Service from k8s/redis/:
-//        kubectl apply -f k8s/redis/
+//        kubectl apply -k k8s/redis
 //   2. Redis listens on port 6379 inside the cluster.
 //   3. Datadog Redis integration and DBM are enabled via pod annotations on
 //      the Redis Deployment (see k8s/datadog/ for the Datadog agent values).
