@@ -34,7 +34,7 @@ If that simulator name is unavailable, run `xcrun simctl list devices available`
 
 ## Build-time configuration
 
-Defaults are in `Config/Shared.xcconfig`. For machine-local values, create the ignored `Config/Local.xcconfig`; its values load after the shared defaults:
+Defaults are in `Config/Shared.xcconfig`. `DD_ENV` defaults per configuration: Release builds report `prod`, and Debug and test builds report `dev` (`DD_ENV_DEFAULT` in `Config/Release.xcconfig` and `Config/Debug.xcconfig`). For machine-local values, create the ignored `Config/Local.xcconfig`; its values load after the shared defaults:
 
 ```xcconfig
 API_BASE_URL = https:/$()/example.test

@@ -696,7 +696,7 @@ public sealed class ViewModelTests
     {
         public string ApiBaseUrl => "https://example.test/";
         public string DatadogSite => "US3";
-        public string DatadogEnvironment => "demo";
+        public string DatadogEnvironment => "dev";
         public string DatadogService => "infra-advisor-mobile-maui";
         public string Version => "0.1.0 (1)";
     }

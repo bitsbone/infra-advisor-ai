@@ -23,7 +23,9 @@
     <DatadogSite>us3.datadoghq.com</DatadogSite>
     <DatadogServiceName>infra-advisor-mobile-maui</DatadogServiceName>
     <InfraAdvisorApiBaseUrl Condition="'$(InfraAdvisorApiBaseUrl)' == ''">https://infra-advisor-ai.bitsbone.com/</InfraAdvisorApiBaseUrl>
-    <InfraAdvisorDatadogEnvironment Condition="'$(InfraAdvisorDatadogEnvironment)' == ''">demo</InfraAdvisorDatadogEnvironment>
+    <!-- Published (Release) builds report env:prod; Debug/local builds report env:dev. -p:InfraAdvisorDatadogEnvironment=... overrides both. -->
+    <InfraAdvisorDatadogEnvironment Condition="'$(InfraAdvisorDatadogEnvironment)' == '' And '$(Configuration)' == 'Release'">prod</InfraAdvisorDatadogEnvironment>
+    <InfraAdvisorDatadogEnvironment Condition="'$(InfraAdvisorDatadogEnvironment)' == ''">dev</InfraAdvisorDatadogEnvironment>
     <InfraAdvisorDatadogService Condition="'$(InfraAdvisorDatadogService)' == ''">infra-advisor-mobile-maui</InfraAdvisorDatadogService>
     <InfraAdvisorDatadogClientToken Condition="'$(InfraAdvisorDatadogClientToken)' == '' And '$(MAUI_DD_CLIENT_TOKEN)' != ''">$(MAUI_DD_CLIENT_TOKEN)</InfraAdvisorDatadogClientToken>
     <InfraAdvisorDatadogClientToken Condition="'$(InfraAdvisorDatadogClientToken)' == ''">pub884d0800477e2d252b992acb168fc7a5</InfraAdvisorDatadogClientToken>

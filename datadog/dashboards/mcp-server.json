@@ -2,7 +2,7 @@
   "title": "InfraAdvisor — MCP Server",
   "description": "Tool call rate by tool, tool latency heatmap, external API latency by source, error rate by source",
   "layout_type": "ordered",
-  "tags": ["team:infra-advisor", "env:dev", "service:infratools-mcp"],
+  "tags": ["team:infra-advisor", "env:prod", "service:infratools-mcp"],
   "widgets": [
     {
       "definition": {

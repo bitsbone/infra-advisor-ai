@@ -5,7 +5,7 @@ metadata:
   namespace: infra-advisor
   labels:
     app: mcp-server
-    tags.datadoghq.com/env: dev
+    tags.datadoghq.com/env: prod
     tags.datadoghq.com/service: infra-advisor-mcp-server
     tags.datadoghq.com/version: latest
 spec:
@@ -17,7 +17,7 @@ spec:
     metadata:
       labels:
         app: mcp-server
-        tags.datadoghq.com/env: dev
+        tags.datadoghq.com/env: prod
         tags.datadoghq.com/service: infra-advisor-mcp-server
         tags.datadoghq.com/version: latest
       annotations:

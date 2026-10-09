@@ -6,7 +6,7 @@ metadata:
   labels:
     app: agent-api
 data:
-  DD_ENV: "dev"
+  DD_ENV: "prod"
   DD_SERVICE: "infra-advisor-agent-api"
   DD_VERSION: "latest"
   DD_SITE: "us3.datadoghq.com"

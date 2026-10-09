@@ -32,6 +32,10 @@ The flag is **object-typed**, not a plain integer: reading it resolves `{prompt_
 
 **.NET** (`Services/PromptVersionFlags.cs`): `ResolveAsync(promptId, targetingKey, attributes)` evaluates the same flag as an object value via `FeatureClient.GetObjectValueAsync` (confirmed against the installed `OpenFeature` 2.3.0 package — the object is an `OpenFeature.Model.Structure` with `template`/`user_version`/`version` fields, the same shape `DatadogPromptManagementClient`'s REST parsing already expects). Returns `null` on any non-hit so `PromptHolder.RefreshAsync` falls through to the REST registry fetch, mirroring Python's fallthrough exactly.
 
+:::note[Flags are evaluated per Datadog environment]
+The flag is evaluated in the environment named by `DD_ENV`, so allocations configured for `dev` don't apply to `prod`. Prod reports `env:prod` from 2026-10-09 (the dev namespace took over `env:dev`), so each targeting rule must exist in the flag's `prod` environment too. Until it does, prod resolves the registry default or the hardcoded template, which is safe but untargeted. See [environments](/infra-advisor-ai/deployment/environments/).
+:::
+
 Both fail open identically: any provider or evaluation error returns nothing (Python: `None` from `_fetch_from_ff`; .NET: `null` from `ResolveAsync`), and the existing registry/fallback-template behavior takes over — a Feature Flags outage must never block a prompt from resolving.
 
 ### Per-user targeting — the real reason this exists
