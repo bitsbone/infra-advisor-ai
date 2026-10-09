@@ -71,8 +71,8 @@ data:
   # container, addressed to callers via a read-only SAS URL minted at upload time.
   AZURE_STORAGE_MEDIA_CONTAINER: "chat-media"
   MEDIA_SAS_EXPIRY_HOURS: "168"
-  MCP_SERVER_URL: "http://mcp-server.infra-advisor.svc.cluster.local:8000/mcp"
-  REDIS_HOST: "redis.infra-advisor.svc.cluster.local"
+  MCP_SERVER_URL: "http://mcp-server:8000/mcp"
+  REDIS_HOST: "redis"
   REDIS_PORT: "6379"
   LOG_LEVEL: "INFO"
   DD_DBM_PROPAGATION_MODE: "full"

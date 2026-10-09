@@ -66,3 +66,69 @@ def test_env_tags_match_overlay(overlay):
         seen += [(obj["metadata"]["name"], part.split('\\"', 1)[0]) for part in rendered.split('\\"env:')[1:]]
     assert seen
     assert {env for _, env in seen} == {name}, [s for s in seen if s[1] != name]
+
+
+def test_overlays_include_dev():
+    assert "dev" in OVERLAYS
+
+
+@pytest.fixture(scope="module")
+def dev():
+    return render("dev")
+
+
+def _by_kind_name(objects, kind, name):
+    return next(o for o in objects if o["kind"] == kind and o["metadata"]["name"] == name)
+
+
+def test_dev_stays_in_dev_namespace(dev):
+    assert {o["metadata"].get("namespace", "") for o in dev} <= {"", "infra-advisor-dev"}
+    assert "infra-advisor.svc" not in yaml.safe_dump_all(dev)
+
+
+def test_dev_runs_no_kafka_scheduled_or_autoscaled_work(dev):
+    kinds = {o["kind"] for o in dev}
+    assert not kinds & {"Kafka", "KafkaTopic", "KafkaNodePool", "CronJob", "Job", "HorizontalPodAutoscaler"}
+    for name in ("agent-api-config", "agent-api-dotnet-config"):
+        assert _by_kind_name(dev, "ConfigMap", name)["data"]["KAFKA_ENABLED"] == "false"
+    for o in dev:
+        if o["kind"] == "Deployment":
+            assert o["spec"].get("replicas", 1) == 1, o["metadata"]["name"]
+
+
+def test_dev_isolates_media_and_public_hostname(dev):
+    for name in ("agent-api-config", "agent-api-dotnet-config"):
+        assert _by_kind_name(dev, "ConfigMap", name)["data"]["AZURE_STORAGE_MEDIA_CONTAINER"] == "chat-media-dev"
+    auth = _by_kind_name(dev, "ConfigMap", "auth-api-config")["data"]
+    assert auth["APP_BASE_URL"] == auth["ALLOWED_ORIGINS"] == "https://infra-advisor-ai-dev.bitsbone.com"
+    ui = _by_kind_name(dev, "Service", "ui")
+    assert "service.beta.kubernetes.io/azure-dns-label-name" not in ui["metadata"].get("annotations", {})
+
+
+def test_dev_dbm_check_matches_prod_except_host_and_env(dev):
+    key = "ad.datadoghq.com/postgres.checks"
+    prod_check = _by_kind_name(render("prod"), "Deployment", "postgres")["spec"]["template"]["metadata"]["annotations"][key]
+    dev_check = _by_kind_name(dev, "Deployment", "postgres")["spec"]["template"]["metadata"]["annotations"][key]
+    expected = prod_check.replace('"infra-advisor-postgres"', '"infra-advisor-postgres-dev"').replace('"env:prod"', '"env:dev"')
+    assert dev_check.strip() == expected.strip()
+
+
+def _literal(path: Path, name: str):
+    import ast
+
+    for node in ast.walk(ast.parse(path.read_text())):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"{name} not found in {path}")
+
+
+def test_seed_job_roles_match_auth_api():
+    root = K8S.parent
+    seed = _literal(K8S / "overlays/dev/seed/seed_dev.py", "JOB_ROLES")
+    assert seed == _literal(root / "services/auth-api/src/database.py", "JOB_ROLES")
+
+
+def test_seed_job_runs_in_dev_only():
+    out = subprocess.run(["kubectl", "kustomize", str(K8S / "overlays/dev/seed")], check=True, capture_output=True, text=True).stdout
+    assert {d["metadata"]["namespace"] for d in yaml.safe_load_all(out) if d} == {"infra-advisor-dev"}

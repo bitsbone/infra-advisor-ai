@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-api-config
+  namespace: infra-advisor
+data:
+  DD_ENV: "dev"
+  KAFKA_ENABLED: "false"
+  AZURE_STORAGE_MEDIA_CONTAINER: "chat-media-dev"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-api-dotnet-config
+  namespace: infra-advisor
+data:
+  DD_ENV: "dev"
+  KAFKA_ENABLED: "false"
+  AZURE_STORAGE_MEDIA_CONTAINER: "chat-media-dev"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-server-config
+  namespace: infra-advisor
+data:
+  DD_ENV: "dev"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-server-dotnet-config
+  namespace: infra-advisor
+data:
+  DD_ENV: "dev"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-api-config
+  namespace: infra-advisor
+data:
+  DD_ENV: "dev"
+  APP_BASE_URL: "https://infra-advisor-ai-dev.bitsbone.com"
+  ALLOWED_ORIGINS: "https://infra-advisor-ai-dev.bitsbone.com"

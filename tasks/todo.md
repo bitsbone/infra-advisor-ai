@@ -136,8 +136,8 @@ agent-api pytest 104 passed; .NET tests 39 passed / 1 skipped; docs build + link
 
 ## Phase 4 — Dev overlay, datastores and seeding (item 5)
 
-- [ ] Add `infra-advisor-dev` to `k8s/namespace.yaml`. Update CLAUDE.md's namespace constraint to name it as an allowed exception.
-- [ ] Add `k8s/overlays/dev/`. It includes the core services plus their own **postgres, redis and mailpit**, and not Kafka, load-generator or CronJobs. It sets:
+- [x] Namespace lives in `k8s/overlays/dev/namespace.yaml` (not the shared namespaces file, so a prod apply never creates it). CLAUDE.md/AGENTS.md updated; their stale `docs/agent-guides/` paths fixed. ~~Add `infra-advisor-dev` to `k8s/namespace.yaml`.~~ Update CLAUDE.md's namespace constraint to name it as an allowed exception.
+- [x] Added `k8s/overlays/dev/` (9 Deployments, ~510m CPU requested; 11 contract tests in `k8s/tests`). In-namespace hostnames in the bases are now short Service names (`mcp-server`, `redis`, `mailpit`), verified from inside prod, so dev needs no hostname patches. `EVAL_SAMPLE_RATE` left as-is (dev traffic is tiny). **Cluster has no NetworkPolicy engine (`networkPolicy: none`)**, so namespace isolation is by config, not network. It includes the core services plus their own **postgres, redis and mailpit**, and not Kafka, load-generator or CronJobs. It sets:
   - `DD_ENV=dev`
   - one replica, with HPAs removed
   - `KAFKA_ENABLED=false`
@@ -149,18 +149,18 @@ agent-api pytest 104 passed; .NET tests 39 passed / 1 skipped; docs build + link
   - a UI LoadBalancer **without** the Azure DNS label, so it doesn't collide
   - NetworkPolicies copied for the new namespace
   - DBM `reported_hostname: infra-advisor-postgres-dev`
-- [ ] **Datastores.**
+- [x] **Datastores.** `chat-media-dev` container added to `azure-storage.bicep` (needs `make deploy-infra`).
   - **Must be separate:** Postgres (its own PVC), Redis, Mailpit, `JWT_SECRET`, bootstrap admin, and Blob media in a new `chat-media-dev` container in the existing storage account (a small Bicep change to `azure-storage.bicep`).
   - **Shared read-only:** Azure OpenAI/Whisper (shared quota), the AI Search index (dev gets a **query key**, not the admin key), the public MCP data APIs, and the Prompt Registry.
-- [ ] **Secrets.** Run `make create-secrets ENV=dev`, reusing the existing targets with `NAMESPACE=infra-advisor-dev`. Use a dev-specific `DATABASE_URL`, `JWT_SECRET`, Redis/Postgres/Mailpit passwords and search query key. Add a new `synthetic-user-secret`.
-- [ ] **Seed job.** Add `k8s/overlays/dev/seed-job.yaml` plus `scripts/seed_dev.py`. It is idempotent and safe to re-run, and is exposed as `make seed-dev`. It creates:
+- [x] **Secrets.** `ENV=dev` loads git-ignored `.env.dev` over `.env`; `deploy-k8s ENV=dev` refuses to run without it; non-prod `NAMESPACE` is forced. `create-synthetic-user-secret` added; pre-existing `create-mailpit-secret` bug fixed (`@kubectl` on a continued line). **Not run yet** (needs your secrets). Run `make create-secrets ENV=dev`, reusing the existing targets with `NAMESPACE=infra-advisor-dev`. Use a dev-specific `DATABASE_URL`, `JWT_SECRET`, Redis/Postgres/Mailpit passwords and search query key. Add a new `synthetic-user-secret`.
+- [x] **Seed job.** `k8s/overlays/dev/seed/` (Job + script as ConfigMap, agent-api image) and `make seed-dev`. Demo users are service accounts at `@infra-advisor.test` (avoids fake `@datadoghq.com` addresses) sharing the synthetic password. **Not run yet.** Add `k8s/overlays/dev/seed-job.yaml` plus `scripts/seed_dev.py`. It is idempotent and safe to re-run, and is exposed as `make seed-dev`. It creates:
   - the bootstrap admin, via auth-api env
   - **the shared synthetic-test service account** (`is_service_account=true`, non-admin, fixed `job_role`), with email and password from `synthetic-user-secret`. Prod gets the same account with the same credentials (see Phase 6), so one Synthetics test runs against either env. The databases and `JWT_SECRET` stay separate, so a session from one env is still rejected by the other.
   - one demo user per `job_role`, for prompt-flag targeting tests
   - a few sample conversations, so the history UI isn't empty
   - No prod data is copied.
-- [ ] **Datadog Agent.** Add `infra-advisor-dev` to the `infra-advisor-dotnet-security-target` `namespaceSelector`, so dev agent-api-dotnet gets the same AAP/profiler injection.
-- [ ] **CI RBAC.** Give the CI principal a namespace-scoped Azure RBAC role on `infra-advisor-dev` only. Add an OIDC federated credential for the GitHub environment `dev` (`repo:bitsbone/infra-advisor-ai:environment:dev`).
+- [x] **Datadog Agent.** `matchExpressions` In [infra-advisor, infra-advisor-dev]; server dry-run OK. Add `infra-advisor-dev` to the `infra-advisor-dotnet-security-target` `namespaceSelector`, so dev agent-api-dotnet gets the same AAP/profiler injection.
+- [x] **CI RBAC.** `infra/scripts/setup-dev-deploy-identity.sh` / `make setup-dev-deploy-identity`: a separate Entra app with Cluster User + RBAC Writer on the dev namespace only, federated to GitHub environment `dev` (which overrides `AZURE_CLIENT_ID`). Running it was blocked as a permission grant — **you run it**. Today's CI principal is cluster-wide RBAC Cluster Admin, too broad for PR code. Give the CI principal a namespace-scoped Azure RBAC role on `infra-advisor-dev` only. Add an OIDC federated credential for the GitHub environment `dev` (`repo:bitsbone/infra-advisor-ai:environment:dev`).
 
 ## Phase 5 — PR builds and deploy-to-dev
 
