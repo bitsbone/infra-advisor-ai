@@ -76,7 +76,7 @@ Dev never receives prod data. `make seed-dev` (also run by every PR deploy) is i
 - one **demo service account per job role** (`demo-<role>@infra-advisor.test`, same password), for testing per-user prompt targeting;
 - two sample conversations per demo user, so conversation history isn't empty.
 
-The same synthetic account exists in prod, with the same credentials: `make create-synthetic-user ENV=prod` creates or updates that one account and touches nothing else. One Synthetics test (`datadog/synthetics/consultant-query-flow.json`) signs in with it and serves both environments. Its start URL is the `BASE_URL` global variable (prod) for scheduled runs, and the dev deploy overrides it with `--override startUrl=… --override variables.BASE_URL=…`. Filter the account out of usage analysis by its email.
+The same synthetic account exists in prod, with the same credentials: `ADMIN_EMAIL=<your admin account> make create-synthetic-user ENV=prod` prompts for that account's password, then creates or updates the synthetic account and touches nothing else. Without `ADMIN_EMAIL` it signs in as `BOOTSTRAP_ADMIN_*`, which only works if that bootstrap account exists in the target database. One Synthetics test (`datadog/synthetics/consultant-query-flow.json`) signs in with it and serves both environments. Its start URL is the `BASE_URL` global variable (prod) for scheduled runs, and the dev deploy overrides it with `--override startUrl=… --override variables.BASE_URL=…`. Filter the account out of usage analysis by its email.
 
 ## First-time dev setup
 
@@ -86,7 +86,7 @@ These steps need credentials or rights the CI identity doesn't have, so a mainta
 2. **Azure.** Run `make deploy-infra` to create the `chat-media-dev` container.
 3. **Cluster.** Run `make deploy-k8s ENV=dev`, then `make setup-postgres-dbm ENV=dev` with the same `DD_POSTGRES_PASSWORD` as prod (the Datadog Agent has one), then `make seed-dev`.
 4. **Datadog Agent.** Run `make apply-datadog-agent` so dev's `agent-api-dotnet` gets the same App and API Protection injection as prod.
-5. **CI identity.** Run `make setup-dev-deploy-identity` to create the namespace-scoped deploy identity and the GitHub `dev` environment.
+5. **CI identity.** Run `make setup-dev-deploy-identity` to create the namespace-scoped deploy identity and the GitHub `dev` environment. It uses your own `gh` login, not the `GITHUB_TOKEN` that `.env` may set for GHCR, because a registry-scoped token can't create environments.
 6. **DNS.** In Cloudflare, add a proxied A record `infra-advisor-ai-dev` pointing at the dev UI Service's external IP (`kubectl get svc ui -n infra-advisor-dev`). It's a first-level subdomain of `bitsbone.com`, so Universal SSL covers it.
 7. **Synthetics.** Create the `BASE_URL`, `SYNTHETIC_USER_EMAIL`, and secure `SYNTHETIC_USER_PASSWORD` global variables, put their ids in the test JSON, run `make create-synthetic-user ENV=prod`, and set the repo variable `SYNTHETICS_CONSULTANT_FLOW_ID` to the test's public id.
 
