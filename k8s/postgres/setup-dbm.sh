@@ -17,9 +17,9 @@ if kubectl exec -n "$NAMESPACE" "$POD" -- psql -U "$POSTGRES_USER" -d "$POSTGRES
      -tAc "SELECT 1 FROM pg_roles WHERE rolname='datadog'" | grep -q 1; then
   echo "  datadog user already exists — skipping CREATE USER"
 else
-  kubectl exec -n "$NAMESPACE" "$POD" -- psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-    -v "pw=$DD_POSTGRES_PASSWORD" \
-    -c "CREATE USER datadog WITH PASSWORD :'pw'"
+  # psql interpolates :'pw' only in input it reads (stdin/-f), never in -c.
+  echo "CREATE USER datadog WITH PASSWORD :'pw';" | kubectl exec -i -n "$NAMESPACE" "$POD" -- \
+    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -v "pw=$DD_POSTGRES_PASSWORD"
   echo "  ✓ datadog user created"
 fi
 
