@@ -1143,7 +1143,7 @@ export function Chat() {
   const shortSha = VERSION && VERSION !== "local" ? VERSION : null;
 
   return (
-    <Flex h="100vh" direction="column" bg="gray.50">
+    <Flex flex="1" minH={0} direction="column" bg="gray.50">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <Flex
         as="header"

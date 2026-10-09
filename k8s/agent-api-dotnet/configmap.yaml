@@ -27,6 +27,8 @@ data:
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://datadog-agent.datadog.svc.cluster.local:4318"
   OTEL_SERVICE_NAME: "infra-advisor-agent-api-dotnet"
   OTEL_RESOURCE_ATTRIBUTES: "service.name=infra-advisor-agent-api-dotnet"
+  # false in the dev overlay: dev must never join prod's consumer group.
+  KAFKA_ENABLED: "true"
   KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
   # Toggle: set to "true" to emit APM + LLMObs spans for Kafka eval-loop runs.
   # Default false because the eval load-generator runs continuously and floods

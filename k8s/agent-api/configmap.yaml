@@ -27,6 +27,8 @@ data:
   # was flooding APM with a ~1s kafka.consume span for nearly every poll.
   # Real message consumption still traces normally with this disabled.
   DD_KAFKA_EMPTY_POLL_ENABLED: "false"
+  # false in the dev overlay: dev must never join prod's consumer group.
+  KAFKA_ENABLED: "true"
   KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
   DD_LLMOBS_ENABLED: "true"
   DD_LLMOBS_ML_APP: "infra-advisor-ai"

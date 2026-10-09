@@ -26,10 +26,10 @@ The UI nginx configuration is the cluster's public routing layer. Cluster servic
 
 When adding or changing a public subpath, verify all of these together:
 
-1. `services/ui/nginx.conf` routes the prefix to the correct Kubernetes Service.
+1. `services/ui/nginx/default.conf.template` routes the prefix to the correct Kubernetes Service.
 2. The upstream either understands its base path or nginx deliberately strips the prefix.
 3. Streaming routes disable buffering and allow sufficient timeouts.
-4. The UI image is rebuilt because nginx configuration is copied into that image.
+4. The UI image is rebuilt because the nginx template is copied into that image. Upstream hosts use `${K8S_NAMESPACE}`, which the container renders at start, so the same image serves the prod and dev namespaces.
 5. Administrative surfaces have the intended access control before reaching nginx.
 
 Test the public route as well as the service directly. A localhost or ClusterIP response cannot reveal prefix rewriting, buffering, or external authentication failures.

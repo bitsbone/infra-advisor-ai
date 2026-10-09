@@ -31,6 +31,7 @@ from conversations import (
     list_conversations,
     save_messages,
 )
+from kafka_config import kafka_enabled
 from kafka_consumer import start_consumer_thread
 from media import InvalidAttachmentReference, MediaTooLarge, UnsupportedMediaType, upload_media, validate_attachment_reference
 from memory import (
@@ -112,7 +113,9 @@ async def lifespan(app: FastAPI):
         _AVAILABLE_MODELS.append("gpt-5.4-mini")
 
     # Start Kafka consumer background thread (non-fatal if Kafka unavailable)
-    if _mcp_client:
+    if not kafka_enabled():
+        logger.info("Kafka disabled (KAFKA_ENABLED=false): consumer not started, contract-awards events not published")
+    elif _mcp_client:
         try:
             start_consumer_thread(_mcp_client)
         except Exception as exc:
