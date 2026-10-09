@@ -45,6 +45,10 @@ Assistant citations and structured artifacts provide safe source links. Evidence
 
 The admin view manages users and displays read-only .NET evaluator and AI Guard diagnostics. Diagnostic panels intentionally query the .NET routes regardless of the currently selected chat backend because those pipelines are backend-specific.
 
+## Runtime environment
+
+One image serves both the prod (`infra-advisor`) and dev (`infra-advisor-dev`) namespaces. At container start nginx renders `services/ui/nginx/default.conf.template` using `K8S_NAMESPACE` (upstream service hosts) and `APP_ENV` (the `/env-config.js` payload and the `X-Robots-Tag` header). Both default to the prod values when unset. Non-prod environments show a banner with the environment, version, and a test-data warning. See [Browser RUM](/infra-advisor-ai/observability/rum/) for how the environment reaches Datadog.
+
 ## Browser telemetry
 
 RUM captures views, resources, replays, errors, and bounded workflow actions. Query actions retain length and domain—not prompt content. Feedback, evidence, copy/report, and media actions use controlled metadata. Session Replay masks input.
