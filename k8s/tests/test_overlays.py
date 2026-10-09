@@ -1,6 +1,6 @@
 """Contract tests for the Kustomize overlays under k8s/overlays/.
 
-Run with: uv run --with pytest --with pyyaml pytest k8s/tests
+Run with: uv run --no-project --with pytest --with pyyaml --with httpx --with sqlalchemy pytest -q k8s/tests
 Requires kubectl (for its built-in kustomize) on PATH.
 """
 

@@ -177,17 +177,17 @@ agent-api pytest 104 passed; .NET tests 39 passed / 1 skipped; docs build + link
 
 ## Phase 6 — DNS, Cloudflare and Synthetics (item 2)
 
-- [ ] **Hostname (decided).** One fixed dev hostname: `infra-advisor-ai-dev.bitsbone.com`. It's a first-level subdomain, so Cloudflare Universal SSL covers it with no extra certificate. A wildcard is only worth it with per-PR namespaces, which is out of scope.
+- [x] **Hostname (decided).** One fixed dev hostname: `infra-advisor-ai-dev.bitsbone.com`. It's a first-level subdomain, so Cloudflare Universal SSL covers it with no extra certificate. A wildcard is only worth it with per-PR namespaces, which is out of scope.
 - [ ] **Cloudflare (manual).** Add a proxied (orange-cloud) A record `infra-advisor-ai-dev` pointing at the dev UI LoadBalancer IP. Access stays public like prod (decided). Revisit in-app access controls and bot blocking later (see Follow-ups).
-- [ ] **Synthetic user in prod.** Create the same service account in prod once, through auth-api `POST /admin/users` (`is_service_account=true`), with the credentials from the prod `synthetic-user-secret`. No prod data is touched otherwise. Exclude it from usage dashboards by `usr.email` or a `service_account` RUM attribute.
-- [ ] **Synthetics (one test, swappable base URL).**
+- [x] **Synthetic user in prod.** `make create-synthetic-user ENV=prod` (seed script in `SEED_SYNTHETIC_ONLY=1` mode over a port-forward; tested in `k8s/tests/test_seed_dev.py`). **Not run yet** (needs prod admin creds). Create the same service account in prod once, through auth-api `POST /admin/users` (`is_service_account=true`), with the credentials from the prod `synthetic-user-secret`. No prod data is touched otherwise. Exclude it from usage dashboards by `usr.email` or a `service_account` RUM attribute.
+- [x] **Synthetics (one test, swappable base URL).** Login step (`#email`, `#password`, `button[type='submit']`) + `{{ BASE_URL }}`; `deploy-dev` runs it with `--override startUrl` and `variables.BASE_URL` once `vars.SYNTHETICS_CONSULTANT_FLOW_ID` is set. Global-variable ids in the JSON are placeholders (per-org).
   - Add a login step to `consultant-query-flow.json`, using `{{ SYNTHETIC_USER_EMAIL }}` and `{{ SYNTHETIC_USER_PASSWORD }}` (secure global variables, shared by both envs).
   - Replace `{{UI_BASE_URL}}` with a `{{ BASE_URL }}` global variable that defaults to prod, so the scheduled run keeps testing `https://infra-advisor-ai.bitsbone.com`.
   - The `deploy-dev` job runs the same test with `datadog-ci synthetics run-tests --override startUrl=https://infra-advisor-ai-dev.bitsbone.com` (plus the matching `BASE_URL` variable override) as a post-deploy gate. No second test definition to keep in sync.
 
 ## Phase 7 — Docs and verification
 
-- [ ] Update `docs/src/content/docs`: an environments page (prod vs dev, what's shared, how to deploy a PR to dev, seeding, the synthetic user), the deployment architecture page, the RUM page (runtime env) and the services pages. Fix the stale `docs/agent-guides/` references in CLAUDE.md.
+- [x] Docs: `deployment/environments.md` (new; full reference + first-time setup runbook), `deployment/kubernetes.md`, `deployment/index.md`, `deployment/quickstart.md`, `development/testing.md`, `observability/rum.md`, `services/ui.md`, `llm-engineering/monitoring/prompt-targeting.mdx`; stale `docs/agent-guides/` refs fixed in CLAUDE.md/AGENTS.md. Build + links clean. ~~Update `docs/src/content/docs`: an environments page (prod vs dev, what's shared, how to deploy a PR to dev, seeding, the synthetic user), the deployment architecture page, the RUM page (runtime env) and the services pages. Fix the stale `docs/agent-guides/` references in CLAUDE.md.
 - [ ] **Verify prod:** in Datadog, APM/RUM/LLM Obs/infra/logs show `env:prod` with `version:<sha>`, with no `env:dev` data after the cutover. Prod has no banner.
 - [ ] **Verify dev:** after a PR deploy, the banner shows. RUM, APM and LLM Obs show `env:dev` with the PR SHA. Login works with seeded users. The Synthetics test passes. The dev consumer group gets no Kafka partitions (`kafka-consumer-groups --describe`). Prod Postgres and Redis show no dev sessions or users.
 
