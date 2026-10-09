@@ -208,3 +208,20 @@ agent-api pytest 104 passed; .NET tests 39 passed / 1 skipped; docs build + link
 ## Delivery
 
 Each phase is its own PR, merged in order. Phases 1–3 are safe for prod: a zero-diff refactor, a retag, and inert code. Dev comes up in Phases 4–6.
+
+## Review (2026-10-09)
+
+**Delivered as six stacked local branches** (merge in order; none pushed): `feat/env-kustomize-base` → `feat/env-prod-retag` → `feat/env-app-runtime` → `feat/env-dev-overlay` → `feat/env-deploy-dev` → `feat/env-synthetics-docs`.
+
+**Verified:** `k8s/tests` 16 passed (overlay contracts + seed script against a fake auth-api); agent-api pytest 115 passed; .NET 46 passed / 1 skipped; MAUI core 81 passed; mobile env resolved per configuration via msbuild/xcodebuild/gradle; UI image run as prod and dev (env-config, noindex, rendered upstreams, `nginx -t`); prod overlay renders identically to the old file list and its live diff equals the pre-existing drift; CI pin patch server-dry-run against prod; actionlint and Bicep build clean; docs build and links clean.
+
+**Live (2026-10-09):** `infra-advisor-dev` exists with dev-only secrets (`.env.dev`, generated; AI Search query key `infra-advisor-dev`), datastores, MCP servers and auth-api running, DBM user created. `agent-api`, `agent-api-dotnet` and `ui` are **scaled to 0** because `:latest` (main) predates `KAFKA_ENABLED` and the runtime nginx template — the dev agents would join prod's consumer group and the old UI proxies to prod. The first `deploy:dev` run sets them back to 1 with PR images. Dev UI LoadBalancer IP: `57.151.78.84`.
+
+**Findings outside the plan:**
+- The cluster has no NetworkPolicy engine (`networkPolicy: none`); the policies in `k8s/` were never applied to prod either. Isolation is by config — documented.
+- Prod agent-api pod `…-hznfd` left the Kafka consumer group on 2026-09-30 (`max.poll.interval.ms` exceeded) and never rejoined; the consumer thread doesn't recover. Pre-existing; worth a fix.
+- Fixed in passing: `create-mailpit-secret` (`@kubectl` on a continued line) and `setup-dbm.sh` (`:'pw'` in `psql -c`).
+- `check-env` requires `TS_CREATOR`/`TS_TEAM` (Bicep-only) for `deploy-k8s`.
+- `deployment/tag-governance.md` content-check error predates this work.
+
+**Remaining (needs you):** push and open the six PRs; `make setup-dev-deploy-identity` (blocked for me as a permission grant); Cloudflare A record `infra-advisor-ai-dev` → `57.151.78.84` (proxied); `make deploy-infra` (creates `chat-media-dev`); after Phase 2 merges, the Datadog items in Phase 2 (Product Analytics `$env` default, `prod` Feature Flag environments, SDS check); copy `SYNTHETIC_USER_*` from `.env.dev` into `.env`, run `make create-synthetic-user ENV=prod`, create the Synthetics global variables and set `SYNTHETICS_CONSULTANT_FLOW_ID`; then label a PR `deploy:dev` and run the Phase 7 verification.
