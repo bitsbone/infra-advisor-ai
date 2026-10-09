@@ -1,13 +1,16 @@
 namespace InfraAdvisor.AgentApi.Observability;
 
 /// <summary>
-/// One fail-closed switch shared by every Microsoft.Extensions.AI / MAF
-/// decorator. False keeps prompts, completions, attachment URIs, and SAS
-/// query strings out of automatically generated GenAI span attributes.
+/// One switch shared by every Microsoft.Extensions.AI / MAF decorator. True
+/// exports prompts and completions (including attachment URIs) on the
+/// generated GenAI spans so DD LLM Observability shows chat/agent content,
+/// matching what ddtrace's OpenAI integration records for Python. This is a
+/// demo environment; Datadog Sensitive Data Scanner redacts at intake.
+/// Custom tags below stay metadata-only regardless.
 /// </summary>
 public static class TelemetryPrivacy
 {
-    public const bool EnableSensitiveData = false;
+    public const bool EnableSensitiveData = true;
 
     public static IReadOnlyDictionary<string, object?> SafeFeedbackTags(
         string traceId, string spanId, string rating, string? sessionId)

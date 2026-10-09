@@ -72,11 +72,14 @@ def tag_agent_run(
     job_role: str | None = None,
     targeting_key: str | None = None,
 ) -> None:
-    """Annotate an agent span with bounded operational metadata only.
+    """Annotate an agent span with its user query/answer plus operational metadata.
 
     Must be called while the LLMObs.agent() context manager is still open
-    so that span is the active span — not after ainvoke() returns. Raw prompts
-    and answers remain provider inputs/outputs and are never copied here.
+    so that span is the active span — not after ainvoke() returns. The
+    query/answer pair is the same text the auto-instrumented OpenAI chat spans
+    already carry; copying it here is what lets the LLM Obs trace list show
+    content for agent and workflow roots (Sensitive Data Scanner redacts it
+    at intake).
 
     job_role/targeting_key are the same values fetch_prompt() used to
     resolve this turn's prompt-version Feature Flag (see observability/
@@ -88,6 +91,8 @@ def tag_agent_run(
     try:
         LLMObs.annotate(
             span=span,
+            input_data=query,
+            output_data=answer,
             tags={
                 "query.domain": query_domain,
                 "query.characters": str(len(query)),

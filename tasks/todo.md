@@ -62,3 +62,14 @@ Superseded an earlier unauthorized draft of this file that assumed a dual-domain
 - Exclusions/exemptions: `rg-tola-infra-advisor-ai-nodes` (this project's AKS node RG) via `exemptResourceGroupNames`.
 - Resources confirmed non-taggable by design: AKS's node resource group, its VMSS, and its NICs — all owned by the AKS resource provider's own control loop, excluded via `notScopes` rather than fought.
 - Both previously-flagged unverified syntax choices are now confirmed against the live subscription: the Tag Contributor role GUID (`4a9ae827-6dc8-4573-8ac7-8239d42aa03f`) was correct (role assignment succeeded, `az role assignment list` shows "Tag Contributor"). The `tags[parameters('tagName')]` field-expression syntax was **not** correct as originally written — the first real deploy attempt failed with `UnusedPolicyParameters` (a bare string containing `parameters('tagName')` isn't a real ARM expression). Fixed in both `policies/require-rg-tags.bicep` and `policies/inherit-tags-modify.bicep` by wrapping as a genuine ARM template expression: `[concat('tags[', parameters('tagName'), ']')]`. Redeployed successfully after the fix.
+
+## Agent Observability trace list input/output (2026-10-09)
+
+- [x] Python: `input_data`/`output_data` on `query-processing` workflow, router, and specialist agent spans
+- [x] Python: move non-streaming `get_tools()` inside the workflow; wrap startup probe, `GET /tools`, `POST /tools/{name}` in named workflows (ddtrace MCP client-session spans otherwise surface as `read_stream` roots)
+- [x] .NET: `query-processing` workflow root activity with `input.value`/`output.value`; restore `ExecutionContext` per iterator step so parenting and `gen_ai.conversation.id` survive `yield`
+- [x] .NET: `EnableSensitiveData=true` (demo env, SDS redacts at intake)
+- [x] Docs updated (python.mdx, dotnet.mdx, apm.md, agent-api-dotnet.md)
+
+### Review
+agent-api pytest 104 passed; .NET tests 39 passed / 1 skipped; docs build + link check clean (pre-existing tag-governance.md content error unrelated). Not yet deployed — verify in the LLM Obs trace list after rollout.
