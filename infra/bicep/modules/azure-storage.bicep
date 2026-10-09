@@ -9,6 +9,8 @@
 //   knowledge-docs — Synthetic + real documents for AI Search knowledge base
 //   chat-media     — User-uploaded chat attachments (images, audio); accessed via
 //                    per-blob read SAS URLs minted at upload time, never public
+//   chat-media-dev — Same, for the infra-advisor-dev namespace, so dev uploads
+//                    never mix with prod's
 // Used by Datadog Storage Monitoring for blob-level observability.
 
 @description('Azure region for the storage account')
@@ -69,6 +71,12 @@ resource knowledgeDocsContainer 'Microsoft.Storage/storageAccounts/blobServices/
 resource chatMediaContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
   parent: blobService
   name: 'chat-media'
+  properties: { publicAccess: 'None' }
+}
+
+resource chatMediaDevContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  parent: blobService
+  name: 'chat-media-dev'
   properties: { publicAccess: 'None' }
 }
 

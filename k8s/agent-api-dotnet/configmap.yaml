@@ -52,8 +52,8 @@ data:
   # text-embedding-3-small is the cheapest sensible default (1536 dims).
   AZURE_OPENAI_EMBEDDING_DEPLOYMENT: "text-embedding-3-small"
   AVAILABLE_MODELS: "gpt-5.4-mini,gpt-4.1-mini,gpt-4.1"
-  MCP_SERVER_URL: "http://mcp-server-dotnet.infra-advisor.svc.cluster.local:8000/mcp"
-  REDIS_HOST: "redis.infra-advisor.svc.cluster.local"
+  MCP_SERVER_URL: "http://mcp-server-dotnet:8000/mcp"
+  REDIS_HOST: "redis"
   REDIS_PORT: "6379"
   LOG_LEVEL: "Information"
   ASPNETCORE_ENVIRONMENT: "Production"

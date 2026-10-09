@@ -1,5 +1,6 @@
 # Secrets — never commit real credentials
 .env
+.env.dev
 .env.local
 .env.*.local
 *.bak

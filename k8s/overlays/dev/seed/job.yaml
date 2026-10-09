@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed-dev
+  labels:
+    app: seed-dev
+    tags.datadoghq.com/env: dev
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: seed-dev
+        tags.datadoghq.com/env: dev
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: seed
+          # Reuses agent-api's image for its Python, httpx and SQLAlchemy.
+          image: ghcr.io/bitsbone/infra-advisor-ai/agent-api:latest
+          command: ["/app/.venv/bin/python", "/seed/seed_dev.py"]
+          env:
+            - name: BOOTSTRAP_ADMIN_EMAIL
+              valueFrom: { secretKeyRef: { name: auth-api-secret, key: BOOTSTRAP_ADMIN_EMAIL } }
+            - name: BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: auth-api-secret, key: BOOTSTRAP_ADMIN_PASSWORD } }
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: agent-api-secret, key: DATABASE_URL } }
+            - name: SYNTHETIC_USER_EMAIL
+              valueFrom: { secretKeyRef: { name: synthetic-user-secret, key: SYNTHETIC_USER_EMAIL } }
+            - name: SYNTHETIC_USER_PASSWORD
+              valueFrom: { secretKeyRef: { name: synthetic-user-secret, key: SYNTHETIC_USER_PASSWORD } }
+          volumeMounts:
+            - name: script
+              mountPath: /seed
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 256Mi }
+      volumes:
+        - name: script
+          configMap:
+            name: seed-dev-script
