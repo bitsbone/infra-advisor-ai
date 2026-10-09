@@ -23,6 +23,7 @@ ENV = {
 
 class FakeAuthApi:
     def __init__(self):
+        self.admins = {"admin@example.test": "admin-password"}
         self.users: dict[str, dict] = {}
         self.calls: list[tuple[str, str]] = []
 
@@ -33,6 +34,8 @@ class FakeAuthApi:
         if path == "/readyz":
             return httpx.Response(200)
         if path == "/login":
+            if self.admins.get(body["email"]) != body["password"]:
+                return httpx.Response(401, json={"detail": "Invalid credentials"})
             return httpx.Response(200, json={"token": "t"})
         assert request.headers["Authorization"] == "Bearer t"
         if path == "/admin/users" and method == "GET":
@@ -97,3 +100,20 @@ def test_synthetic_only_touches_nothing_else(run_seed):
     _, seeded = run(synthetic_only=True)
     assert [u["email"] for u in fake.users.values()] == ["synthetics@infra-advisor.test"]
     assert seeded == []
+
+
+def test_admin_override_wins_over_bootstrap(run_seed, monkeypatch):
+    fake, run = run_seed
+    fake.admins = {"real-admin@example.test": "real-password"}
+    monkeypatch.setenv("ADMIN_EMAIL", "real-admin@example.test")
+    monkeypatch.setenv("ADMIN_PASSWORD", "real-password")
+    run(synthetic_only=True)
+    assert [u["email"] for u in fake.users.values()] == ["synthetics@infra-advisor.test"]
+
+
+def test_wrong_admin_credentials_exit_with_guidance(run_seed):
+    fake, run = run_seed
+    fake.admins = {}
+    with pytest.raises(SystemExit, match="Admin login failed for admin@example.test"):
+        run(synthetic_only=True)
+    assert fake.users == {}

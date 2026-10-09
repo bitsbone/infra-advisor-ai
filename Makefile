@@ -407,9 +407,9 @@ endif
 setup-dev-deploy-identity: ## One-time, run by a human: Entra app + namespace-scoped AKS roles + GitHub "dev" environment for the deploy-dev job
 	bash infra/scripts/setup-dev-deploy-identity.sh
 
-create-synthetic-user: ## Create/update only the shared synthetic-test account in ENV (prod or dev) via a port-forward; needs BOOTSTRAP_ADMIN_* and SYNTHETIC_USER_*
+create-synthetic-user: ## Create/update only the shared synthetic-test account in ENV (prod or dev) via a port-forward; ADMIN_EMAIL=<an admin> prompts for its password (default: BOOTSTRAP_ADMIN_*)
 	@if [ -z "$(SYNTHETIC_USER_EMAIL)" ] || [ -z "$(SYNTHETIC_USER_PASSWORD)" ]; then echo "ERROR: SYNTHETIC_USER_EMAIL/PASSWORD not set"; exit 1; fi
-	@if [ -z "$(BOOTSTRAP_ADMIN_EMAIL)" ] || [ -z "$(BOOTSTRAP_ADMIN_PASSWORD)" ]; then echo "ERROR: BOOTSTRAP_ADMIN_EMAIL/PASSWORD not set (an admin login for $(NAMESPACE))"; exit 1; fi
+	@if [ -z "$(ADMIN_EMAIL)" ] && [ -z "$(BOOTSTRAP_ADMIN_EMAIL)" ]; then echo "ERROR: set ADMIN_EMAIL to an admin account in $(NAMESPACE)"; exit 1; fi
 	@kubectl port-forward -n $(NAMESPACE) svc/auth-api 18002:8002 >/dev/null 2>&1 & pf=$$!; trap "kill $$pf" EXIT; sleep 3; \
 	AUTH_API_URL=http://localhost:18002 SEED_SYNTHETIC_ONLY=1 uv run --no-project --with httpx --with sqlalchemy python k8s/overlays/dev/seed/seed_dev.py
 
