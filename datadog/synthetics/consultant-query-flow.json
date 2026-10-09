@@ -3,7 +3,7 @@
   "type": "browser",
   "status": "live",
   "message": "InfraAdvisor UI is not responding correctly to the Texas bridge query.\n\nSteps:\n1. Navigate to the UI\n2. Submit the Texas bridge query\n3. Assert response contains 'bridge' and a structure number\n\n@slack-infra-advisor-alerts",
-  "tags": ["team:infra-advisor", "env:dev"],
+  "tags": ["team:infra-advisor", "env:prod"],
   "config": {
     "variables": [],
     "setCookie": "",

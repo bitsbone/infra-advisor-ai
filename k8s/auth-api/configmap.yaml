@@ -6,7 +6,7 @@ metadata:
 data:
   LOG_LEVEL: "INFO"
   DD_SERVICE: "infra-advisor-auth-api"
-  DD_ENV: "dev"
+  DD_ENV: "prod"
   DD_VERSION: "latest"
   DD_SITE: "us3.datadoghq.com"
   DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"

@@ -2,7 +2,7 @@
   "title": "InfraAdvisor — Infrastructure Overview",
   "description": "AKS node health, pod counts by namespace, Kafka broker metrics, Redis ops/sec, container restarts",
   "layout_type": "ordered",
-  "tags": ["team:infra-advisor", "env:dev"],
+  "tags": ["team:infra-advisor", "env:prod"],
   "widgets": [
     {
       "definition": {

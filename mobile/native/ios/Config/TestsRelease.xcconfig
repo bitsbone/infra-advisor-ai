@@ -1,2 +1,3 @@
 #include? "../Pods/Target Support Files/Pods-InfraAdvisorMobileTests/Pods-InfraAdvisorMobileTests.release.xcconfig"
+DD_ENV_DEFAULT = dev
 #include "Shared.xcconfig"

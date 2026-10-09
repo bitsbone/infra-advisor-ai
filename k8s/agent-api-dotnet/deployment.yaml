@@ -5,7 +5,7 @@ metadata:
   namespace: infra-advisor
   labels:
     app: agent-api-dotnet
-    tags.datadoghq.com/env: dev
+    tags.datadoghq.com/env: prod
     tags.datadoghq.com/service: infra-advisor-agent-api-dotnet
     tags.datadoghq.com/version: latest
 spec:
@@ -22,7 +22,7 @@ spec:
         # creating APM spans; the application-owned OTel SDK remains the sole
         # trace producer.
         admission.datadoghq.com/enabled: "true"
-        tags.datadoghq.com/env: dev
+        tags.datadoghq.com/env: prod
         tags.datadoghq.com/service: infra-advisor-agent-api-dotnet
         tags.datadoghq.com/version: latest
       annotations:
