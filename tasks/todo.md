@@ -164,16 +164,16 @@ agent-api pytest 104 passed; .NET tests 39 passed / 1 skipped; docs build + link
 
 ## Phase 5 — PR builds and deploy-to-dev
 
-- [ ] **`build-push.yml`.**
+- [x] **Separate `deploy-dev.yml`, not `build-push.yml`.** Keeps prod's CI-gated path untouched. Builds all six core images at the PR head (GHA cache keeps unchanged ones cheap) tagged `<sha>` and `pr-<n>`, never `latest`. ~~`build-push.yml`.~~
   - Also run on PRs, either via a `pull_request` trigger or by dropping the `branches: [main]` filter on `workflow_run`.
   - PR images are tagged `pr-<n>` and `sha-<short>`, never `latest` (`is_default_branch` already guards that).
   - Main keeps building `latest` and `<sha>` and deploying to prod.
-- [ ] **New `deploy-dev` job.**
+- [x] **New `deploy-dev` job.** Label `deploy:dev` (only that label's `labeled` event, plus `synchronize`/`reopened` while it's on) or `workflow_dispatch` with a PR number. Applies the overlay (minus the cluster-scoped Namespace), pins all six deployments to the PR SHA with `pin-deployment.sh`, waits with `rollout-or-rollback.sh`, runs the seed Job on the PR's agent-api image, comments on the PR. actionlint clean.
   - Triggered by the PR label `deploy:dev` or by `workflow_dispatch` with a PR number.
   - Runs in the GitHub environment `dev`: `kubectl apply -k k8s/overlays/dev`, then `set image` to the PR SHA, then rollout wait with automatic rollback (reusing the prod job's logic with a parameterized namespace).
   - Posts a PR comment with the dev URL, the deployed SHA and a link to the Datadog `env:dev version:<sha>` view.
   - Uses a `concurrency: deploy-dev` group, so the last deploy wins and the comment says which PR currently holds dev.
-- [ ] Fork PRs get no secrets or OIDC. They build images but can't deploy (document this).
+- [x] Fork PRs are skipped (head repo check, and `isCrossRepository` for dispatch). They build images but can't deploy (document this).
 
 ## Phase 6 — DNS, Cloudflare and Synthetics (item 2)
 
