@@ -25,7 +25,8 @@ Test counts and durations change continuously. Select verification from the beha
 | UI | TypeScript check and production build | exercised browser workflow |
 | MAUI/native mobile | relevant unit/view-model tests | platform Debug/Release build and device acceptance |
 | Ingestion Function | focused domain/shared unit test | `uv run pytest` in `services/adf-functions` |
-| Kubernetes/AppSec | executable manifest contract test | rendered/apply validation in a disposable environment |
+| Kubernetes/AppSec | overlay contract tests in `k8s/tests` (`uv run --no-project --with pytest --with pyyaml --with httpx --with sqlalchemy pytest -q k8s/tests`) | `kubectl diff -k k8s/overlays/<env>`, then a `deploy:dev` PR deploy |
+| A whole PR, end to end | CI | the `deploy:dev` label: the PR runs in the dev namespace with seeded users ([environments](/infra-advisor-ai/deployment/environments/)) |
 | Documentation | docs build, internal links, content rules | visual review at narrow and wide widths |
 
 ## Common commands

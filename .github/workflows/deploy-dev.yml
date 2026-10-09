@@ -202,6 +202,21 @@ jobs:
           kubectl wait --for=condition=complete job/seed-dev -n "$NAMESPACE" --timeout=5m
           kubectl logs -n "$NAMESPACE" job/seed-dev
 
+      # Same browser test as prod's scheduled run (datadog/synthetics/
+      # consultant-query-flow.json), pointed at dev. Skipped until the
+      # SYNTHETICS_CONSULTANT_FLOW_ID repo variable holds the test's public id.
+      - name: Run the consultant-flow Synthetics test against dev
+        if: vars.SYNTHETICS_CONSULTANT_FLOW_ID != ''
+        env:
+          DATADOG_API_KEY: ${{ secrets.DD_API_KEY }}
+          DATADOG_APP_KEY: ${{ secrets.DD_APP_KEY }}
+          DATADOG_SITE: us3.datadoghq.com
+        run: |
+          npx --yes @datadog/datadog-ci synthetics run-tests \
+            --public-id "${{ vars.SYNTHETICS_CONSULTANT_FLOW_ID }}" \
+            --override startUrl="$DEV_URL" \
+            --override "variables.BASE_URL=$DEV_URL"
+
       - name: Comment on the PR
         if: always()
         env:
