@@ -117,9 +117,12 @@ spec:
         enabled: true
         targets:
           - name: "infra-advisor-dotnet-security-target"
+            # Prod and dev get the same AAP/profiler injection.
             namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: infra-advisor
+              matchExpressions:
+                - key: kubernetes.io/metadata.name
+                  operator: In
+                  values: ["infra-advisor", "infra-advisor-dev"]
             podSelector:
               matchLabels:
                 app: agent-api-dotnet

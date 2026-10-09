@@ -1,0 +1,54 @@
+# Dev: the shared PR-testing namespace, infra-advisor-dev. Core app and APIs
+# only, with their own Postgres, Redis and Mailpit. No Kafka, load-generator
+# or CronJobs (KAFKA_ENABLED=false keeps both agents out of prod's consumer
+# group), one replica each, no HPAs, and trimmed requests so dev fits in the
+# cluster's spare capacity. Prod data is never copied; see seed-job.yaml.
+#
+# Apply with `make deploy-k8s ENV=dev` or `kubectl apply -k k8s/overlays/dev`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: infra-advisor-dev
+
+resources:
+  - namespace.yaml
+  - ../../redis
+  - ../../mailpit
+  - ../../postgres
+  - ../../mcp-server
+  - ../../mcp-server-dotnet
+  - ../../agent-api
+  - ../../agent-api-dotnet
+  - ../../auth-api
+  - ../../ui
+
+# Unified Service Tagging env for every object and pod template. Overrides the
+# bases' tags.datadoghq.com/env: prod; the UI derives APP_ENV (banner, RUM env)
+# from this label.
+labels:
+  - pairs:
+      tags.datadoghq.com/env: dev
+    includeSelectors: false
+    includeTemplates: true
+
+replicas:
+  - name: agent-api
+    count: 1
+  - name: agent-api-dotnet
+    count: 1
+  - name: mcp-server
+    count: 1
+  - name: mcp-server-dotnet
+    count: 1
+  - name: auth-api
+    count: 1
+  - name: ui
+    count: 1
+
+# Patches name the bases' namespace (infra-advisor) because Kustomize matches
+# them before the namespace above is applied.
+patches:
+  - path: patches/configmaps.yaml
+  - path: patches/resources.yaml
+  - path: patches/ui-service.yaml
+  - path: patches/postgres-dbm.yaml
+  - path: patches/no-hpa.yaml

@@ -1,0 +1,119 @@
+# Trimmed requests so dev (~510m CPU total, data services included) fits in
+# the ~800m the three-node cluster has spare. Limits stay as in the bases, so
+# dev can still burst; under pressure it's dev that stays Pending, not prod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-api
+  namespace: infra-advisor
+spec:
+  template:
+    spec:
+      containers:
+        - name: agent-api
+          resources:
+            requests: { cpu: 150m, memory: 384Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-api-dotnet
+  namespace: infra-advisor
+spec:
+  template:
+    spec:
+      containers:
+        - name: agent-api-dotnet
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  namespace: infra-advisor
+spec:
+  template:
+    spec:
+      containers:
+        - name: mcp-server
+          resources:
+            requests: { cpu: 50m, memory: 192Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server-dotnet
+  namespace: infra-advisor
+spec:
+  template:
+    spec:
+      containers:
+        - name: mcp-server-dotnet
+          resources:
+            requests: { cpu: 50m, memory: 192Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-api
+  namespace: infra-advisor
+spec:
+  template:
+    spec:
+      containers:
+        - name: auth-api
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  namespace: infra-advisor
+spec:
+  template:
+    spec:
+      containers:
+        - name: ui
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: infra-advisor
+spec:
+  template:
+    spec:
+      containers:
+        - name: redis
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: infra-advisor
+spec:
+  template:
+    spec:
+      containers:
+        - name: postgres
+          resources:
+            requests: { cpu: 50m, memory: 192Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: infra-advisor
+spec:
+  template:
+    spec:
+      containers:
+        - name: mailpit
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }

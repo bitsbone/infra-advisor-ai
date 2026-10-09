@@ -1,0 +1,51 @@
+# Same DBM check as the base (k8s/postgres/deployment.yaml) with a dev host
+# name and env tag, so dev's database never shows up as prod's in DBM. Keep the
+# rest in sync with the base; k8s/tests checks the two only differ there.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: infra-advisor
+spec:
+  template:
+    metadata:
+      annotations:
+        ad.datadoghq.com/postgres.checks: |
+          {
+            "postgres": {
+              "init_config": {},
+              "instances": [{
+                "dbm": true,
+                "host": "%%host%%",
+                "port": 5432,
+                "username": "datadog",
+                "password": "%%env_DD_POSTGRES_PASSWORD%%",
+                "reported_hostname": "infra-advisor-postgres-dev",
+                "disable_generic_tags": true,
+                "tags": ["env:dev", "service:postgres"],
+                "collect_activity_metrics": true,
+                "collect_function_metrics": true,
+                "collect_count_metrics": true,
+                "collect_database_size_metrics": true,
+                "collect_wal_metrics": true,
+                "collect_bloat_metrics": true,
+                "collect_checksum_metrics": true,
+                "collect_buffercache_metrics": true,
+                "collect_schemas": {
+                  "enabled": true,
+                  "max_tables": 300,
+                  "collection_interval": 600
+                },
+                "collect_settings": {
+                  "enabled": true,
+                  "collection_interval": 600
+                },
+                "collect_column_statistics": {
+                  "enabled": true,
+                  "collection_interval": 1200,
+                  "max_tables": 100
+                },
+                "relations": [{"relation_regex": ".*"}]
+              }]
+            }
+          }
