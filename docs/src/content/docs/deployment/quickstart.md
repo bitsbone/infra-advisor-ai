@@ -55,7 +55,7 @@ make rollout-status
 make check-pods
 ```
 
-The deployment target creates namespace-local registry and application secrets, applies data services, then applies both Python and .NET application paths.
+The deployment target creates namespace-local registry and application secrets, then applies the Kustomize overlay `k8s/overlays/prod` (data services plus both the Python and .NET application paths). See [how manifests are composed](/infra-advisor-ai/deployment/kubernetes/#how-manifests-are-composed).
 
 Do not accept `Running` alone. Check readiness, restart counts, image tags/digests, and recent events:
 

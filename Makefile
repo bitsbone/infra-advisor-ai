@@ -10,7 +10,10 @@ endif
 RESOURCE_GROUP ?= rg-tola-infra-advisor-ai
 AKS_NAME ?= aks-infra-advisor-dev
 LOCATION ?= eastus
-NAMESPACE ?= infra-advisor
+# ENV selects the Kustomize overlay (k8s/overlays/$(ENV)) and the namespace:
+# prod → infra-advisor, dev → infra-advisor-dev.
+ENV ?= prod
+NAMESPACE ?= $(if $(filter prod,$(ENV)),infra-advisor,infra-advisor-$(ENV))
 GHCR_PAT ?=
 GHCR_USERNAME ?=
 GITHUB_EMAIL ?=
@@ -287,8 +290,8 @@ create-mailpit-secret: ## Create mailpit-secret with bcrypt-hashed MP_UI_AUTH fo
 create-secrets: create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-redis-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret ## Create all application K8s secrets
 
 redeploy-mailpit: ## Apply the Mailpit manifest, evict stuck pods from older ReplicaSets, wait for rollout, verify probe + endpoint
-	@echo "→ Applying k8s/mailpit/deployment.yaml + service.yaml + configmap.yaml..."
-	kubectl apply -f k8s/mailpit/
+	@echo "→ Applying k8s/mailpit/..."
+	kubectl apply -k k8s/mailpit
 	@echo "→ Force-deleting any pods from older ReplicaSets so the new RS can roll fresh..."
 	@# --force --grace-period=0 because stuck CrashLoopBackOff pods otherwise
 	@# block the rollout when terminationGracePeriodSeconds is the default 30s
@@ -337,9 +340,9 @@ create-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in infra-advisor names
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ ghcr-pull-secret created in namespace $(NAMESPACE)"
 
-deploy-k8s: check-env ## Apply all Kubernetes manifests
+deploy-k8s: check-env ## Apply the Kustomize overlay for ENV (default prod; ENV=dev for infra-advisor-dev)
 	@echo "→ Applying namespaces..."
-	kubectl apply -f k8s/namespace.yaml
+	kubectl apply -k k8s/namespaces
 
 	@echo "→ Installing Strimzi CRDs..."
 	kubectl apply -f https://strimzi.io/install/latest?namespace=kafka || true
@@ -349,20 +352,9 @@ deploy-k8s: check-env ## Apply all Kubernetes manifests
 
 	@echo "→ Skipping k8s/datadog/ — Datadog deployed via Operator (datadog/datadog-agent.yaml)"
 
-	@echo "→ Deploying Kafka (Strimzi)..."
-	kubectl apply -f k8s/kafka/
-
-	@echo "→ Deploying Redis..."
-	kubectl apply -f k8s/redis/
-
-	@echo "→ Deploying Mailpit (SMTP capture for dev)..."
-	$(MAKE) create-mailpit-secret
-	kubectl apply -f k8s/mailpit/
-
-	@echo "→ Creating GHCR pull secret..."
+	@echo "→ Creating GHCR pull secret and application secrets in $(NAMESPACE)..."
 	$(MAKE) create-ghcr-secret
-
-	@echo "→ Creating application secrets..."
+	$(MAKE) create-mailpit-secret
 	$(MAKE) create-mcp-server-secret
 	$(MAKE) create-mcp-server-dotnet-secret
 	$(MAKE) create-agent-api-secret
@@ -372,19 +364,10 @@ deploy-k8s: check-env ## Apply all Kubernetes manifests
 	$(MAKE) create-auth-api-secret
 	$(MAKE) create-dd-postgres-secret
 
-	@echo "→ Deploying Postgres..."
-	kubectl apply -f k8s/postgres/
+	@echo "→ Applying k8s/overlays/$(ENV)..."
+	kubectl apply -k k8s/overlays/$(ENV)
 
-	@echo "→ Deploying application services..."
-	kubectl apply -f k8s/mcp-server/
-	kubectl apply -f k8s/mcp-server-dotnet/
-	kubectl apply -f k8s/agent-api/
-	kubectl apply -f k8s/agent-api-dotnet/
-	kubectl apply -f k8s/auth-api/
-	kubectl apply -f k8s/load-generator/
-	kubectl apply -f k8s/ui/
-
-	@echo "✓ All Kubernetes resources applied"
+	@echo "✓ All Kubernetes resources applied to $(NAMESPACE)"
 
 rollout-status: ## Check rollout status for all infra-advisor deployments
 	kubectl rollout status deploy/mcp-server -n $(NAMESPACE) --timeout=5m &
@@ -437,8 +420,8 @@ docker-push-all: ## Push all images to GHCR
 # ─── Verification ─────────────────────────────────────────────────────────────
 
 check-pods: ## Check pod status across all namespaces
-	@echo "=== infra-advisor ==="
-	kubectl get pods -n infra-advisor
+	@echo "=== $(NAMESPACE) ==="
+	kubectl get pods -n $(NAMESPACE)
 	@echo ""
 	@echo "=== kafka ==="
 	kubectl get pods -n kafka
