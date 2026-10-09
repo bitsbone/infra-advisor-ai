@@ -21,7 +21,6 @@ android {
 
         buildConfigField "String", "API_BASE_URL", "\"${configValue('infraAdvisorApiBaseUrl', 'INFRA_ADVISOR_API_BASE_URL')}\""
         buildConfigField "String", "DD_SITE", "\"${configValue('datadogSite', 'DD_SITE')}\""
-        buildConfigField "String", "DD_ENV", "\"${configValue('datadogEnv', 'DD_ENV')}\""
         buildConfigField "String", "DD_SERVICE", "\"${configValue('datadogService', 'DD_SERVICE')}\""
         buildConfigField "String", "DD_RUM_APPLICATION_ID", "\"${configValue('datadogRumApplicationId', 'DD_RUM_APPLICATION_ID')}\""
         buildConfigField "String", "DD_CLIENT_TOKEN", "\"${configValue('datadogClientToken', 'DD_CLIENT_TOKEN')}\""
@@ -31,7 +30,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField "String", "DD_ENV", "\"${configValue('datadogEnvDebug', 'DD_ENV')}\""
+        }
         release {
+            buildConfigField "String", "DD_ENV", "\"${configValue('datadogEnvRelease', 'DD_ENV')}\""
             // R8 produces the mapping file consumed by Datadog Error Tracking. Upload credentials
             // are supplied only to the upload task through DATADOG_API_KEY or DD_API_KEY.
             minifyEnabled true

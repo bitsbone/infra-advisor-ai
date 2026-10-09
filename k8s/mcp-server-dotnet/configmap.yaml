@@ -8,7 +8,7 @@ metadata:
 data:
   # Unified service tagging for DD agent container metadata (no DD .NET tracer
   # in this pod — see deployment.yaml).
-  DD_ENV: "dev"
+  DD_ENV: "prod"
   DD_SERVICE: "infra-advisor-mcp-server-dotnet"
   DD_VERSION: "latest"
   DD_SITE: "us3.datadoghq.com"
@@ -17,7 +17,7 @@ data:
   # are removed; no consumer in this pod.
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://datadog-agent.datadog.svc.cluster.local:4318"
   OTEL_SERVICE_NAME: "infra-advisor-mcp-server-dotnet"
-  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=latest,service.name=infra-advisor-mcp-server-dotnet"
+  OTEL_RESOURCE_ATTRIBUTES: "service.name=infra-advisor-mcp-server-dotnet"
   ASPNETCORE_ENVIRONMENT: "Production"
   AZURE_SEARCH_INDEX_NAME: "infra-advisor-knowledge"
   AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-4.1-mini"

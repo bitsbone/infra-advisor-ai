@@ -216,7 +216,7 @@ jobs:
             echo "VITE_DD_RUM_APP_ID=${{ secrets.VITE_DD_RUM_APP_ID }}"
             echo "VITE_DD_RUM_CLIENT_TOKEN=${{ secrets.VITE_DD_RUM_CLIENT_TOKEN }}"
             echo "VITE_DD_RUM_SITE=${{ secrets.VITE_DD_RUM_SITE || 'us3.datadoghq.com' }}"
-            echo "VITE_DD_ENV=${{ vars.DD_ENV || 'dev' }}"
+            echo "VITE_DD_ENV=prod"
             echo "VITE_APP_VERSION=${{ steps.sha.outputs.short }}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
@@ -230,7 +230,9 @@ jobs:
           VITE_DD_RUM_APP_ID: ${{ secrets.VITE_DD_RUM_APP_ID }}
           VITE_DD_RUM_CLIENT_TOKEN: ${{ secrets.VITE_DD_RUM_CLIENT_TOKEN }}
           VITE_DD_RUM_SITE: ${{ secrets.VITE_DD_RUM_SITE || 'us3.datadoghq.com' }}
-          VITE_DD_ENV: ${{ vars.DD_ENV || 'dev' }}
+          # Builds from main deploy to prod (infra-advisor). Not read from the
+          # repo-level DD_ENV variable, which predates the dev namespace.
+          VITE_DD_ENV: prod
           VITE_APP_VERSION: ${{ steps.sha.outputs.short }}
         run: npm ci && npm run build
 
@@ -338,6 +340,10 @@ jobs:
           true  # ensure step always exits 0
 
       - name: Pin each changed deployment to the just-built image SHA
+        # Also stamps the SHA as the Datadog version (DD_VERSION + the
+        # tags.datadoghq.com/version labels), which `kubectl set image` alone
+        # left stuck at "latest".
+        #
         # SHA-pinning instead of `kubectl rollout restart` against :latest.
         # Closes the "compromised GHCR :latest tag silently rolls out to every
         # pod on next restart" path called out in security-audit-2026-05-16.md
@@ -370,9 +376,7 @@ jobs:
               kubectl get deployment/"$dep" -n infra-advisor \
                 -o jsonpath="{.spec.template.spec.containers[?(@.name==\"$container\")].image}" \
                 > "$RUNNER_TEMP/prev-images/$dep"
-              kubectl set image deployment/"$dep" \
-                "$container=$IMAGE_PREFIX/$dep:$SHORT_SHA" \
-                -n infra-advisor --record=false
+              .github/scripts/pin-deployment.sh infra-advisor "$dep" "$container" "$IMAGE_PREFIX/$dep:$SHORT_SHA"
             else
               echo "deployment/$dep not found — skipping (will be applied by make deploy-k8s)"
             fi
@@ -431,7 +435,7 @@ jobs:
                 return 0
               fi
               echo "::error::$dep rollout exceeded its progress deadline — rolling back to $prev_image"
-              kubectl set image deployment/"$dep" "$container=$prev_image" -n infra-advisor --record=false
+              .github/scripts/pin-deployment.sh infra-advisor "$dep" "$container" "$prev_image"
               kubectl rollout status deployment/"$dep" -n infra-advisor --timeout=5m \
                 && echo "::warning::$dep rolled back to $prev_image successfully — the new image never went live; check its startup logs before re-deploying" \
                 || echo "::error::$dep rollback to $prev_image ALSO failed to stabilize — needs manual investigation now"

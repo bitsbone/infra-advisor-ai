@@ -2,7 +2,7 @@
   "title": "InfraAdvisor — Pipeline Health",
   "description": "Kafka consumer lag on both topics, DSM topology, Azure AI Search index document count. (The Airflow DAG Health widget this dashboard used to carry was removed when Airflow was replaced by Azure Data Factory — ADF pipeline/activity run status is tracked via Datadog's Data Jobs Monitoring for ADF instead, see ops/azure/README.md; a dashboard widget for it hasn't been authored yet.)",
   "layout_type": "ordered",
-  "tags": ["team:infra-advisor", "env:dev"],
+  "tags": ["team:infra-advisor", "env:prod"],
   "widgets": [
     {
       "definition": {

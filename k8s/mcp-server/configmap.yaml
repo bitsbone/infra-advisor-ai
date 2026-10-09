@@ -6,7 +6,7 @@ metadata:
   labels:
     app: mcp-server
 data:
-  DD_ENV: "dev"
+  DD_ENV: "prod"
   DD_SERVICE: "infra-advisor-mcp-server"
   DD_VERSION: "latest"
   DD_SITE: "us3.datadoghq.com"

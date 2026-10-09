@@ -44,12 +44,12 @@ export DD_SERVICE=infra-advisor-mobile-android-local
 ./gradlew assembleDebug
 ```
 
-Available environment overrides are `INFRA_ADVISOR_API_BASE_URL`, `DD_SITE`, `DD_ENV`, `DD_SERVICE`, `DD_RUM_APPLICATION_ID`, `DD_CLIENT_TOKEN`, and `DD_TRACE_SAMPLE_RATE`. One-off Gradle project properties are also supported:
+Release builds report `env:prod` and debug builds `env:dev` (`datadogEnvRelease` / `datadogEnvDebug` in `gradle.properties`). Available environment overrides are `INFRA_ADVISOR_API_BASE_URL`, `DD_SITE`, `DD_ENV`, `DD_SERVICE`, `DD_RUM_APPLICATION_ID`, `DD_CLIENT_TOKEN`, and `DD_TRACE_SAMPLE_RATE`. One-off Gradle project properties are also supported:
 
 ```bash
 ./gradlew assembleDebug \
   -PinfraAdvisorApiBaseUrl=https://example.test \
-  -PdatadogEnv=local \
+  -PdatadogEnvDebug=local \
   -PdatadogService=infra-advisor-mobile-android-local
 ```
 

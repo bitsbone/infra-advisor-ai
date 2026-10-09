@@ -53,3 +53,16 @@ def test_prod_stays_in_prod_namespaces():
     allowed = {"", "infra-advisor", "kafka"}
     for obj in render("prod"):
         assert obj["metadata"].get("namespace", "") in allowed, obj["metadata"]["name"]
+
+
+def test_env_tags_match_overlay(overlay):
+    """Every env value an overlay sets (UST labels, DD_ENV, check-annotation tags) is the overlay name."""
+    name, objects = overlay
+    seen = []
+    for obj in objects:
+        rendered = yaml.safe_dump(obj)
+        for label in ("tags.datadoghq.com/env: ", "DD_ENV: "):
+            seen += [(obj["metadata"]["name"], line.split(label, 1)[1].strip("'\" ")) for line in rendered.splitlines() if label in line]
+        seen += [(obj["metadata"]["name"], part.split('\\"', 1)[0]) for part in rendered.split('\\"env:')[1:]]
+    assert seen
+    assert {env for _, env in seen} == {name}, [s for s in seen if s[1] != name]

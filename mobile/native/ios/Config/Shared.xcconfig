@@ -1,6 +1,7 @@
 API_BASE_URL = https:/$()/infra-advisor-ai.bitsbone.com
 DD_SITE = us3
-DD_ENV = demo
+// DD_ENV_DEFAULT comes from the including configuration file: Release → prod, Debug/Tests → dev.
+DD_ENV = $(DD_ENV_DEFAULT)
 DD_SERVICE = infra-advisor-mobile-ios
 DD_RUM_APPLICATION_ID = faf4371c-eed8-4b46-a2ce-78e704e9cae5
 DD_CLIENT_TOKEN = pub7b2e9fd74523ba292a44a563e7f3cb97

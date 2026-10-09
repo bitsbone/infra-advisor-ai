@@ -15,6 +15,9 @@ param location string
 @description('Environment tag value (e.g. dev, staging, prod)')
 param environment string
 
+@description('Datadog env tag. The ingestion pipeline feeds the prod AI Search index, so it reports env:prod even though the Azure deployment (and `environment`, which names resources) is "dev".')
+param ddEnv string = 'prod'
+
 @description('Blob storage connection string — reuses the existing storage account (stinfraadv<env>) rather than provisioning a dedicated one, both for AzureWebJobsStorage and for the ingestion functions\' own raw-data/prepared-data container access')
 @secure()
 param storageConnectionString string
@@ -103,7 +106,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'EIA_API_KEY', value: eiaApiKey }
         { name: 'DD_API_KEY', value: datadogApiKey }
         { name: 'DD_SITE', value: datadogSite }
-        { name: 'DD_ENV', value: environment }
+        { name: 'DD_ENV', value: ddEnv }
         { name: 'DD_SERVICE', value: 'infra-advisor-adf-functions' }
         { name: 'DD_VERSION', value: 'latest' }
         { name: 'DD_LLMOBS_ENABLED', value: 'true' }

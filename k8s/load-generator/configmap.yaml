@@ -6,7 +6,7 @@ metadata:
   labels:
     app: load-generator
 data:
-  DD_ENV: "dev"
+  DD_ENV: "prod"
   DD_SERVICE: "infra-advisor-load-generator"
   DD_VERSION: "latest"
   DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"

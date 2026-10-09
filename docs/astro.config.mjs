@@ -246,6 +246,7 @@ export default defineConfig({
                     { label: 'Prerequisites', slug: 'deployment/prerequisites' },
                     { label: 'Quickstart', slug: 'deployment/quickstart' },
                     { label: 'Kubernetes Resources', slug: 'deployment/kubernetes' },
+                    { label: 'Environments', slug: 'deployment/environments' },
                 ],
             },
             {

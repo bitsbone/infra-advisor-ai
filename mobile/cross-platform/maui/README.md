@@ -158,7 +158,7 @@ dotnet build src/InfraAdvisor.Mobile/InfraAdvisor.Mobile.csproj -f net10.0-andro
 Supported public build properties:
 
 - `InfraAdvisorApiBaseUrl`
-- `InfraAdvisorDatadogEnvironment`
+- `InfraAdvisorDatadogEnvironment` (defaults to `prod` for Release builds and `dev` otherwise)
 - `InfraAdvisorDatadogService`
 - `InfraAdvisorDatadogClientToken`
 - `InfraAdvisorDatadogRumApplicationId`
