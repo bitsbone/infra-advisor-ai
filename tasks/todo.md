@@ -166,17 +166,17 @@ Superseded an earlier unauthorized draft of this file that assumed a dual-domain
 
 ## Phase 6 — DNS, Cloudflare and Synthetics (item 2)
 
-- [ ] **Hostname (decided).** One fixed dev hostname: `infra-advisor-ai-dev.bitsbone.com`. It's a first-level subdomain, so Cloudflare Universal SSL covers it with no extra certificate. A wildcard is only worth it with per-PR namespaces, which is out of scope.
+- [x] **Hostname (decided).** One fixed dev hostname: `infra-advisor-ai-dev.bitsbone.com`. It's a first-level subdomain, so Cloudflare Universal SSL covers it with no extra certificate. A wildcard is only worth it with per-PR namespaces, which is out of scope.
 - [ ] **Cloudflare (manual).** Add a proxied (orange-cloud) A record `infra-advisor-ai-dev` pointing at the dev UI LoadBalancer IP. Access stays public like prod (decided). Revisit in-app access controls and bot blocking later (see Follow-ups).
-- [ ] **Synthetic user in prod.** Create the same service account in prod once, through auth-api `POST /admin/users` (`is_service_account=true`), with the credentials from the prod `synthetic-user-secret`. No prod data is touched otherwise. Exclude it from usage dashboards by `usr.email` or a `service_account` RUM attribute.
-- [ ] **Synthetics (one test, swappable base URL).**
+- [x] **Synthetic user in prod.** `make create-synthetic-user ENV=prod` (seed script in `SEED_SYNTHETIC_ONLY=1` mode over a port-forward; tested in `k8s/tests/test_seed_dev.py`). **Not run yet** (needs prod admin creds). Create the same service account in prod once, through auth-api `POST /admin/users` (`is_service_account=true`), with the credentials from the prod `synthetic-user-secret`. No prod data is touched otherwise. Exclude it from usage dashboards by `usr.email` or a `service_account` RUM attribute.
+- [x] **Synthetics (one test, swappable base URL).** Login step (`#email`, `#password`, `button[type='submit']`) + `{{ BASE_URL }}`; `deploy-dev` runs it with `--override startUrl` and `variables.BASE_URL` once `vars.SYNTHETICS_CONSULTANT_FLOW_ID` is set. Global-variable ids in the JSON are placeholders (per-org).
   - Add a login step to `consultant-query-flow.json`, using `{{ SYNTHETIC_USER_EMAIL }}` and `{{ SYNTHETIC_USER_PASSWORD }}` (secure global variables, shared by both envs).
   - Replace `{{UI_BASE_URL}}` with a `{{ BASE_URL }}` global variable that defaults to prod, so the scheduled run keeps testing `https://infra-advisor-ai.bitsbone.com`.
   - The `deploy-dev` job runs the same test with `datadog-ci synthetics run-tests --override startUrl=https://infra-advisor-ai-dev.bitsbone.com` (plus the matching `BASE_URL` variable override) as a post-deploy gate. No second test definition to keep in sync.
 
 ## Phase 7 — Docs and verification
 
-- [ ] Update `docs/src/content/docs`: an environments page (prod vs dev, what's shared, how to deploy a PR to dev, seeding, the synthetic user), the deployment architecture page, the RUM page (runtime env) and the services pages. Fix the stale `docs/agent-guides/` references in CLAUDE.md.
+- [x] Docs: `deployment/environments.md` (new; full reference + first-time setup runbook), `deployment/kubernetes.md`, `deployment/index.md`, `deployment/quickstart.md`, `development/testing.md`, `observability/rum.md`, `services/ui.md`, `llm-engineering/monitoring/prompt-targeting.mdx`; stale `docs/agent-guides/` refs fixed in CLAUDE.md/AGENTS.md. Build + links clean. ~~Update `docs/src/content/docs`: an environments page (prod vs dev, what's shared, how to deploy a PR to dev, seeding, the synthetic user), the deployment architecture page, the RUM page (runtime env) and the services pages. Fix the stale `docs/agent-guides/` references in CLAUDE.md.
 - [ ] **Verify prod:** in Datadog, APM/RUM/LLM Obs/infra/logs show `env:prod` with `version:<sha>`, with no `env:dev` data after the cutover. Prod has no banner.
 - [ ] **Verify dev:** after a PR deploy, the banner shows. RUM, APM and LLM Obs show `env:dev` with the PR SHA. Login works with seeded users. The Synthetics test passes. The dev consumer group gets no Kafka partitions (`kafka-consumer-groups --describe`). Prod Postgres and Redis show no dev sessions or users.
 
@@ -197,3 +197,22 @@ Superseded an earlier unauthorized draft of this file that assumed a dual-domain
 ## Delivery
 
 Each phase is its own PR, merged in order. Phases 1–3 are safe for prod: a zero-diff refactor, a retag, and inert code. Dev comes up in Phases 4–6.
+
+## Review (2026-10-09)
+
+**Delivered as six stacked local branches** (merge in order; none pushed): `feat/env-kustomize-base` → `feat/env-prod-retag` → `feat/env-app-runtime` → `feat/env-dev-overlay` → `feat/env-deploy-dev` → `feat/env-synthetics-docs`.
+
+**Verified:** `k8s/tests` 16 passed (overlay contracts + seed script against a fake auth-api); agent-api pytest 115 passed; .NET 46 passed / 1 skipped; MAUI core 81 passed; mobile env resolved per configuration via msbuild/xcodebuild/gradle; UI image run as prod and dev (env-config, noindex, rendered upstreams, `nginx -t`); prod overlay renders identically to the old file list and its live diff equals the pre-existing drift; CI pin patch server-dry-run against prod; actionlint and Bicep build clean; docs build and links clean.
+
+**Live (2026-10-09):** `infra-advisor-dev` exists with dev-only secrets (`.env.dev`, generated; AI Search query key `infra-advisor-dev`), datastores, MCP servers and auth-api running, DBM user created. `agent-api`, `agent-api-dotnet` and `ui` are **scaled to 0** because `:latest` (main) predates `KAFKA_ENABLED` and the runtime nginx template — the dev agents would join prod's consumer group and the old UI proxies to prod. The first `deploy:dev` run sets them back to 1 with PR images. Dev UI LoadBalancer IP: `57.151.78.84`.
+
+**Findings outside the plan:**
+- The cluster has no NetworkPolicy engine (`networkPolicy: none`); the policies in `k8s/` were never applied to prod either. Isolation is by config — documented.
+- Prod agent-api pod `…-hznfd` left the Kafka consumer group on 2026-09-30 (`max.poll.interval.ms` exceeded) and never rejoined; the consumer thread doesn't recover. Pre-existing; worth a fix.
+- Fixed in passing: `create-mailpit-secret` (`@kubectl` on a continued line) and `setup-dbm.sh` (`:'pw'` in `psql -c`).
+- `check-env` requires `TS_CREATOR`/`TS_TEAM` (Bicep-only) for `deploy-k8s`.
+- `deployment/tag-governance.md` content-check error predates this work.
+
+**Dev deploy (2026-10-13):** `deploy:dev` run 38440094439 on PR #11 succeeded at `f048423`. Six app services at 1/1 with `env:dev` and `version:f048423` labels; `/env-config.js` returns `{"env":"dev"}` with `X-Robots-Tag: noindex, nofollow`; seed job created the synthetic user, five demo users and their conversations; dev agents log `Kafka disabled` and the consumer group holds only prod pods; APM shows `kube_namespace:infra-advisor-dev` spans as `env:dev version:f048423`. Three fixes were needed first: base images through `mirror.gcr.io` (Docker Hub 504/429), and lockfile installs for the UI (`npm ci` — driver.js 1.9.0 rejects `side: "over"`) and auth-api (`uv sync --frozen` — SQLAlchemy 2.1 defaults `postgresql://` to psycopg 3). `services/load-generator/Dockerfile` still installs without its lockfile.
+
+**Remaining (needs you):** merge PRs #6–#11 in order, then verify prod reports `env:prod version:<sha>`; after #7 merges, the Datadog items in Phase 2 (Product Analytics `$env` default, `prod` Feature Flag environments, SDS check); copy `SYNTHETIC_USER_*` from `.env.dev` into `.env`, run `ADMIN_EMAIL=<prod admin> make create-synthetic-user ENV=prod`, create the Synthetics global variables and set `SYNTHETICS_CONSULTANT_FLOW_ID`; eyeball the dev banner at https://infra-advisor-ai-dev.bitsbone.com.

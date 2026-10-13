@@ -14,6 +14,11 @@
 # Usage: make setup-dev-deploy-identity
 set -euo pipefail
 
+# Make exports everything in .env, including the GITHUB_TOKEN PAT used for
+# GHCR. gh prefers that over your own login, and the PAT can't create
+# environments or set their secrets (HTTP 403). Use your gh login instead.
+unset GITHUB_TOKEN GH_TOKEN
+
 RG="${RESOURCE_GROUP:-rg-tola-infra-advisor-ai}"
 AKS="${AKS_NAME:-aks-infra-advisor-dev}"
 REPO="${GITHUB_REPO:-bitsbone/infra-advisor-ai}"

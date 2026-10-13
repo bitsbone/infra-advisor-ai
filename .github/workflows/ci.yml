@@ -42,7 +42,7 @@ jobs:
       - uses: astral-sh/setup-uv@v8.1.0
 
       - name: Render overlays and run contract tests
-        run: uv run --no-project --with pytest --with pyyaml pytest -q k8s/tests
+        run: uv run --no-project --with pytest --with pyyaml --with httpx --with sqlalchemy pytest -q k8s/tests
 
   # ── .NET services (dotnet build + test) ────────────────────────────────────
   test-dotnet:

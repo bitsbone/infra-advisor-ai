@@ -14,8 +14,12 @@ with deterministic ids so re-runs don't duplicate them. The conversations and
 messages tables are created by agent-api at startup.
 
 Runs as the seed-dev Job (k8s/overlays/dev/seed) with the agent-api image.
+With SEED_SYNTHETIC_ONLY=1 it only creates/updates the synthetic account; that
+is how `make create-synthetic-user ENV=prod` gives prod the same account
+without touching any other prod data.
 """
 
+import getpass
 import os
 import re
 import sys
@@ -26,11 +30,9 @@ import httpx
 from sqlalchemy import create_engine, text
 
 AUTH_API_URL = os.environ.get("AUTH_API_URL", "http://auth-api:8002")
-ADMIN_EMAIL = os.environ["BOOTSTRAP_ADMIN_EMAIL"]
-ADMIN_PASSWORD = os.environ["BOOTSTRAP_ADMIN_PASSWORD"]
 SYNTHETIC_EMAIL = os.environ["SYNTHETIC_USER_EMAIL"].strip().lower()
 SYNTHETIC_PASSWORD = os.environ["SYNTHETIC_USER_PASSWORD"]
-DATABASE_URL = os.environ["DATABASE_URL"]
+SYNTHETIC_ONLY = os.environ.get("SEED_SYNTHETIC_ONLY") == "1"
 
 # Must match JOB_ROLES in services/auth-api/src/database.py (k8s/tests checks).
 JOB_ROLES = [
@@ -92,7 +94,7 @@ def ensure_user(client: httpx.Client, headers: dict, email: str, password: str, 
 
 
 def seed_conversations(user_ids: list[str]) -> None:
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
     with engine.begin() as conn:
         for user_id in user_ids:
             for title, question, answer in SAMPLE_CONVERSATIONS:
@@ -115,13 +117,36 @@ def seed_conversations(user_ids: list[str]) -> None:
     print(f"seeded {len(SAMPLE_CONVERSATIONS)} conversations for {len(user_ids)} demo users")
 
 
+def admin_credentials() -> tuple[str, str]:
+    """ADMIN_EMAIL/ADMIN_PASSWORD, else the bootstrap admin. The bootstrap
+    account only exists if the database was empty when auth-api first started
+    with it set, so prod may need a different admin; without ADMIN_PASSWORD in
+    an interactive shell, the password is prompted for instead of being passed
+    on the command line."""
+    email = os.environ.get("ADMIN_EMAIL") or os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "")
+    password = os.environ.get("ADMIN_PASSWORD") or (
+        os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "") if not os.environ.get("ADMIN_EMAIL") else ""
+    )
+    if not password and sys.stdin.isatty():
+        password = getpass.getpass(f"Admin password for {email} at {AUTH_API_URL}: ")
+    if not email or not password:
+        sys.exit("No admin credentials: set ADMIN_EMAIL (and ADMIN_PASSWORD or answer the prompt), or BOOTSTRAP_ADMIN_*")
+    return email, password
+
+
 def main() -> None:
+    admin_email, admin_password = admin_credentials()
     with httpx.Client(base_url=AUTH_API_URL, timeout=30) as client:
         wait_for(client, "/readyz")
-        token = client.post("/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}).raise_for_status().json()["token"]
+        login = client.post("/login", json={"email": admin_email, "password": admin_password})
+        if login.status_code == 401:
+            sys.exit(f"Admin login failed for {admin_email} at {AUTH_API_URL} (401). Use an account that is an admin there: ADMIN_EMAIL=<you> make create-synthetic-user ENV=<env>")
+        token = login.raise_for_status().json()["token"]
         headers = {"Authorization": f"Bearer {token}"}
 
         ensure_user(client, headers, SYNTHETIC_EMAIL, SYNTHETIC_PASSWORD, SYNTHETIC_JOB_ROLE)
+        if SYNTHETIC_ONLY:
+            return
         demo_ids = [
             ensure_user(client, headers, f"demo-{slug(role)}@infra-advisor.test", SYNTHETIC_PASSWORD, role)
             for role in JOB_ROLES

@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s create-synthetic-user-secret seed-dev setup-dev-deploy-identity check-env create-ghcr-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-redis-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm apply-datadog-agent otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector run-ios run-android run-prism-ios help
+.PHONY: deploy-infra deploy-k8s create-synthetic-user-secret seed-dev setup-dev-deploy-identity create-synthetic-user check-env create-ghcr-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-redis-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm apply-datadog-agent otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector run-ios run-android run-prism-ios help
 
 # Load .env for normal local operation. Set SKIP_DOTENV=1 for documentation,
 # static analysis, and dry runs so Make never expands local credentials.
@@ -406,6 +406,12 @@ endif
 
 setup-dev-deploy-identity: ## One-time, run by a human: Entra app + namespace-scoped AKS roles + GitHub "dev" environment for the deploy-dev job
 	bash infra/scripts/setup-dev-deploy-identity.sh
+
+create-synthetic-user: ## Create/update only the shared synthetic-test account in ENV (prod or dev) via a port-forward; ADMIN_EMAIL=<an admin> prompts for its password (default: BOOTSTRAP_ADMIN_*)
+	@if [ -z "$(SYNTHETIC_USER_EMAIL)" ] || [ -z "$(SYNTHETIC_USER_PASSWORD)" ]; then echo "ERROR: SYNTHETIC_USER_EMAIL/PASSWORD not set"; exit 1; fi
+	@if [ -z "$(ADMIN_EMAIL)" ] && [ -z "$(BOOTSTRAP_ADMIN_EMAIL)" ]; then echo "ERROR: set ADMIN_EMAIL to an admin account in $(NAMESPACE)"; exit 1; fi
+	@kubectl port-forward -n $(NAMESPACE) svc/auth-api 18002:8002 >/dev/null 2>&1 & pf=$$!; trap "kill $$pf" EXIT; sleep 3; \
+	AUTH_API_URL=http://localhost:18002 SEED_SYNTHETIC_ONLY=1 uv run --no-project --with httpx --with sqlalchemy python k8s/overlays/dev/seed/seed_dev.py
 
 seed-dev: ## Seed infra-advisor-dev with the synthetic user, demo users and sample conversations (idempotent)
 	kubectl delete job seed-dev -n infra-advisor-dev --ignore-not-found
