@@ -1,0 +1,229 @@
+name: Deploy PR to dev
+
+# Builds a pull request's core images and deploys them to the shared dev
+# namespace (infra-advisor-dev, https://infra-advisor-ai-dev.bitsbone.com).
+# Opt-in: add the `deploy:dev` label to a PR. While the label stays on, every
+# new push redeploys. Or run it by hand with a PR number.
+#
+# Dev is shared, so the last deploy wins: the concurrency group queues runs
+# and the PR comment says which PR and commit dev is running. Unlike prod
+# (build-push.yml), this does not wait for CI — it's for testing a PR before
+# review, and prod still only ships CI-validated commits from main.
+#
+# Fork PRs get no secrets or OIDC token, so they're skipped here.
+
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to deploy to dev
+        required: true
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+env:
+  IMAGE_PREFIX: ghcr.io/bitsbone/infra-advisor-ai
+  REGISTRY: ghcr.io
+  NAMESPACE: infra-advisor-dev
+  DEV_URL: https://infra-advisor-ai-dev.bitsbone.com
+
+jobs:
+  resolve:
+    if: |
+      github.event_name == 'workflow_dispatch' || (
+        contains(github.event.pull_request.labels.*.name, 'deploy:dev') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'deploy:dev') &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.pr.outputs.number }}
+      sha: ${{ steps.pr.outputs.sha }}
+      short: ${{ steps.pr.outputs.short }}
+    steps:
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+        run: |
+          read -r sha fork <<<"$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid,isCrossRepository --jq '"\(.headRefOid) \(.isCrossRepository)"')"
+          if [ "$fork" = "true" ]; then echo "::error::PR #$PR is from a fork; fork PRs can't deploy to dev"; exit 1; fi
+          { echo "number=$PR"; echo "sha=$sha"; echo "short=${sha:0:7}"; } >> "$GITHUB_OUTPUT"
+
+  # Every core image, at the PR's head commit, so dev runs exactly the PR.
+  # The GHA layer cache makes unchanged services cheap.
+  build:
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      # One flaky build shouldn't cancel the other five; a rerun then only
+      # rebuilds what failed.
+      fail-fast: false
+      matrix:
+        service: [mcp-server, mcp-server-dotnet, agent-api, agent-api-dotnet, auth-api, ui]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      # Six parallel builds pulling base images anonymously from Docker Hub hit
+      # its rate limit (429). Google's public Docker Hub mirror serves the same
+      # official images; BuildKit falls back to Docker Hub if it misses.
+      - uses: docker/setup-buildx-action@v4
+        with:
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # RUM's env comes from the pod at runtime (/env-config.js), so the UI
+      # image is environment-neutral; only its version is baked in.
+      - name: Collect UI build args
+        id: ui-args
+        if: matrix.service == 'ui'
+        run: |
+          {
+            echo "args<<EOF"
+            echo "VITE_DD_RUM_APP_ID=${{ secrets.VITE_DD_RUM_APP_ID }}"
+            echo "VITE_DD_RUM_CLIENT_TOKEN=${{ secrets.VITE_DD_RUM_CLIENT_TOKEN }}"
+            echo "VITE_DD_RUM_SITE=${{ secrets.VITE_DD_RUM_SITE || 'us3.datadoghq.com' }}"
+            echo "VITE_APP_VERSION=${{ needs.resolve.outputs.short }}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: services/${{ matrix.service }}
+          push: true
+          # Never :latest — that tag is prod's (build-push.yml on main).
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ needs.resolve.outputs.short }}
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:pr-${{ needs.resolve.outputs.pr }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          build-args: |
+            DD_GIT_REPOSITORY_URL=https://github.com/bitsbone/infra-advisor-ai
+            DD_GIT_COMMIT_SHA=${{ needs.resolve.outputs.sha }}
+            ${{ steps.ui-args.outputs.args }}
+
+  deploy:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    # The `dev` environment's AZURE_CLIENT_ID overrides the repo-level one with
+    # an identity that can only write to infra-advisor-dev
+    # (infra/scripts/setup-dev-deploy-identity.sh).
+    environment:
+      name: dev
+      url: ${{ env.DEV_URL }}
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: azure/use-kubelogin@v1.3
+        with:
+          kubelogin-version: 'v0.0.24'
+
+      - uses: azure/aks-set-context@v5
+        with:
+          resource-group: ${{ vars.AZURE_RG }}
+          cluster-name: ${{ vars.AKS_CLUSTER_NAME }}
+          admin: 'false'
+          use-kubelogin: 'true'
+
+      - name: Record current images (rollback targets)
+        run: |
+          mkdir -p "$RUNNER_TEMP/prev-images"
+          for dep in mcp-server mcp-server-dotnet agent-api agent-api-dotnet auth-api ui; do
+            kubectl get deployment/"$dep" -n "$NAMESPACE" \
+              -o jsonpath="{.spec.template.spec.containers[?(@.name==\"$dep\")].image}" \
+              > "$RUNNER_TEMP/prev-images/$dep" 2>/dev/null || true
+          done
+
+      - name: Apply the dev overlay
+        # The namespace object is cluster-scoped, so it's created once by
+        # `make deploy-k8s ENV=dev`, not by this namespace-scoped identity.
+        run: kubectl kustomize k8s/overlays/dev | yq 'select(.kind != "Namespace")' | kubectl apply -n "$NAMESPACE" -f -
+
+      - name: Pin every core deployment to the PR images
+        run: |
+          for dep in mcp-server mcp-server-dotnet agent-api agent-api-dotnet auth-api ui; do
+            .github/scripts/pin-deployment.sh "$NAMESPACE" "$dep" "$dep" "$IMAGE_PREFIX/$dep:${{ needs.resolve.outputs.short }}"
+          done
+
+      - name: Wait for rollouts
+        run: |
+          echo "| Deployment | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          failed=0
+          for dep in mcp-server mcp-server-dotnet agent-api agent-api-dotnet auth-api ui; do
+            if .github/scripts/rollout-or-rollback.sh "$NAMESPACE" "$dep" "$dep" "$(cat "$RUNNER_TEMP/prev-images/$dep" 2>/dev/null)" 8m; then
+              echo "| $dep | ok |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| $dep | FAILED (rolled back) |" >> "$GITHUB_STEP_SUMMARY"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+      - name: Seed dev (idempotent)
+        run: |
+          kubectl delete job seed-dev -n "$NAMESPACE" --ignore-not-found
+          kubectl kustomize k8s/overlays/dev/seed \
+            | yq '(select(.kind == "Job") | .spec.template.spec.containers[0].image) = "${{ env.IMAGE_PREFIX }}/agent-api:${{ needs.resolve.outputs.short }}"' \
+            | kubectl apply -n "$NAMESPACE" -f -
+          kubectl wait --for=condition=complete job/seed-dev -n "$NAMESPACE" --timeout=5m
+          kubectl logs -n "$NAMESPACE" job/seed-dev
+
+      - name: Comment on the PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.resolve.outputs.pr }}
+          SHORT: ${{ needs.resolve.outputs.short }}
+          RESULT: ${{ job.status }}
+        run: |
+          dd="https://us3.datadoghq.com"
+          {
+            if [ "$RESULT" = "success" ]; then
+              echo "### Deployed to dev"
+            else
+              echo "### Dev deploy failed ($RESULT)"
+            fi
+            echo
+            echo "Dev now runs **#$PR** at \`$SHORT\`, until another PR deploys over it."
+            echo
+            echo "- App: $DEV_URL"
+            echo "- APM: $dd/apm/services?env=dev&version=$SHORT"
+            echo "- RUM: $dd/rum/sessions?query=env%3Adev%20version%3A$SHORT"
+            echo "- LLM Observability: $dd/llm/traces?query=env%3Adev%20version%3A$SHORT"
+            echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > comment.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md
