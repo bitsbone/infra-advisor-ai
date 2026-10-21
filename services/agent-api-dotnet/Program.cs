@@ -320,14 +320,18 @@ builder.Services.AddSingleton<IResponseEvaluator, ToolRoutingAccuracyEvaluator>(
 // per-eval cost is one extra inference call on each sampled trace.
 builder.Services.AddSingleton<IResponseEvaluator, MeaiRelevanceEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, MeaiGroundednessEvaluator>();
-builder.Services.AddSingleton<IContractAwardsEventPublisher, ContractAwardsEventPublisher>();
+if (KafkaSettings.Enabled)
+    builder.Services.AddSingleton<IContractAwardsEventPublisher, ContractAwardsEventPublisher>();
+else
+    builder.Services.AddSingleton<IContractAwardsEventPublisher, NoOpContractAwardsEventPublisher>();
 builder.Services.AddSingleton<AgentService>();
 builder.Services.AddSingleton<SuggestionService>();
 builder.Services.AddSingleton<ConversationService>();
 builder.Services.AddSingleton<MediaService>();
 
 // ── Background services ───────────────────────────────────────────────────────
-builder.Services.AddHostedService<KafkaConsumerService>();
+if (KafkaSettings.Enabled)
+    builder.Services.AddHostedService<KafkaConsumerService>();
 builder.Services.AddHostedService<SuggestionPoolMaintenanceService>();
 
 // ── JSON snake_case globally ──────────────────────────────────────────────────
@@ -406,6 +410,8 @@ builder.Services.AddRateLimiter(opts =>
 });
 
 var app = builder.Build();
+if (!KafkaSettings.Enabled)
+    app.Logger.LogInformation("Kafka disabled (KAFKA_ENABLED=false): consumer not started, contract-awards events not published");
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();

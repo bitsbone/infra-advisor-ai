@@ -6,7 +6,7 @@ audience:
   - platform-engineer
   - maintainer
 maturity: stable
-verifiedOn: 2026-08-27
+verifiedOn: 2026-10-09
 sidebar:
   order: 5
 ---
@@ -41,7 +41,10 @@ Do not collapse these into one “deployment succeeded” signal. A successful B
 | Provision Azure | `make deploy-infra` |
 | Configure kube context | `make get-credentials` |
 | Create all application secrets | `make create-secrets` |
-| Apply workloads | `make deploy-k8s` |
+| Apply workloads | `make deploy-k8s` (prod) or `make deploy-k8s ENV=dev` |
+| Seed dev with test users and conversations | `make seed-dev` |
+| Create the shared synthetic-test account | `make create-synthetic-user ENV=prod` |
+| Deploy a pull request to dev | add the `deploy:dev` label (see [environments](/infra-advisor-ai/deployment/environments/)) |
 | Apply DatadogAgent CR | `make apply-datadog-agent` |
 | Wait for selected rollouts | `make rollout-status` |
 | Inspect pods | `make check-pods` |
@@ -52,6 +55,6 @@ The Makefile is executable documentation. Run `make help` for the current target
 
 ## Release identity
 
-CI builds changed services and deploys immutable commit-tagged images. Keep the same version identity in Kubernetes labels and Datadog telemetry. Restarting a Deployment that still references an ambiguous tag is not proof that new code is running.
+CI builds changed services and deploys immutable commit-tagged images, and stamps the same short SHA into `DD_VERSION` and the `tags.datadoghq.com/version` labels. Prod and dev are separate namespaces with separate `env` tags; see [environments](/infra-advisor-ai/deployment/environments/). Restarting a Deployment that still references an ambiguous tag is not proof that new code is running.
 
 Continue to [Prerequisites](./prerequisites/), then follow the [Deployment quickstart](./quickstart/). Use [Kubernetes resources](./kubernetes/) as an ownership map, not a substitute for inspecting manifests.

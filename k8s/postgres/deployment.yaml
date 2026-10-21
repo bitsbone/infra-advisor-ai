@@ -41,7 +41,7 @@ spec:
                 "password": "%%env_DD_POSTGRES_PASSWORD%%",
                 "reported_hostname": "infra-advisor-postgres",
                 "disable_generic_tags": true,
-                "tags": ["env:dev", "service:postgres"],
+                "tags": ["env:prod", "service:postgres"],
                 "collect_activity_metrics": true,
                 "collect_function_metrics": true,
                 "collect_count_metrics": true,

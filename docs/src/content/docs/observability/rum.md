@@ -16,7 +16,13 @@ Browser RUM explains what happened around an agent request: the view, user actio
 
 ## Initialization boundary
 
-`services/ui/src/lib/datadog-rum.ts` initializes RUM only when the application ID and client token are supplied at build time. The service, environment, and version identify the frontend release. Session Replay uses `mask-user-input`, and same-origin URLs are eligible for trace-header injection.
+`services/ui/src/lib/datadog-rum.ts` initializes RUM only when the application ID and client token are supplied at build time. The service, environment, and version identify the frontend release.
+
+## Runtime environment
+
+The same UI image runs in the prod and dev namespaces, so the RUM `env` is not baked in at build time. The pod sets `APP_ENV`, and nginx renders `/env-config.js` from it (served with `Cache-Control: no-store`) as `window.__APP_CONFIG__ = {"env":"dev"};`. `index.html` loads that script before the app bundle, and `appEnv()` in `services/ui/src/lib/app-config.ts` resolves the value in this order: `window.__APP_CONFIG__.env`, the build-time `VITE_DD_ENV`, then `dev`. The version still comes from the build-time `VITE_APP_VERSION`, which CI stamps with the deploy SHA. Any environment other than `prod` also shows an `EnvironmentBanner` and returns `X-Robots-Tag: noindex, nofollow`.
+
+To verify, open the browser console and run `window.__APP_CONFIG__`, or request `/env-config.js` directly. Then filter RUM by the `env` facet and confirm the sessions land under the environment you opened. Under `vite dev` the file is an empty default, so the build-time value or `dev` applies. Session Replay uses `mask-user-input`, and same-origin URLs are eligible for trace-header injection.
 
 The current configuration samples all sessions and replays for the demo environment. That is a deliberate learning setting, not a production-volume recommendation.
 

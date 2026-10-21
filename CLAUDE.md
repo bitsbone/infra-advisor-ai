@@ -1,6 +1,6 @@
 ## InfraAdvisor AI — Agent Context
 
-Global infrastructure consulting firm AI assistant. Refer to `@docs/agent-guides/project-map.md` for architectural overview.
+Global infrastructure consulting firm AI assistant. Refer to `@docs/src/content/docs/agent-guides/project-map.md` for architectural overview.
 
 ---
 
@@ -10,7 +10,7 @@ Global infrastructure consulting firm AI assistant. Refer to `@docs/agent-guides
 - **K8s Auth:** `make create-ghcr-secret` (Run before `deploy-k8s`)
 - **Deployment:** `make deploy-k8s` (All manifests)
 - **Testing:** `uv run pytest -x services/<service>/tests/`
-- **Monitoring:** \* `kubectl get pods -n infra-advisor`
+- **Monitoring:** \* `kubectl get pods -n infra-advisor` (dev: `-n infra-advisor-dev`)
   - `kubectl logs -n infra-advisor deploy/<n> --tail=50`
 - **Access:** `az aks get-credentials --resource-group rg-tola-infra-advisor-ai --name aks-infra-advisor`
 
@@ -43,10 +43,10 @@ Global infrastructure consulting firm AI assistant. Refer to `@docs/agent-guides
 - **Markdown formatting:** Do not hard-wrap Markdown prose. Write each paragraph or list item on one physical line; allow renderers to wrap it visually. Code blocks and tables may use the line structure required by their syntax.
 - **Security:** Never hardcode server-side secrets. Use `os.environ["VAR_NAME"]` and fail fast.
 - **Schema:** Do not modify NBI field names; use exact names from PRD Section 3.
-- **Orchestration:** \* Namespace: `infra-advisor` (Exceptions: `kafka`, `datadog`).
+- **Orchestration:** \* Namespace: `infra-advisor` is prod; `infra-advisor-dev` is the shared PR-testing namespace, built only from `k8s/overlays/dev` (Exceptions: `kafka`, `datadog`). Never apply dev changes to `infra-advisor`; see `docs/src/content/docs/deployment/environments.md`.
   - Manifests: Must include `imagePullSecrets: [{name: ghcr-pull-secret}]`.
   - Registry: `ghcr.io/bitsbone/infra-advisor-ai/<service>:latest`.
-- **Public ingress:** The UI pod's nginx is the only LoadBalancer. Adding a service with a public subpath requires (1) a `location ^~ /<subpath>/` block in `services/ui/nginx.conf`, (2) the upstream configured with its subpath (e.g. `MP_WEBROOT`, `--root-path`), and (3) a UI image rebuild (nginx.conf is `COPY`'d at build time). Full rules in `@docs/agent-guides/core-conventions.md` § Public ingress routing.
+- **Public ingress:** The UI pod's nginx is the only LoadBalancer. Adding a service with a public subpath requires (1) a `location ^~ /<subpath>/` block in `services/ui/nginx/default.conf.template`, (2) the upstream configured with its subpath (e.g. `MP_WEBROOT`, `--root-path`), and (3) a UI image rebuild (the template is `COPY`'d at build time and rendered with `K8S_NAMESPACE`/`APP_ENV` at container start). Full rules in `@docs/src/content/docs/agent-guides/core-conventions.md` § Public ingress routing.
 
 ---
 

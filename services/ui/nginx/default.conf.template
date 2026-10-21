@@ -1,3 +1,10 @@
+# Non-prod environments are never indexed. conf.d files are included in the http
+# context, so a map is valid here. envsubst runs before nginx parses this file.
+map "${APP_ENV}" $robots_tag {
+    default "noindex, nofollow";
+    "prod"  "";
+}
+
 server {
     listen 80;
     server_name _;
@@ -9,6 +16,19 @@ server {
     # Using a variable for proxy_pass makes resolution happen per-request rather than at
     # startup, so NGINX starts successfully even when a backend service isn't deployed yet.
     resolver 10.0.0.10 valid=10s ipv6=off;
+
+    # nginx drops server-level add_header directives in any location that declares its own,
+    # so the X-Robots-Tag must be repeated in such locations (see /assets/ and /env-config.js).
+    # An empty map value makes nginx omit the header entirely (prod).
+    add_header X-Robots-Tag $robots_tag always;
+
+    # Runtime config for the SPA. Rendered per pod so one image serves prod and dev.
+    location = /env-config.js {
+        default_type application/javascript;
+        add_header Cache-Control "no-store" always;
+        add_header X-Robots-Tag $robots_tag always;
+        return 200 'window.__APP_CONFIG__ = {"env":"${APP_ENV}"};\n';
+    }
 
     # SPA — serve index.html for all non-file routes
     location / {
@@ -25,7 +45,7 @@ server {
     # MP_WEBROOT=/mailpit on the Mailpit pod makes all UI links/assets root
     # under /mailpit/, so no path rewriting is needed.
     location ^~ /mailpit/ {
-        set $mailpit_upstream http://mailpit.infra-advisor.svc.cluster.local:8025;
+        set $mailpit_upstream http://mailpit.${K8S_NAMESPACE}.svc.cluster.local:8025;
         proxy_pass $mailpit_upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -41,7 +61,7 @@ server {
 
     # Proxy /auth to auth-api service
     location /auth/ {
-        set $auth_upstream http://auth-api.infra-advisor.svc.cluster.local:8002;
+        set $auth_upstream http://auth-api.${K8S_NAMESPACE}.svc.cluster.local:8002;
         rewrite ^/auth/(.*) /$1 break;
         proxy_pass $auth_upstream;
         proxy_set_header Host $host;
@@ -55,7 +75,7 @@ server {
     # delivery at the end of the stream (defeating the point). Must come
     # BEFORE the generic /api-dotnet/ block so the longer prefix wins.
     location /api-dotnet/query/stream {
-        set $dotnet_upstream http://agent-api-dotnet.infra-advisor.svc.cluster.local:8001;
+        set $dotnet_upstream http://agent-api-dotnet.${K8S_NAMESPACE}.svc.cluster.local:8001;
         rewrite ^/api-dotnet/(.*) /$1 break;
         proxy_pass $dotnet_upstream;
         proxy_set_header Host $host;
@@ -82,7 +102,7 @@ server {
 
     # Proxy /api-dotnet to the .NET agent-api-dotnet service
     location /api-dotnet/ {
-        set $dotnet_upstream http://agent-api-dotnet.infra-advisor.svc.cluster.local:8001;
+        set $dotnet_upstream http://agent-api-dotnet.${K8S_NAMESPACE}.svc.cluster.local:8001;
         rewrite ^/api-dotnet/(.*) /$1 break;
         proxy_pass $dotnet_upstream;
         proxy_set_header Host $host;
@@ -108,7 +128,7 @@ server {
     # generic /api/ block so the longer prefix wins, and needs buffering off
     # so SSE chunks aren't batched into one delivery at the end of the stream.
     location /api/query/stream {
-        set $api_upstream http://agent-api.infra-advisor.svc.cluster.local:8001;
+        set $api_upstream http://agent-api.${K8S_NAMESPACE}.svc.cluster.local:8001;
         rewrite ^/api/(.*) /$1 break;
         proxy_pass $api_upstream;
         proxy_set_header Host $host;
@@ -135,7 +155,7 @@ server {
 
     # Proxy /api to agent-api service
     location /api/ {
-        set $api_upstream http://agent-api.infra-advisor.svc.cluster.local:8001;
+        set $api_upstream http://agent-api.${K8S_NAMESPACE}.svc.cluster.local:8001;
         rewrite ^/api/(.*) /$1 break;
         proxy_pass $api_upstream;
         proxy_set_header Host $host;
@@ -148,6 +168,7 @@ server {
     location ~* ^/assets/.*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
+        add_header X-Robots-Tag $robots_tag always;
     }
 
     gzip on;

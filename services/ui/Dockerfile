@@ -1,8 +1,8 @@
 # Build stage
 FROM node:20-alpine AS build
 WORKDIR /app
-COPY package.json .
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY . .
 ARG VITE_AGENT_API_URL=/api
 ARG VITE_DD_RUM_APP_ID=""
@@ -26,5 +26,9 @@ LABEL org.opencontainers.image.title="ui" \
       org.opencontainers.image.source="https://github.com/bitsbone/infra-advisor-ai"
 
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Rendered by the nginx entrypoint (envsubst) into /etc/nginx/conf.d/default.conf at start.
+# The same image serves prod and dev; only these runtime variables differ.
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+ENV K8S_NAMESPACE=infra-advisor
+ENV APP_ENV=prod
 EXPOSE 80

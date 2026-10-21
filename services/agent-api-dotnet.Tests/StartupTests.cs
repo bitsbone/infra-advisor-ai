@@ -1,3 +1,4 @@
+using InfraAdvisor.AgentApi.Services;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -66,4 +67,34 @@ public class StartupTests
 
         response.EnsureSuccessStatusCode();
     }
+
+    // Lives in this class (not its own) so it never runs in parallel with the
+    // test above: KAFKA_ENABLED is process-wide and read while Program builds.
+    [Fact]
+    public async Task Host_starts_without_any_Kafka_touchpoint_when_disabled()
+    {
+        Environment.SetEnvironmentVariable("KAFKA_ENABLED", "false");
+        try
+        {
+            using var factory = CreateFactory();
+            using var client = factory.CreateClient();
+
+            (await client.GetAsync("/livez")).EnsureSuccessStatusCode();
+            Assert.DoesNotContain(factory.Services.GetServices<IHostedService>(), s => s is KafkaConsumerService);
+            Assert.IsType<NoOpContractAwardsEventPublisher>(factory.Services.GetRequiredService<IContractAwardsEventPublisher>());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("KAFKA_ENABLED", null);
+        }
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("true", true)]
+    [InlineData("FALSE", false)]
+    [InlineData("0", false)]
+    [InlineData(" off ", false)]
+    public void KafkaSettings_parses_KAFKA_ENABLED(string? value, bool expected) =>
+        Assert.Equal(expected, KafkaSettings.IsEnabled(value));
 }

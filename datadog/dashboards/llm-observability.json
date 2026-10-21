@@ -2,7 +2,7 @@
   "title": "InfraAdvisor — LLM Observability",
   "description": "Query volume, token usage, cost/day, faithfulness score trend, AI Guard violations, latency P50/P95/P99",
   "layout_type": "ordered",
-  "tags": ["team:infra-advisor", "env:dev", "service:infraadvisor-agent-api"],
+  "tags": ["team:infra-advisor", "env:prod", "service:infraadvisor-agent-api"],
   "widgets": [
     {
       "definition": {

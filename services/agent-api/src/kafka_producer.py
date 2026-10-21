@@ -14,6 +14,7 @@ import time
 from typing import Any
 
 from confluent_kafka import Producer
+from kafka_config import kafka_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +50,10 @@ def publish_contract_awards_event(
 
     Fire-and-forget: any failure (broker unreachable, serialization error) is
     logged and swallowed, never raised — this must never affect the chat
-    response path.
+    response path. A no-op when KAFKA_ENABLED=false.
     """
+    if not kafka_enabled():
+        return
     try:
         payload = {
             "event_type": "contract_awards.query",

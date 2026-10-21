@@ -6,7 +6,7 @@ audience:
   - platform-engineer
   - maintainer
 maturity: stable
-verifiedOn: 2026-08-27
+verifiedOn: 2026-10-09
 sidebar:
   order: 3
   label: Kubernetes resources
@@ -16,13 +16,30 @@ sidebar:
 
 | Namespace | Owner and contents |
 |---|---|
-| `infra-advisor` | Product APIs, both MCP servers, UI, Redis, PostgreSQL, Mailpit, and synthetic load |
+| `infra-advisor` (prod) | Product APIs, both MCP servers, UI, Redis, PostgreSQL, Mailpit, and synthetic load |
+| `infra-advisor-dev` (dev) | The same core app and APIs with their own Redis, PostgreSQL, and Mailpit; no Kafka, load generator, or CronJobs. See [environments](/infra-advisor-ai/deployment/environments/) |
 | `kafka` | Strimzi operator resources, Kafka cluster, and topics |
 | `datadog` | Datadog Agent and Cluster Agent managed through the Operator |
 
 Ingestion (Azure Data Factory + Azure Functions) is not a Kubernetes workload — see the [data pipeline overview](/data-pipeline/) for that architecture instead.
 
 Replica counts, images, ports, probes, resource requests, and schedules change frequently. Inspect `k8s/<workload>` and the live object rather than copying a table from documentation.
+
+## How manifests are composed
+
+The manifests use [Kustomize](https://kubectl.docs.kubernetes.io/references/kustomize/), which is built into `kubectl`. Each `k8s/<workload>/` directory is a base with its own `kustomization.yaml`, and `k8s/overlays/<env>/` selects the bases for one environment: `prod` uses them as they are, and `dev` sets the `infra-advisor-dev` namespace, `env: dev` labels, one replica each, and dev-only config through patches in `k8s/overlays/dev/patches/`. `make deploy-k8s` applies `k8s/overlays/$(ENV)`, with `ENV` defaulting to `prod`.
+
+Apply a directory with `-k`, not `-f`: `kubectl apply -f k8s/agent-api/` now fails on the `kustomization.yaml` file because it isn't a Kubernetes object. CI applies a single changed service the same way, with `kubectl apply -k k8s/<service>`.
+
+Preview a change before you apply it:
+
+```bash
+kubectl kustomize k8s/overlays/prod      # render locally
+kubectl diff -k k8s/overlays/prod        # compare with the live cluster
+uv run --no-project --with pytest --with pyyaml --with httpx --with sqlalchemy pytest -q k8s/tests   # overlay contract tests (also run in CI)
+```
+
+A non-empty `kubectl diff` isn't necessarily a regression. CI pins each Deployment to a commit-SHA image, while the checked-in manifests say `:latest`, so image lines always differ.
 
 ## Application namespace
 

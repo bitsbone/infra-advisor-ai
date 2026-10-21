@@ -2,13 +2,32 @@
   "name": "InfraAdvisor — Consultant Query Flow",
   "type": "browser",
   "status": "live",
-  "message": "InfraAdvisor UI is not responding correctly to the Texas bridge query.\n\nSteps:\n1. Navigate to the UI\n2. Submit the Texas bridge query\n3. Assert response contains 'bridge' and a structure number\n\n@slack-infra-advisor-alerts",
-  "tags": ["team:infra-advisor", "env:dev"],
+  "message": "InfraAdvisor UI is not responding correctly to the Texas bridge query on {{ BASE_URL }}.\n\nSteps:\n1. Sign in as the shared synthetic-test service account\n2. Submit the Texas bridge query\n3. Assert response contains 'bridge' and a structure number\n\nOne definition serves prod and dev: scheduled runs use the BASE_URL global variable (prod); the deploy-dev workflow runs it against dev with --override startUrl=... --override variables.BASE_URL=...\n\n@slack-infra-advisor-alerts",
+  "tags": [
+    "team:infra-advisor",
+    "env:prod"
+  ],
   "config": {
-    "variables": [],
+    "variables": [
+      {
+        "type": "global",
+        "name": "BASE_URL",
+        "id": "<BASE_URL global variable id>"
+      },
+      {
+        "type": "global",
+        "name": "SYNTHETIC_USER_EMAIL",
+        "id": "<SYNTHETIC_USER_EMAIL global variable id>"
+      },
+      {
+        "type": "global",
+        "name": "SYNTHETIC_USER_PASSWORD",
+        "id": "<SYNTHETIC_USER_PASSWORD secure global variable id>"
+      }
+    ],
     "setCookie": "",
     "request": {
-      "url": "{{UI_BASE_URL}}",
+      "url": "{{ BASE_URL }}",
       "headers": {}
     }
   },
@@ -28,15 +47,69 @@
     "disableCsp": false,
     "enableProfiling": false,
     "enableSecurityTesting": false,
-    "device_ids": ["laptop_large"],
-    "locations": ["aws:us-east-1"]
+    "device_ids": [
+      "laptop_large"
+    ],
+    "locations": [
+      "aws:us-east-1"
+    ]
   },
   "steps": [
     {
       "name": "Navigate to InfraAdvisor UI",
       "type": "goToUrl",
       "params": {
-        "value": "{{UI_BASE_URL}}"
+        "value": "{{ BASE_URL }}"
+      }
+    },
+    {
+      "name": "Type the synthetic user's email",
+      "type": "typeText",
+      "params": {
+        "element": {
+          "userLocator": {
+            "values": [
+              {
+                "type": "css",
+                "value": "#email"
+              }
+            ]
+          }
+        },
+        "value": "{{ SYNTHETIC_USER_EMAIL }}"
+      }
+    },
+    {
+      "name": "Type the synthetic user's password",
+      "type": "typeText",
+      "params": {
+        "element": {
+          "userLocator": {
+            "values": [
+              {
+                "type": "css",
+                "value": "#password"
+              }
+            ]
+          }
+        },
+        "value": "{{ SYNTHETIC_USER_PASSWORD }}"
+      }
+    },
+    {
+      "name": "Sign in",
+      "type": "click",
+      "params": {
+        "element": {
+          "userLocator": {
+            "values": [
+              {
+                "type": "css",
+                "value": "button[type='submit']"
+              }
+            ]
+          }
+        }
       }
     },
     {

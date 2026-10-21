@@ -6,10 +6,14 @@ LABEL org.opencontainers.image.title="auth-api" \
 
 WORKDIR /app
 
-RUN pip install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-COPY pyproject.toml .
-RUN uv pip install --system --no-cache .
+# Install from the committed lockfile, like agent-api and mcp-server. The old
+# `uv pip install --system .` ignored uv.lock, so each build re-resolved: when
+# SQLAlchemy 2.1 made psycopg 3 the default postgresql:// driver, a fresh image
+# crashed on import with "No module named 'psycopg'".
+COPY pyproject.toml uv.lock ./
+RUN uv sync --no-dev --frozen
 
 COPY src/ ./src/
 
@@ -18,4 +22,4 @@ ENV PYTHONPATH=/app/src
 RUN groupadd --gid 1000 appuser && useradd --uid 1000 --gid 1000 --no-create-home --shell /bin/false appuser
 USER appuser
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]
+CMD ["/app/.venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]

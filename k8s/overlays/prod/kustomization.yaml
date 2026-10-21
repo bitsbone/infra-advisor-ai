@@ -1,0 +1,22 @@
+# Prod: the live `infra-advisor` namespace (plus the shared `kafka` and
+# `datadog` namespaces). The service directories under k8s/ are the base and
+# already describe prod, so this overlay only selects them; it sets no
+# `namespace:` because Kafka lives in its own namespace.
+#
+# Apply with `make deploy-k8s` (ENV defaults to prod) or
+# `kubectl apply -k k8s/overlays/prod`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../namespaces
+  - ../../kafka
+  - ../../redis
+  - ../../mailpit
+  - ../../postgres
+  - ../../mcp-server
+  - ../../mcp-server-dotnet
+  - ../../agent-api
+  - ../../agent-api-dotnet
+  - ../../auth-api
+  - ../../load-generator
+  - ../../ui

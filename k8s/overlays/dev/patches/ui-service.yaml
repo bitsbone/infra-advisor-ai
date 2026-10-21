@@ -1,0 +1,10 @@
+# The Azure DNS label is unique per region; prod owns infra-advisor-ai.
+# Dev is reached through Cloudflare (infra-advisor-ai-dev.bitsbone.com → this
+# Service's public IP), so it needs no label.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  namespace: infra-advisor
+  annotations:
+    service.beta.kubernetes.io/azure-dns-label-name: null

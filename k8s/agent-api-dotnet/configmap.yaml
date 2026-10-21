@@ -7,10 +7,11 @@ metadata:
     app: agent-api-dotnet
 data:
   # Unified service tagging — DD agent reads these for container metadata. They
-  # do not require the DD .NET tracer to be present; they're equivalent to (and
-  # redundant with) the OTEL_RESOURCE_ATTRIBUTES below, but DD's autodiscovery
-  # uses both paths.
-  DD_ENV: "dev"
+  # do not require the DD .NET tracer to be present. TelemetrySetup.cs also maps
+  # them onto the OTel resource (deployment.environment, service.version), so
+  # OTEL_RESOURCE_ATTRIBUTES below deliberately omits both. CI overrides
+  # DD_VERSION per deploy with the image's short SHA.
+  DD_ENV: "prod"
   DD_SERVICE: "infra-advisor-agent-api-dotnet"
   DD_VERSION: "latest"
   DD_SITE: "us3.datadoghq.com"
@@ -25,7 +26,9 @@ data:
   DD_APM_TRACING_ENABLED: "false"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://datadog-agent.datadog.svc.cluster.local:4318"
   OTEL_SERVICE_NAME: "infra-advisor-agent-api-dotnet"
-  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=latest,service.name=infra-advisor-agent-api-dotnet"
+  OTEL_RESOURCE_ATTRIBUTES: "service.name=infra-advisor-agent-api-dotnet"
+  # false in the dev overlay: dev must never join prod's consumer group.
+  KAFKA_ENABLED: "true"
   KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
   # Toggle: set to "true" to emit APM + LLMObs spans for Kafka eval-loop runs.
   # Default false because the eval load-generator runs continuously and floods
@@ -49,8 +52,8 @@ data:
   # text-embedding-3-small is the cheapest sensible default (1536 dims).
   AZURE_OPENAI_EMBEDDING_DEPLOYMENT: "text-embedding-3-small"
   AVAILABLE_MODELS: "gpt-5.4-mini,gpt-4.1-mini,gpt-4.1"
-  MCP_SERVER_URL: "http://mcp-server-dotnet.infra-advisor.svc.cluster.local:8000/mcp"
-  REDIS_HOST: "redis.infra-advisor.svc.cluster.local"
+  MCP_SERVER_URL: "http://mcp-server-dotnet:8000/mcp"
+  REDIS_HOST: "redis"
   REDIS_PORT: "6379"
   LOG_LEVEL: "Information"
   ASPNETCORE_ENVIRONMENT: "Production"

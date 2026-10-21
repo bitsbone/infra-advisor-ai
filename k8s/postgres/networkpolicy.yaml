@@ -1,7 +1,9 @@
 ---
 # Restrict ingress to postgres: only the three app services that need it
 # (agent-api, agent-api-dotnet, auth-api) plus the Datadog agent for DBM.
-# Any other pod in the cluster (including compromised workloads) is blocked.
+# Any other pod in the cluster (including compromised workloads) is blocked —
+# once the cluster has a policy engine. AKS currently runs networkPolicy: none,
+# so this is declarative intent, not enforcement.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -25,6 +27,10 @@ spec:
         - podSelector:
             matchLabels:
               app: auth-api
+        # Dev-only seed Job (k8s/overlays/dev/seed); matches nothing in prod.
+        - podSelector:
+            matchLabels:
+              app: seed-dev
       ports:
         - protocol: TCP
           port: 5432

@@ -1,4 +1,5 @@
 import { datadogRum } from "@datadog/browser-rum";
+import { appEnv, appVersion } from "./app-config";
 
 type PropagatorType = "datadog" | "b3" | "b3multi" | "tracecontext";
 
@@ -16,8 +17,8 @@ export function initDatadogRum(): void {
     clientToken: clientToken,
     site: (import.meta.env.VITE_DD_RUM_SITE as string) || "us3.datadoghq.com",
     service: "infra-advisor-ui",
-    env: (import.meta.env.VITE_DD_ENV as string) || "dev",
-    version: (import.meta.env.VITE_APP_VERSION as string) || "local",
+    env: appEnv(),
+    version: appVersion(),
     sessionSampleRate: 100,
     sessionReplaySampleRate: 100,
     trackBfcacheViews: true,

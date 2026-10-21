@@ -1,16 +1,32 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-redis-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm apply-datadog-agent otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector run-ios run-android run-prism-ios help
+.PHONY: deploy-infra deploy-k8s create-synthetic-user-secret seed-dev setup-dev-deploy-identity create-synthetic-user check-env create-ghcr-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-redis-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm apply-datadog-agent otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector run-ios run-android run-prism-ios help
 
 # Load .env for normal local operation. Set SKIP_DOTENV=1 for documentation,
 # static analysis, and dry runs so Make never expands local credentials.
+# ENV selects the Kustomize overlay (k8s/overlays/$(ENV)) and the namespace:
+# prod → infra-advisor, dev → infra-advisor-dev. With ENV=dev, .env.dev (also
+# git-ignored) is loaded after .env and overrides the values dev must not share
+# with prod: JWT_SECRET, POSTGRES_PASSWORD, DATABASE_URL, REDIS_PASSWORD,
+# MAILPIT_UI_PASSWORD, BOOTSTRAP_ADMIN_*, AZURE_SEARCH_API_KEY (a query key),
+# and SYNTHETIC_USER_*. See docs: deployment/environments.
+ENV ?= prod
+
 ifneq ($(SKIP_DOTENV),1)
 -include .env
+ifeq ($(ENV),dev)
+-include .env.dev
+endif
 export
 endif
 
 RESOURCE_GROUP ?= rg-tola-infra-advisor-ai
 AKS_NAME ?= aks-infra-advisor-dev
 LOCATION ?= eastus
+ifeq ($(ENV),prod)
 NAMESPACE ?= infra-advisor
+else
+# Forced, so a NAMESPACE from .env can never send dev secrets or manifests to prod.
+override NAMESPACE := infra-advisor-$(ENV)
+endif
 GHCR_PAT ?=
 GHCR_USERNAME ?=
 GITHUB_EMAIL ?=
@@ -278,17 +294,27 @@ create-mailpit-secret: ## Create mailpit-secret with bcrypt-hashed MP_UI_AUTH fo
 	@# `htpasswd -nbB` emits user:$2y$10$... — Mailpit's MP_UI_AUTH accepts the
 	@# same bcrypt prefix variants ($2a / $2b / $2y), so no rewriting needed.
 	@AUTH="$$(htpasswd -nbB -C 10 "$(MAILPIT_UI_USERNAME)" "$(MAILPIT_UI_PASSWORD)")"; \
-	@kubectl create secret generic mailpit-secret \
+	kubectl create secret generic mailpit-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=MP_UI_AUTH="$$AUTH" \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ mailpit-secret created (user: $(MAILPIT_UI_USERNAME))"
 
+create-synthetic-user-secret: ## Create synthetic-user-secret (SYNTHETIC_USER_EMAIL/PASSWORD) used by the dev seed job; Datadog Synthetics uses the same values
+	@if [ -z "$(SYNTHETIC_USER_EMAIL)" ]; then echo "ERROR: SYNTHETIC_USER_EMAIL is not set"; exit 1; fi
+	@if [ -z "$(SYNTHETIC_USER_PASSWORD)" ]; then echo "ERROR: SYNTHETIC_USER_PASSWORD is not set — generate with: openssl rand -base64 24"; exit 1; fi
+	@kubectl create secret generic synthetic-user-secret \
+		--namespace $(NAMESPACE) \
+		--from-literal=SYNTHETIC_USER_EMAIL="$(SYNTHETIC_USER_EMAIL)" \
+		--from-literal=SYNTHETIC_USER_PASSWORD="$(SYNTHETIC_USER_PASSWORD)" \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ synthetic-user-secret created in namespace $(NAMESPACE)"
+
 create-secrets: create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-redis-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret ## Create all application K8s secrets
 
 redeploy-mailpit: ## Apply the Mailpit manifest, evict stuck pods from older ReplicaSets, wait for rollout, verify probe + endpoint
-	@echo "→ Applying k8s/mailpit/deployment.yaml + service.yaml + configmap.yaml..."
-	kubectl apply -f k8s/mailpit/
+	@echo "→ Applying k8s/mailpit/..."
+	kubectl apply -k k8s/mailpit
 	@echo "→ Force-deleting any pods from older ReplicaSets so the new RS can roll fresh..."
 	@# --force --grace-period=0 because stuck CrashLoopBackOff pods otherwise
 	@# block the rollout when terminationGracePeriodSeconds is the default 30s
@@ -337,54 +363,61 @@ create-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in infra-advisor names
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ ghcr-pull-secret created in namespace $(NAMESPACE)"
 
-deploy-k8s: check-env ## Apply all Kubernetes manifests
+deploy-k8s: check-env ## Apply the Kustomize overlay for ENV (default prod; ENV=dev for infra-advisor-dev)
+ifeq ($(ENV),prod)
 	@echo "→ Applying namespaces..."
-	kubectl apply -f k8s/namespace.yaml
+	kubectl apply -k k8s/namespaces
 
 	@echo "→ Installing Strimzi CRDs..."
 	kubectl apply -f https://strimzi.io/install/latest?namespace=kafka || true
 	@echo "  Waiting for Strimzi CRDs to be established..."
 	kubectl wait --for=condition=established crd/kafkas.kafka.strimzi.io --timeout=90s
 	kubectl wait --for=condition=established crd/kafkatopics.kafka.strimzi.io --timeout=30s
+else
+	@# Without .env.dev, prod's JWT_SECRET/DATABASE_URL/passwords would be copied into dev.
+	@test -f .env.$(ENV) || { echo "ERROR: .env.$(ENV) not found — create it with the dev-only overrides listed at the top of this Makefile"; exit 1; }
+	@echo "→ Applying namespace $(NAMESPACE) (no Kafka, load generator or CronJobs in $(ENV))..."
+	kubectl apply -f k8s/overlays/$(ENV)/namespace.yaml
+endif
 
 	@echo "→ Skipping k8s/datadog/ — Datadog deployed via Operator (datadog/datadog-agent.yaml)"
 
-	@echo "→ Deploying Kafka (Strimzi)..."
-	kubectl apply -f k8s/kafka/
-
-	@echo "→ Deploying Redis..."
-	kubectl apply -f k8s/redis/
-
-	@echo "→ Deploying Mailpit (SMTP capture for dev)..."
-	$(MAKE) create-mailpit-secret
-	kubectl apply -f k8s/mailpit/
-
-	@echo "→ Creating GHCR pull secret..."
+	@echo "→ Creating GHCR pull secret and application secrets in $(NAMESPACE)..."
 	$(MAKE) create-ghcr-secret
-
-	@echo "→ Creating application secrets..."
+	$(MAKE) create-mailpit-secret
 	$(MAKE) create-mcp-server-secret
 	$(MAKE) create-mcp-server-dotnet-secret
 	$(MAKE) create-agent-api-secret
 	$(MAKE) create-agent-api-dotnet-secret
-	$(MAKE) create-load-generator-secret
 	$(MAKE) create-postgres-secret
 	$(MAKE) create-auth-api-secret
+ifeq ($(ENV),prod)
+	$(MAKE) create-load-generator-secret
 	$(MAKE) create-dd-postgres-secret
+else
+	$(MAKE) create-redis-secret
+	$(MAKE) create-synthetic-user-secret
+endif
 
-	@echo "→ Deploying Postgres..."
-	kubectl apply -f k8s/postgres/
+	@echo "→ Applying k8s/overlays/$(ENV)..."
+	kubectl apply -k k8s/overlays/$(ENV)
 
-	@echo "→ Deploying application services..."
-	kubectl apply -f k8s/mcp-server/
-	kubectl apply -f k8s/mcp-server-dotnet/
-	kubectl apply -f k8s/agent-api/
-	kubectl apply -f k8s/agent-api-dotnet/
-	kubectl apply -f k8s/auth-api/
-	kubectl apply -f k8s/load-generator/
-	kubectl apply -f k8s/ui/
+	@echo "✓ All Kubernetes resources applied to $(NAMESPACE)"
 
-	@echo "✓ All Kubernetes resources applied"
+setup-dev-deploy-identity: ## One-time, run by a human: Entra app + namespace-scoped AKS roles + GitHub "dev" environment for the deploy-dev job
+	bash infra/scripts/setup-dev-deploy-identity.sh
+
+create-synthetic-user: ## Create/update only the shared synthetic-test account in ENV (prod or dev) via a port-forward; ADMIN_EMAIL=<an admin> prompts for its password (default: BOOTSTRAP_ADMIN_*)
+	@if [ -z "$(SYNTHETIC_USER_EMAIL)" ] || [ -z "$(SYNTHETIC_USER_PASSWORD)" ]; then echo "ERROR: SYNTHETIC_USER_EMAIL/PASSWORD not set"; exit 1; fi
+	@if [ -z "$(ADMIN_EMAIL)" ] && [ -z "$(BOOTSTRAP_ADMIN_EMAIL)" ]; then echo "ERROR: set ADMIN_EMAIL to an admin account in $(NAMESPACE)"; exit 1; fi
+	@kubectl port-forward -n $(NAMESPACE) svc/auth-api 18002:8002 >/dev/null 2>&1 & pf=$$!; trap "kill $$pf" EXIT; sleep 3; \
+	AUTH_API_URL=http://localhost:18002 SEED_SYNTHETIC_ONLY=1 uv run --no-project --with httpx --with sqlalchemy python k8s/overlays/dev/seed/seed_dev.py
+
+seed-dev: ## Seed infra-advisor-dev with the synthetic user, demo users and sample conversations (idempotent)
+	kubectl delete job seed-dev -n infra-advisor-dev --ignore-not-found
+	kubectl apply -k k8s/overlays/dev/seed
+	kubectl wait --for=condition=complete job/seed-dev -n infra-advisor-dev --timeout=5m
+	kubectl logs -n infra-advisor-dev job/seed-dev
 
 rollout-status: ## Check rollout status for all infra-advisor deployments
 	kubectl rollout status deploy/mcp-server -n $(NAMESPACE) --timeout=5m &
@@ -437,8 +470,8 @@ docker-push-all: ## Push all images to GHCR
 # ─── Verification ─────────────────────────────────────────────────────────────
 
 check-pods: ## Check pod status across all namespaces
-	@echo "=== infra-advisor ==="
-	kubectl get pods -n infra-advisor
+	@echo "=== $(NAMESPACE) ==="
+	kubectl get pods -n $(NAMESPACE)
 	@echo ""
 	@echo "=== kafka ==="
 	kubectl get pods -n kafka

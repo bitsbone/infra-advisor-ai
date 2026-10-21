@@ -11,8 +11,8 @@ spec:
       apiSecret:
         secretName: "datadog-secret"
         keyName: "api-key"
-    tags:
-      - "env:dev"
+    # No global env tag: prod (infra-advisor) and dev (infra-advisor-dev) share
+    # this cluster, so env comes from each pod's tags.datadoghq.com/env label.
   features:
     # Workload manifests opt in explicitly. This supplies Agent connectivity
     # and the .NET security profiler without mutating unrelated workloads.
@@ -117,9 +117,12 @@ spec:
         enabled: true
         targets:
           - name: "infra-advisor-dotnet-security-target"
+            # Prod and dev get the same AAP/profiler injection.
             namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: infra-advisor
+              matchExpressions:
+                - key: kubernetes.io/metadata.name
+                  operator: In
+                  values: ["infra-advisor", "infra-advisor-dev"]
             podSelector:
               matchLabels:
                 app: agent-api-dotnet
