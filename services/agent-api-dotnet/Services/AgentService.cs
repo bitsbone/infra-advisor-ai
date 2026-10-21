@@ -436,6 +436,16 @@ public class AgentService
     //     already streamed to the client can't be cleanly rewound).
     //     The retry path lives in RunAgentAsync; clients can fall back
     //     to /query if the streaming path fails.
+    //
+    // This public method only owns the "query-processing" workflow root span
+    // (the span DD LLM Observability's trace list renders input/output for,
+    // mirroring Python's LLMObs.workflow) and the ambient request context;
+    // the pipeline itself is RunAgentStreamingCoreAsync. An async iterator's
+    // ExecutionContext resets to the consumer's on every MoveNextAsync, so
+    // Activity.Current and AsyncLocal values set inside one are gone after
+    // its first yield — router/specialist/tool spans would lose their
+    // workflow parent and gen_ai.conversation.id. Restoring the context
+    // captured here before each step keeps both for the whole run.
     public async IAsyncEnumerable<StreamEvent> RunAgentStreamingAsync(
         string query,
         string sessionId,
@@ -451,6 +461,52 @@ public class AgentService
         AmbientSessionContext.Set(rumSessionId ?? sessionId);
         AmbientTargetingContext.Set(userId, jobRole);
 
+        using var workflowActivity = ActivitySource.StartActivity("query-processing", ActivityKind.Internal);
+        workflowActivity?.SetTag("gen_ai.operation.name", "query-processing");
+        workflowActivity?.SetTag("dd.llmobs.span.kind", "workflow");
+        workflowActivity?.SetTag("input.value", query);
+        var requestContext = ExecutionContext.Capture()!;
+
+        var answer = new System.Text.StringBuilder();
+        var events = RunAgentStreamingCoreAsync(query, sessionId, deployment, attachments, userId, jobRole, ct)
+            .GetAsyncEnumerator(ct);
+        try
+        {
+            while (true)
+            {
+                ExecutionContext.Restore(requestContext);
+                if (!await events.MoveNextAsync()) break;
+                switch (events.Current)
+                {
+                    case TextChunkEvent t:
+                        answer.Append(t.Chunk);
+                        break;
+                    case ErrorEvent err:
+                        workflowActivity?.SetStatus(ActivityStatusCode.Error, err.Category);
+                        workflowActivity?.SetTag("output.value", err.Message);
+                        break;
+                    case DoneEvent:
+                        workflowActivity?.SetTag("output.value", answer.ToString());
+                        break;
+                }
+                yield return events.Current;
+            }
+        }
+        finally
+        {
+            await events.DisposeAsync();
+        }
+    }
+
+    private async IAsyncEnumerable<StreamEvent> RunAgentStreamingCoreAsync(
+        string query,
+        string sessionId,
+        string deployment,
+        List<AttachmentDto>? attachments,
+        string? userId,
+        string? jobRole,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
         _logger.LogDebug(
             "[stream] starting; ct already cancelled: {AlreadyCancelled}",
             ct.IsCancellationRequested);

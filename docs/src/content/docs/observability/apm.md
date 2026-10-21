@@ -24,7 +24,7 @@ APM records the application work surrounding an agent run: HTTP requests, Redis 
 
 Do not infer coverage from a package reference. Verify that the instrumentation is registered, the operation executes, export succeeds, and the span is classified as expected.
 
-The .NET AI path sets `EnableSensitiveData=false`. Model and agent spans should retain timing and bounded metadata without prompt, response, or attachment content.
+The .NET AI path sets `EnableSensitiveData=true` for this demo environment, which relies on Sensitive Data Scanner to redact at intake. Model and agent spans carry prompt and response content alongside timing and metadata. See [.NET instrumentation](../../llm-engineering/instrumentation/dotnet/).
 
 ## Correlate structured logs
 

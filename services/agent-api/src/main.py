@@ -12,6 +12,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
+from ddtrace.llmobs import LLMObs
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage
@@ -87,8 +88,13 @@ async def lifespan(app: FastAPI):
     # Build MCP client
     try:
         _mcp_client = build_mcp_client()
-        # Probe connectivity by listing tools
-        await _mcp_client.get_tools()
+        # Probe connectivity by listing tools. Each MCP client session is an
+        # LLMObs workflow (ddtrace MCP integration) whose input is just the
+        # session's stream objects — parenting it gives the trace list a
+        # readable root instead.
+        with LLMObs.workflow("mcp-startup-probe") as probe_span:
+            probe_tools = await _mcp_client.get_tools()
+            LLMObs.annotate(span=probe_span, output_data=[t.name for t in probe_tools])
         _mcp_connected = True
         logger.info("MCP client connected")
     except Exception as exc:
@@ -868,7 +874,10 @@ async def list_tools(_user: dict = Depends(require_auth)) -> list[dict]:
     """List all available MCP tools with their name, description, and parameter schema."""
     if not _mcp_client:
         raise HTTPException(status_code=503, detail="MCP client not available")
-    tools = await _mcp_client.get_tools()
+    # See the startup probe for why the MCP session gets an explicit parent.
+    with LLMObs.workflow("list-mcp-tools") as list_span:
+        tools = await _mcp_client.get_tools()
+        LLMObs.annotate(span=list_span, output_data=[t.name for t in tools])
     result = []
     for t in tools:
         schema: dict = {}
@@ -893,25 +902,29 @@ async def invoke_tool(
     """Directly invoke an MCP tool by name with the given parameters."""
     if not _mcp_client:
         raise HTTPException(status_code=503, detail="MCP client not available")
-    tools = await _mcp_client.get_tools()
-    tool = next((t for t in tools if t.name == tool_name), None)
-    if not tool:
-        raise HTTPException(
-            status_code=404, detail=f"Tool '{tool_name}' not found")
+    # See the startup probe for why the MCP session gets an explicit parent.
+    with LLMObs.workflow("sandbox-tool-call") as tool_span:
+        LLMObs.annotate(span=tool_span, input_data=params, tags={"tool.name": tool_name})
+        tools = await _mcp_client.get_tools()
+        tool = next((t for t in tools if t.name == tool_name), None)
+        if not tool:
+            raise HTTPException(
+                status_code=404, detail=f"Tool '{tool_name}' not found")
 
-    start = time.monotonic()
-    try:
-        result = await tool.ainvoke(params)
-    except Exception as exc:
-        logger.warning("direct tool invocation failed error_type=%s", type(exc).__name__)
-        return {
-            "tool_name": tool_name,
-            "error": "Tool invocation failed",
-            "error_type": type(exc).__name__,
-            "duration_ms": round((time.monotonic() - start) * 1000, 2),
-            "trace_id": current_trace_id(),
-            "span_id": current_span_id(),
-        }
+        start = time.monotonic()
+        try:
+            result = await tool.ainvoke(params)
+        except Exception as exc:
+            logger.warning("direct tool invocation failed error_type=%s", type(exc).__name__)
+            return {
+                "tool_name": tool_name,
+                "error": "Tool invocation failed",
+                "error_type": type(exc).__name__,
+                "duration_ms": round((time.monotonic() - start) * 1000, 2),
+                "trace_id": current_trace_id(),
+                "span_id": current_span_id(),
+            }
+        LLMObs.annotate(span=tool_span, output_data=result)
 
     return {
         "tool_name": tool_name,

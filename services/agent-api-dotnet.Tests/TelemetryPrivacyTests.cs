@@ -37,12 +37,6 @@ public sealed class TelemetryPrivacyTests
     }
 
     [Fact]
-    public void FrameworkGenAiTelemetryFailsClosedForSensitiveContent()
-    {
-        Assert.False(TelemetryPrivacy.EnableSensitiveData);
-    }
-
-    [Fact]
     public void FeedbackTelemetryExcludesClientSessionId()
     {
         var tags = TelemetryPrivacy.SafeFeedbackTags("123", "456", "positive", SentinelSession);
