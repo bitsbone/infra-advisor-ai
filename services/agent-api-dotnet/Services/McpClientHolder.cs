@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Microsoft.Extensions.AI;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 
 namespace InfraAdvisor.AgentApi.Services;
@@ -9,17 +11,18 @@ namespace InfraAdvisor.AgentApi.Services;
 // Why this exists: ModelContextProtocol.AspNetCore 1.3.0's HTTP transport
 // is session-stateful. The server-side session is invalidated whenever
 // mcp-server-dotnet restarts (rollout, OOM, AKS rebalance, image pull).
-// After that, every tool call on the cached McpClient returns HTTP 404
-// with "session expired" and the agent answer degrades.
+// After that, calls can fail with an expired session or an unexpected
+// cancellation from the closed transport, even with a live caller token.
 //
 // Previously this required manually `kubectl rollout restart deployment/
 // agent-api-dotnet` every time mcp-server rolled. With this holder we
-// catch the expired-session error at call time, dispose + recreate the
-// client + tool list, and let the caller retry once transparently.
+// recover inside tool invocation, before FunctionInvokingChatClient turns
+// exceptions into tool results, and retry once using the refreshed tools.
 //
 // Thread-safety: GetClientAsync / GetToolsAsync use a Lazy-style
-// double-check. RefreshAsync serializes through a SemaphoreSlim so
-// concurrent in-flight tool calls coalesce into one reconnect.
+// double-check. RefreshAsync serializes through a SemaphoreSlim. Tool
+// recovery checks the failed tool's identity under that lock so concurrent
+// failures from one client coalesce into one reconnect.
 public class McpClientHolder : IAsyncDisposable
 {
     private readonly string _serverUrl;
@@ -66,6 +69,72 @@ public class McpClientHolder : IAsyncDisposable
         return _tools;
     }
 
+    public async ValueTask<object?> InvokeToolAsync(
+        AIFunction function, AIFunctionArguments arguments, CancellationToken ct)
+    {
+        // Handoff/local functions also pass through FunctionInvoker. Only
+        // MCP tools belong to this holder's session and recovery policy.
+        if (function is not McpClientTool)
+            return await function.InvokeAsync(arguments, ct);
+
+        ct.ThrowIfCancellationRequested();
+        // An in-flight workflow can retain tools from a superseded client.
+        // Always resolve by name so subsequent calls use the current session.
+        var tool = await GetCurrentToolAsync(function.Name, ct);
+        try
+        {
+            return await tool.InvokeAsync(arguments, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested && IsTransportFailure(ex))
+        {
+            _logger.LogWarning(ex,
+                "[mcp] tool {ToolName} failed with a transport/session error; refreshing and retrying once (gen {Generation})",
+                function.Name, Generation);
+            Activity.Current?.SetTag("tool.mcp_retried", true);
+
+            await RefreshAsync(tool, ct);
+            var retryTool = await GetCurrentToolAsync(function.Name, ct);
+            ct.ThrowIfCancellationRequested();
+            Activity.Current?.SetTag("tool.mcp_retry_generation", Generation);
+            // Outside the original try: a second failure must escape rather
+            // than reconnecting or replaying this tool indefinitely.
+            return await retryTool.InvokeAsync(arguments, ct);
+        }
+    }
+
+    private async Task<McpClientTool> GetCurrentToolAsync(string name, CancellationToken ct)
+    {
+        var tools = await GetToolsAsync(ct);
+        return tools.OfType<McpClientTool>().FirstOrDefault(t => t.Name == name)
+            ?? throw new InvalidOperationException($"MCP tool '{name}' is no longer available in the current session.");
+    }
+
+    private static bool IsTransportFailure(Exception ex)
+    {
+        if (IsSessionExpired(ex)) return true;
+        for (Exception? e = ex; e is not null; e = e.InnerException)
+        {
+            // Includes TaskCanceledException. HttpClient timeouts can also
+            // take this path, so recovery is bounded to one attempt.
+            if (e is OperationCanceledException) return true;
+        }
+        return false;
+    }
+
+    internal static bool IsSessionExpired(Exception ex)
+    {
+        for (Exception? e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is ClientTransportClosedException) return true;
+            if (e is McpException && e.Message.Contains("session", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (e is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound } &&
+                e.Message.Contains("/mcp", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
     // How long to keep a superseded McpClient alive after a refresh before
     // disposing it, so an unrelated request's already-in-flight tool call
     // (bound to the old client, captured before the refresh happened) has
@@ -76,13 +145,17 @@ public class McpClientHolder : IAsyncDisposable
 
     // Force a reconnect — connects a fresh client (old one is disposed later,
     // see ConnectNoLockAsync) and re-runs the init handshake. Safe to call
-    // from inside an exception handler; concurrent callers will see the same
-    // new client after one round trip thanks to the connect lock.
-    public async Task RefreshAsync(CancellationToken ct)
+    // from inside an exception handler. Tool recovery supplies the failed
+    // tool so another caller's successful refresh can satisfy this one.
+    public Task RefreshAsync(CancellationToken ct) => RefreshAsync(null, ct);
+
+    private async Task RefreshAsync(McpClientTool? failedTool, CancellationToken ct)
     {
         await _connectLock.WaitAsync(ct);
         try
         {
+            if (failedTool is not null && !_tools.Any(t => ReferenceEquals(t, failedTool)))
+                return;
             await ConnectNoLockAsync(ct);
         }
         finally
