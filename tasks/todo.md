@@ -227,3 +227,13 @@ Each phase is its own PR, merged in order. Phases 1–3 are safe for prod: a zer
 **Dev deploy (2026-10-13):** `deploy:dev` run 38440094439 on PR #11 succeeded at `f048423`. Six app services at 1/1 with `env:dev` and `version:f048423` labels; `/env-config.js` returns `{"env":"dev"}` with `X-Robots-Tag: noindex, nofollow`; seed job created the synthetic user, five demo users and their conversations; dev agents log `Kafka disabled` and the consumer group holds only prod pods; APM shows `kube_namespace:infra-advisor-dev` spans as `env:dev version:f048423`. Three fixes were needed first: base images through `mirror.gcr.io` (Docker Hub 504/429), and lockfile installs for the UI (`npm ci` — driver.js 1.9.0 rejects `side: "over"`) and auth-api (`uv sync --frozen` — SQLAlchemy 2.1 defaults `postgresql://` to psycopg 3). `services/load-generator/Dockerfile` still installs without its lockfile.
 
 **Remaining (needs you):** merge PRs #6–#11 in order, then verify prod reports `env:prod version:<sha>`; after #7 merges, the Datadog items in Phase 2 (Product Analytics `$env` default, `prod` Feature Flag environments, SDS check); copy `SYNTHETIC_USER_*` from `.env.dev` into `.env`, run `ADMIN_EMAIL=<prod admin> make create-synthetic-user ENV=prod`, create the Synthetics global variables and set `SYNTHETICS_CONSULTANT_FLOW_ID`; eyeball the dev banner at https://infra-advisor-ai-dev.bitsbone.com.
+
+# MCP tool transport recovery (2026-10-22)
+
+- [x] Recover unexpected MCP cancellation and expired/closed sessions inside tool invocation, before the framework handles tool errors.
+- [x] Resolve tools from the current client, coalesce concurrent refreshes, and retry each failed call at most once while honoring caller cancellation.
+- [x] Add regression coverage for recovery, cancellation, concurrent failures, stale tools, and exhausted retries; update the service reference and run available checks.
+
+## Review
+
+Added 15 regression cases using the real MCP SDK over an in-memory HTTP handler, without external service dependencies. Static review found no material issue. Roslyn syntax checks passed for the four changed C# files. Runtime validation remains blocked: this sandbox only has SDK 8.0.412, and the .NET 10 build fails with NETSDK1045; pulling the repository's SDK image from mcr.microsoft.com returned HTTP 502. The docs content check reports one pre-existing error in deployment/tag-governance.md (experimental maturity without verifiedOn). No production restart or rollout verification was performed.

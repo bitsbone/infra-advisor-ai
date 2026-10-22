@@ -5,8 +5,6 @@ using Azure.AI.OpenAI;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
-using ModelContextProtocol;
-using ModelContextProtocol.Client;
 using InfraAdvisor.AgentApi.Models;
 using InfraAdvisor.AgentApi.Observability;
 using InfraAdvisor.AgentApi.Services.Evaluators;
@@ -234,31 +232,6 @@ public class AgentService
             _ => Task.CompletedTask,
         };
 
-    // Detect an MCP session-expired condition anywhere in the exception
-    // chain. mcp-server-dotnet returns HTTP 404 with "session has expired"
-    // when the Mcp-Session-Id the client holds no longer maps to a live
-    // session on the (post-restart) server. The .NET MCP client surfaces
-    // this as ClientTransportClosedException whose message includes the
-    // hint phrase. We also accept any McpException whose message names a
-    // session issue, in case the SDK wraps differently in future versions.
-    private static bool IsMcpSessionExpired(Exception ex)
-    {
-        for (var e = ex; e is not null; e = e.InnerException!)
-        {
-            if (e is ClientTransportClosedException) return true;
-            if (e is McpException && e.Message.Contains("session", StringComparison.OrdinalIgnoreCase))
-                return true;
-            // Bare HTTP 404 on the MCP transport — older SDK paths surfaced
-            // it without wrapping in ClientTransportClosedException.
-            if (e is HttpRequestException hex &&
-                (int?)hex.StatusCode == 404 &&
-                e.Message.Contains("/mcp", StringComparison.OrdinalIgnoreCase))
-                return true;
-            if (e.InnerException is null) break;
-        }
-        return false;
-    }
-
     // Turns a mid-stream exception into a clear, user-actionable message +
     // machine-readable category for the terminal ErrorEvent. Never surfaces
     // raw .NET/HTTP exception text to the user — the full exception is still
@@ -266,7 +239,7 @@ public class AgentService
     private static (string Message, string Category) ClassifyStreamError(
         Exception ex, bool sessionRetryAttempted)
     {
-        if (IsMcpSessionExpired(ex))
+        if (McpClientHolder.IsSessionExpired(ex))
         {
             return sessionRetryAttempted
                 ? ("The infrastructure data service restarted and reconnecting failed. Please retry your question.", "mcp_session_expired")
@@ -615,7 +588,7 @@ public class AgentService
             // a C# constraint, so we step manually here.
             bool moved;
             try { moved = await enumerator.MoveNextAsync(); }
-            catch (Exception ex) when (IsMcpSessionExpired(ex) && !anyStreamed && !retriedMcpSession)
+            catch (Exception ex) when (McpClientHolder.IsSessionExpired(ex) && !anyStreamed && !retriedMcpSession)
             {
                 // mcp-server-dotnet was restarted before any tool call/text
                 // reached the client — safe to reconnect and restart the

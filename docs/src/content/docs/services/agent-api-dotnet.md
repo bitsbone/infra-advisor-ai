@@ -45,7 +45,9 @@ New conversations default to `gpt-5.4-mini`. `AVAILABLE_MODELS` controls the ord
 
 `ConversationService` verifies JWT ownership before a conversation influences agent state, then repeats the owner predicate during writes. Redis stores conversation history as a plain `List<ChatMessage>` (`AgentSessionStore`) under an opaque tenant/session hash — text-only, matching Python's own history reconstruction exactly (no tool-call replay). This replaced MAF's per-agent `AgentSession` serialization once the router+specialist redesign meant no single agent could represent "the conversation" anymore, and a `HandoffWorkflowBuilder` workflow has no cross-request persistence surface of its own.
 
-`McpClientHolder` caches the .NET MCP session. If a session-expired failure occurs before unsafe response progress, the service serializes a refresh and retries once. `AgentHolder` (one instance per specialist, held by `SpecialistRegistry`) rebuilds its agent when the tool-list or prompt generation changes, and additionally supports a per-request, per-user-targeted rebuild (`GetAgentForRequestAsync`) for [Feature Flag-targeted prompt versions](/infra-advisor-ai/llm-engineering/monitoring/prompt-targeting/). Python does not need the same holder because its adapter creates a fresh client lifecycle per request.
+`McpClientHolder` caches the .NET MCP session. The agent's tool invoker resolves MCP tools from the current client on every call. If a tool throws an unexpected cancellation while its caller's token is still active, or reports a closed/expired session, the holder reconnects and retries that tool once with the original arguments and caller token. Concurrent failures from the same client share a refresh. Caller cancellation and ordinary tool errors do not trigger recovery, and a second failure returns to the framework's normal tool-error handling. This lets tool calls recover after an MCP server restart without restarting the Agent API pod or replaying an entire answer. The streaming service also retains its session-expired recovery before response progress for failures outside tool invocation.
+
+`AgentHolder` (one instance per specialist, held by `SpecialistRegistry`) rebuilds its agent when the tool-list or prompt generation changes, and additionally supports a per-request, per-user-targeted rebuild (`GetAgentForRequestAsync`) for [Feature Flag-targeted prompt versions](/infra-advisor-ai/llm-engineering/monitoring/prompt-targeting/). Python does not need the same holder because its adapter creates a fresh client lifecycle per request.
 
 ## Evaluation pipeline
 
@@ -68,5 +70,7 @@ The Datadog Admission Controller injects a pinned .NET profiler for App and API 
 ## Verify a change
 
 Run the .NET Agent API test project in Release configuration. Use a disposable PostgreSQL database for ownership, message, and JSONB artifact changes. Exercise streaming and non-streaming paths, MCP restart recovery, status endpoints, evaluator joins, and privacy sentinels.
+
+`McpClientHolderTests` exercises the MCP SDK against an in-memory HTTP handler, including unexpected cancellation, concurrent recovery, stale workflow tools, and caller cancellation. In a disposable environment, restart the MCP server after the Agent API has connected, then ask a question that requires an MCP tool. Check for a successful tool result and, if the old transport fails, a `[mcp]` refresh log followed by a higher connection generation; the tool span tags `tool.mcp_retried` and `tool.mcp_retry_generation` identify the retry.
 
 See [.NET and Python parity](/infra-advisor-ai/development/dotnet-python-parity/) for the current gap list.

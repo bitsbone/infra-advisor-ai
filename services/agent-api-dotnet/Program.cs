@@ -194,15 +194,10 @@ builder.Services.AddSingleton<IChatClient>(sp =>
         .AsBuilder()
         .UseFunctionInvocation(configure: fic =>
         {
-            // Diagnostic wrapper around every MCP tool call — investigating a
-            // recurring near-instant TaskCanceledException on execute_tool
-            // (Datadog Error Tracking issue 1d5322a6-5065-11f1-91de-da7ad0900003),
-            // seen specifically from MAUI clients. The bare framework exception
-            // carries no app context, so this tags the SAME execute_tool
-            // Activity the framework already creates (Activity.Current here is
-            // that exact span — FunctionInvokingChatClient starts it before
-            // invoking this delegate) and logs a structured line distinct from
-            // the generic HTTP request logs.
+            // Recover MCP transport failures here, before the framework
+            // converts exceptions into tool results. Keep diagnostics on the
+            // execute_tool Activity that FunctionInvokingChatClient starts
+            // before invoking this delegate.
             fic.FunctionInvoker = async (context, ct) =>
             {
                 var toolName = context.Function.Name;
@@ -215,7 +210,7 @@ builder.Services.AddSingleton<IChatClient>(sp =>
 
                 try
                 {
-                    var result = await context.Function.InvokeAsync(context.Arguments, ct);
+                    var result = await mcpClientHolder.InvokeToolAsync(context.Function, context.Arguments, ct);
                     Activity.Current?.SetTag("tool.elapsed_ms", sw.Elapsed.TotalMilliseconds);
                     return result;
                 }
