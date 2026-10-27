@@ -83,6 +83,9 @@ public static class TelemetrySetup
                 // DD bridge's sampling decision on the HTTP parent.
                 .SetSampler(new AlwaysOnSampler())
 
+                // Execution-graph span links; must precede the exporter so
+                // its OnEnd adds them before the span is exported.
+                .AddProcessor(new ExecutionGraphLinks())
                 .AddOtlpExporter(otlp =>
                 {
                     otlp.Endpoint = new Uri($"{otlpEndpoint.TrimEnd('/')}/v1/traces");
