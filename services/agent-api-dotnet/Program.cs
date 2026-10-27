@@ -434,7 +434,7 @@ using (var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
 }
 
 // ── Prompt-version/tracking + agent-span capture ────────────────────────
-// One ActivityListener does four jobs:
+// One ActivityListener does three jobs:
 //   1. Stamps a content-derived prompt version on chat + invoke_agent spans
 //      without exporting the prompt template itself.
 //   2. Stamps DD LLM Observability's prompt-tracking attribute (the
@@ -445,9 +445,6 @@ using (var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
 //      AsyncLocal so AgentService can attach external-eval scores to the
 //      AGENT span (not the HTTP root) — DD requires both IDs on the
 //      eval-metric API's join_on.span field.
-//   4. Links each pipeline step to the one whose output it consumes, so the
-//      execution graph draws query-processing as a flow (see
-//      ExecutionGraphLinks).
 static string ShortContentHash(string text)
 {
     var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(text));
@@ -505,7 +502,6 @@ ActivitySource.AddActivityListener(new ActivityListener
         }
         if (activity.OperationName == "invoke_agent")
             AgentSpanContext.Capture(activity);
-        ExecutionGraphLinks.OnStarted(activity);
 
         // DD LLM Observability session/conversation grouping (OTel path)
         // requires gen_ai.conversation.id on every gen_ai span in the trace,

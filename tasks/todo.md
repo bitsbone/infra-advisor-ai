@@ -243,11 +243,12 @@ Added 15 regression cases using the real MCP SDK over an in-memory HTTP handler,
 The execution graph rendered `query-processing`'s steps as unconnected boxes in both agents. The graph draws edges between sibling spans only from span links with `from`/`to` attributes; our manual spans had none (ddtrace's LangGraph integration links only its own nodes). The `workflow` root kind is correct: the pipeline is a fixed sequence.
 
 - [x] Python: `link_from()` in `observability/llm_obs.py` wraps ddtrace's private `LLMObs.annotate(_linked_spans=...)`; link router + load-history → specialist and specialist → extract-sources in `run_agent` and `run_agent_stream`.
-- [x] .NET: `Observability/ExecutionGraphLinks.cs`, called from the Program.cs ActivityListener, chains `transcribe_audio → retrieve_best_practices → router → specialist` with OTel links; classify_domain and ai_guard stay unlinked; nested agents are skipped.
+- [x] .NET: `Observability/ExecutionGraphLinks.cs`, an OTel processor ahead of the OTLP exporter, chains `transcribe_audio → retrieve_best_practices → router → specialist` with OTel links; classify_domain and ai_guard stay unlinked; nested agents are skipped.
 - [x] Tests: `tests/test_llmobs_span_links.py` (real LLMObs, events captured at build time, no network to Datadog) and `ExecutionGraphLinksTests.cs`.
 - [x] Docs: "Connect the steps in the execution graph" in the Python and .NET instrumentation pages.
-- [ ] Verify on dev: re-run the two reported queries and check the execution graph draws the arrows.
+- [x] Verify Python on dev: trace `11398962220003739591` draws router + load-history → specialist.
+- [ ] Verify .NET on dev after the processor fix.
 
 ### Review
 
-agent-api: 116 passed. agent-api-dotnet.Tests: 62 passed, 1 skipped. Docs build: 71 pages. The new Python test initially passed alone but failed in the suite because other modules set `DD_LLMOBS_ENABLED=false`, which makes `LLMObs.enable()` a silent no-op; the fixture now sets it to `true`. Not yet verified in Datadog.
+agent-api: 116 passed. agent-api-dotnet.Tests: 62 passed, 1 skipped. Docs build: 71 pages. The new Python test initially passed alone but failed in the suite because other modules set `DD_LLMOBS_ENABLED=false`, which makes `LLMObs.enable()` a silent no-op; the fixture now sets it to `true`. Not yet verified in Datadog. First dev check: Python linked correctly; .NET drew no edges (trace `12661284964323713940`). MAF renames the `chat` activity started by `OpenTelemetryChatClient` into `invoke_agent` after start (`OpenTelemetryAgent.UpdateCurrentActivity`), so the start-time listener never recognised the router or specialist; links now move to an `OnEnd` processor. The same start-time check means the Program.cs listener's `prompt.version` tagging never matches `invoke_agent` spans (the dev router span has no `prompt.version`); not fixed here.
