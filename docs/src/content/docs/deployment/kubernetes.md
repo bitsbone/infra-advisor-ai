@@ -45,6 +45,8 @@ A non-empty `kubectl diff` isn't necessarily a regression. CI pins each Deployme
 
 The public UI service routes to `auth-api`, `agent-api`, and `agent-api-dotnet`. Each agent calls its language-matched MCP service. Redis supplies ephemeral memory, PostgreSQL supplies durable identity/conversation state, and the load-generator CronJob publishes synthetic queries to Kafka.
 
+PostgreSQL runs as one replica on a ReadWriteOnce disk, so its Deployment uses the `Recreate` strategy: Kubernetes stops the old pod before starting the new one. A rolling update would need CPU for a second Postgres pod and could not attach the disk on another node, so it would stay `Pending`. Expect a short database outage during each Postgres rollout; verify with `kubectl rollout status deployment/postgres -n <namespace>`.
+
 Secrets are split by responsibility: registry pull, each service's external credentials, PostgreSQL, Redis, Datadog DBM, and Mailpit. All GHCR workloads reference the namespace-local `ghcr-pull-secret`.
 
 ## Kafka namespace

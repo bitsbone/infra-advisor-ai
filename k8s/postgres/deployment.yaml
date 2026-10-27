@@ -7,6 +7,12 @@ metadata:
     app: postgres
 spec:
   replicas: 1
+  # One pod owns the ReadWriteOnce disk, so stop it before starting the next.
+  # A rolling update needs CPU for a second Postgres pod and can't attach the
+  # disk on another node anyway; it left the 2026-10-21 rollout Pending.
+  strategy:
+    type: Recreate
+    rollingUpdate: null # clears the API-server default on kubectl apply
   selector:
     matchLabels:
       app: postgres
