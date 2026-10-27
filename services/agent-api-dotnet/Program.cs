@@ -433,33 +433,15 @@ using (var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
     }
 }
 
-// ── Prompt-version/tracking + agent-span capture ────────────────────────
-// One ActivityListener does three jobs:
-//   1. Stamps a content-derived prompt version on chat + invoke_agent spans
-//      without exporting the prompt template itself.
-//   2. Stamps DD LLM Observability's prompt-tracking attribute (the
-//      OTel-path equivalent of ddtrace Python's LLMObs.annotate(prompt=...))
-//      so the LLM Obs UI shows which prompt template/version produced the
-//      span, and whether it came from the registry or the local fallback.
-//   3. Captures the invoke_agent span's (trace_id, span_id) into an
+// ── Agent-span capture + session grouping ──────────────────────────────
+// This ActivityListener:
+//   1. Captures the invoke_agent span's (trace_id, span_id) into an
 //      AsyncLocal so AgentService can attach external-eval scores to the
 //      AGENT span (not the HTTP root) — DD requires both IDs on the
 //      eval-metric API's join_on.span field.
-static string ShortContentHash(string text)
-{
-    var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(text));
-    return Convert.ToHexString(bytes).Substring(0, 8).ToLowerInvariant();
-}
-
-// gen_ai.agent.id is set by MAF's OpenTelemetryAgent on the invoke_agent
-// Activity (ilspycmd-confirmed against Microsoft.Agents.AI 1.20.0:
-// OpenTelemetryAgent.UpdateCurrentActivity tags "gen_ai.agent.id" =
-// AIAgent.Id) — the same string AgentHolder set as ChatClientAgentOptions.Id
-// ("router", "specialist-engineering", ...), so it doubles as a key into
-// SpecialistRegistry.PromptHolders to know which specialist's prompt
-// produced THIS span, now that .NET has 6 prompts instead of 1. A "chat"
-// span nests inside its invoke_agent parent, so it reads the tag off
-// Activity.Parent instead.
+//   2. Stamps gen_ai.conversation.id on every span (see below).
+// Prompt version/tracking tags are stamped by PromptTrackingProcessor, which
+// runs at span end: MAF only names a span invoke_agent after it starts.
 ActivitySource.AddActivityListener(new ActivityListener
 {
     ShouldListenTo = source =>
@@ -467,39 +449,6 @@ ActivitySource.AddActivityListener(new ActivityListener
         source.Name == TelemetrySetup.ActivitySourceName,
     ActivityStarted = activity =>
     {
-        if (activity.OperationName is "invoke_agent" or "chat")
-        {
-            var agentId = activity.OperationName == "invoke_agent"
-                ? activity.GetTagItem("gen_ai.agent.id") as string
-                : activity.Parent?.GetTagItem("gen_ai.agent.id") as string;
-            if (agentId is not null && specialistRegistry.PromptHolders.TryGetValue(agentId, out var holder))
-            {
-                var current = holder.Current;
-                // A content hash preserves prompt-version correlation without
-                // copying the system prompt into exported span attributes.
-                var promptVersion = current.Source is "registry" or "flag-pinned"
-                    ? $"{current.Source}-{current.Version}"
-                    : "v1-" + ShortContentHash(current.Template);
-                var promptTrackingJson = JsonSerializer.Serialize(new
-                {
-                    id = holder.PromptId,
-                    version = promptVersion,
-                    template = current.Template,
-                    source = current.Source,
-                });
-                activity.SetTag("prompt.version", promptVersion);
-                activity.SetTag("_dd.ml_obs.prompt_tracking", promptTrackingJson);
-
-                // Makes the targeting attribute that drove THIS resolution
-                // verifiable from trace data, not just the outcome —
-                // otherwise a trace shows which version answered but not
-                // why (see AmbientTargetingContext).
-                if (AmbientTargetingContext.TargetingKey is { } targetingKey)
-                    activity.SetTag("targeting_key", targetingKey);
-                if (AmbientTargetingContext.JobRole is { } jobRoleTag)
-                    activity.SetTag("job_role", jobRoleTag);
-            }
-        }
         if (activity.OperationName == "invoke_agent")
             AgentSpanContext.Capture(activity);
 

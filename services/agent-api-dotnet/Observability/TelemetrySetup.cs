@@ -1,4 +1,6 @@
+using InfraAdvisor.AgentApi.Services;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 using OpenTelemetry;
@@ -83,6 +85,9 @@ public static class TelemetrySetup
                 // DD bridge's sampling decision on the HTTP parent.
                 .SetSampler(new AlwaysOnSampler())
 
+                // Prompt version/tracking tags; must precede the exporter so
+                // its OnEnd tags each span before it is exported.
+                .AddProcessor(sp => new PromptTrackingProcessor(sp.GetRequiredService<SpecialistRegistry>().PromptHolders))
                 .AddOtlpExporter(otlp =>
                 {
                     otlp.Endpoint = new Uri($"{otlpEndpoint.TrimEnd('/')}/v1/traces");
