@@ -433,6 +433,8 @@ public class AgentService
         // the tenant-scoped sessionId.
         AmbientSessionContext.Set(rumSessionId ?? sessionId);
         AmbientTargetingContext.Set(userId, jobRole);
+        // Before the ExecutionContext.Capture below, so every step sees the slot.
+        AgentSpanContext.BeginRequest();
 
         using var workflowActivity = ActivitySource.StartActivity("query-processing", ActivityKind.Internal);
         workflowActivity?.SetTag("gen_ai.operation.name", "query-processing");

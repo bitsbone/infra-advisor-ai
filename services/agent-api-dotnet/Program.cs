@@ -433,15 +433,11 @@ using (var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
     }
 }
 
-// ── Agent-span capture + session grouping ──────────────────────────────
-// This ActivityListener:
-//   1. Captures the invoke_agent span's (trace_id, span_id) into an
-//      AsyncLocal so AgentService can attach external-eval scores to the
-//      AGENT span (not the HTTP root) — DD requires both IDs on the
-//      eval-metric API's join_on.span field.
-//   2. Stamps gen_ai.conversation.id on every span (see below).
-// Prompt version/tracking tags are stamped by PromptTrackingProcessor, which
-// runs at span end: MAF only names a span invoke_agent after it starts.
+// ── Session grouping ──────────────────────────────────────────────────
+// This ActivityListener stamps gen_ai.conversation.id on every span (see
+// below). Prompt tags (PromptTrackingProcessor) and the eval span capture
+// (AgentSpanContext.Processor) run at span end instead: MAF only names a
+// span invoke_agent after it starts.
 ActivitySource.AddActivityListener(new ActivityListener
 {
     ShouldListenTo = source =>
@@ -449,9 +445,6 @@ ActivitySource.AddActivityListener(new ActivityListener
         source.Name == TelemetrySetup.ActivitySourceName,
     ActivityStarted = activity =>
     {
-        if (activity.OperationName == "invoke_agent")
-            AgentSpanContext.Capture(activity);
-
         // DD LLM Observability session/conversation grouping (OTel path)
         // requires gen_ai.conversation.id on every gen_ai span in the trace,
         // not just the root — see AmbientSessionContext for why this can't

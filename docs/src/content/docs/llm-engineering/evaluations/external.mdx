@@ -50,6 +50,8 @@ Deterministic checks are fast and explainable. The two M.E.AI evaluators each ad
 
 `DatadogEvalsClient` submits every result through one boundary and records recent outcomes for `/eval/status`. This gives the application a place to distinguish evaluator failures, missing configuration, and rejected submissions.
 
+Each result joins to the answering specialist's `invoke_agent` span, so the eval-metric API needs that span's trace and span IDs. They exist only inside Microsoft Agent Framework, which starts and ends the span deep in its own async code and names it `invoke_agent` only after it starts. `AgentSpanContext` therefore stores an empty slot per request (`BeginRequest`), and a processor fills it as each `invoke_agent` span ends; the router ends first, so the specialist's IDs are kept. A value set in an `AsyncLocal` inside that code would never flow back to `AgentService`. Before this handoff existed, `ScheduleEvaluations` found no span and skipped every .NET evaluation without an error, so an empty `/eval/status` is the symptom to check first.
+
 ## Python: a narrower experiment
 
 The Python backend currently demonstrates two separate mechanisms:
