@@ -247,7 +247,7 @@ The execution graph rendered `query-processing`'s steps as unconnected boxes in 
 - [x] Tests: `tests/test_llmobs_span_links.py` (real LLMObs, events captured at build time, no network to Datadog) and `ExecutionGraphLinksTests.cs`.
 - [x] Docs: "Connect the steps in the execution graph" in the Python and .NET instrumentation pages.
 - [x] Verify Python on dev: trace `11398962220003739591` draws router + load-history → specialist.
-- [ ] Verify .NET on dev after the processor fix.
+- [x] Verify .NET on dev after the processor fix: trace `15996909248767799216` draws retrieve_best_practices → router → specialist-engineering.
 
 ### Review
 
