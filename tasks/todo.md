@@ -251,3 +251,16 @@ The Program.cs ActivityListener tagged `prompt.version` and `_dd.ml_obs.prompt_t
 ### Review
 
 agent-api-dotnet.Tests: 62 passed, 1 skipped. Docs build passes. Not yet verified in Datadog.
+
+## .NET external eval span capture (2026-10-27)
+
+`ScheduleEvaluations` skips when `AgentSpanContext.Current` is null, and it always was: `Capture` ran from an ActivityStarted check for `invoke_agent` that never matches (MAF renames the span after start), and its AsyncLocal, set inside M.E.AI's async code, would not flow back to `AgentService` even if it did. No eval-metric calls from .NET in 7 days, but only 10 .NET queries at sample rate 0.1, so the data alone is inconclusive.
+
+- [x] `AgentSpanContext`: `BeginRequest()` stores a mutable slot per request in `RunAgentStreamingAsync`; `AgentSpanContext.Processor` (OnEnd, ahead of the exporter) fills it from each ending `invoke_agent` span; last to end (the specialist) wins. Removed `Capture` from the listener.
+- [x] Tests: `AgentSpanContextTests.cs` (capture inside awaited code is visible to the caller; no slot, no capture).
+- [x] Docs: external evaluations page explains the handoff.
+- [ ] Verify on dev with `EVAL_SAMPLE_RATE=1`: eval-metric calls appear and scores land on the specialist span.
+
+### Review
+
+agent-api-dotnet.Tests: 64 passed, 1 skipped. Stacked on `fix/dotnet-prompt-version-tags` (#16).
