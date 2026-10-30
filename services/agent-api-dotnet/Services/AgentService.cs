@@ -434,7 +434,7 @@ public class AgentService
         AmbientSessionContext.Set(rumSessionId ?? sessionId);
         AmbientTargetingContext.Set(userId, jobRole);
 
-        using var workflowActivity = ActivitySource.StartActivity("query-processing", ActivityKind.Internal);
+        using var workflowActivity = ActivitySource.StartActivity(Observability.ExecutionGraphLinks.WorkflowOperationName, ActivityKind.Internal);
         workflowActivity?.SetTag("gen_ai.operation.name", "query-processing");
         workflowActivity?.SetTag("dd.llmobs.span.kind", "workflow");
         workflowActivity?.SetTag("input.value", query);

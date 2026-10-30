@@ -88,6 +88,10 @@ public static class TelemetrySetup
                 // Prompt version/tracking tags; must precede the exporter so
                 // its OnEnd tags each span before it is exported.
                 .AddProcessor(sp => new PromptTrackingProcessor(sp.GetRequiredService<SpecialistRegistry>().PromptHolders))
+
+                // Execution-graph span links; must precede the exporter so
+                // its OnEnd adds them before the span is exported.
+                .AddProcessor(new ExecutionGraphLinks())
                 .AddOtlpExporter(otlp =>
                 {
                     otlp.Endpoint = new Uri($"{otlpEndpoint.TrimEnd('/')}/v1/traces");

@@ -23,6 +23,10 @@ Global infrastructure consulting firm AI assistant. Refer to `@docs/src/content/
 3.  **Verification Before Done:** Never mark a task complete without proving it works. Run tests, check logs, and diff behavior. Ask: _"Would a staff engineer approve this?"_
 4.  **Demand Elegance:** For non-trivial changes, pause and seek the most elegant solution. If a fix feels hacky, refactor based on current knowledge rather than over-engineering.
 5.  **Autonomous Bug Fixing:** When given a bug report, resolve it autonomously using logs and failing tests. Aim for zero context switching for the user.
+6.  **Deliver Through Pull Requests:** Never commit feature or fix work directly to `main`; merging to `main` deploys to the live cluster via `build-push.yml`. Branch first (`feat/<topic>`, `fix/<topic>`, `chore/<topic>`), keep one concern per branch, and deliver it as a PR against `main` once the user approves pushing.
+    - **Tests ship with the change:** New behavior gets new or updated tests in the same PR (`uv run pytest -x services/<service>/tests/`, `dotnet test services/<project>.Tests`). When a test encodes a contract the change intentionally revises (e.g., a privacy guard), update the test to the new contract rather than deleting it, and call the change out in the PR.
+    - **PR body:** Problem and root cause, a summary of changes, reviewer notes (risks, behavior changes, follow-ups), and a `## Testing` checklist. Mark items done only after you have run them, with results (e.g., "104 passed"). Leave post-deploy checks (Datadog traces, dashboards, pod logs) as unchecked items stating exactly what to look for.
+    - **CI must be green:** `ci.yml` runs on every PR. Check it with `gh pr checks <n>` and fix failures before calling the PR ready.
 
 ---
 

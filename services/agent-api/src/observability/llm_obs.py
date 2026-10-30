@@ -62,6 +62,24 @@ def enable_llm_obs() -> None:
         logger.warning("LLMObs.enable() failed (non-fatal) error_type=%s", type(exc).__name__)
 
 
+def link_from(span: Any, *upstream: Any) -> None:
+    """Record that each upstream span's output fed this span's input.
+
+    The Agent Observability execution graph only draws an edge between
+    sibling spans that carry a span link; without one, the steps of
+    query-processing render as unconnected boxes. The LangGraph integration
+    links its own nodes, but ddtrace has no public span-link API for manual
+    spans: LLMObs.annotate's private _linked_spans parameter is what ddtrace
+    uses internally, and it always records output → input. It is called only
+    here, so a ddtrace upgrade that changes it breaks one function, and a
+    failure loses the edge, never the request. Call while span is open.
+    """
+    try:
+        LLMObs.annotate(span=span, _linked_spans=[LLMObs.export_span(u) for u in upstream])
+    except Exception as exc:  # pragma: no cover
+        logger.debug("link_from failed (non-fatal) error_type=%s", type(exc).__name__)
+
+
 def tag_agent_run(
     span: Any,
     query: str,

@@ -20,7 +20,7 @@ from kafka_producer import publish_contract_awards_event
 from media import transcribe_audio
 from memory import load_history
 from observability.ai_guard import check_query
-from observability.llm_obs import schedule_faithfulness_score, tag_agent_run
+from observability.llm_obs import link_from, schedule_faithfulness_score, tag_agent_run
 from observability.prompts import fetch_prompt
 
 logger = logging.getLogger(__name__)
@@ -723,6 +723,9 @@ async def run_agent(
         )
 
         with LLMObs.agent(f"specialist-{specialist_name}") as agent_span:
+            # The router's decision and the loaded history are this agent's
+            # input; the links draw those edges in the execution graph.
+            link_from(agent_span, router_span, history_span)
             with LLMObs.annotation_context(prompt=specialist_prompt_meta):
                 # Explicitly invoke specialist_prompt so ddtrace captures the
                 # BasePromptTemplate.ainvoke span with system prompt + messages
@@ -755,6 +758,7 @@ async def run_agent(
         context_chunks: list[str] = []
 
         with LLMObs.task("extract-sources") as sources_span:
+            link_from(sources_span, agent_span)
             tool_call_args = _tool_call_args_by_id(all_messages)
             for msg in all_messages:
                 if isinstance(msg, ToolMessage):
@@ -975,6 +979,8 @@ async def run_agent_stream(
 
             with LLMObs.agent(f"specialist-{specialist_name}") as agent_span, \
                  LLMObs.annotation_context(prompt=specialist_prompt_meta):
+                # Same execution-graph edges as run_agent.
+                link_from(agent_span, router_span, history_span)
                 # Explicitly invoke specialist_prompt so ddtrace captures the
                 # BasePromptTemplate.ainvoke span, same as run_agent does.
                 await specialist_prompt.ainvoke({"messages": input_messages})

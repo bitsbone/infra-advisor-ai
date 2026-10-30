@@ -88,6 +88,14 @@ The Agent Observability trace list shows each trace's **root** span input and ou
 
 The ddtrace MCP integration traces every MCP client session as its own `workflow` span, and that span's input is the session's `read_stream`/`write_stream` objects. Any `get_tools()` call made outside an explicit workflow becomes a root trace whose only content is `{"read_stream": "MemoryObjectReceiveStream(...)"}`. Keep MCP session work inside the request workflow. Standalone operations such as the startup probe, `GET /tools`, and the sandbox `POST /tools/{name}` each get their own named workflow (`mcp-startup-probe`, `list-mcp-tools`, `sandbox-tool-call`) with meaningful input and output.
 
+## Connect the steps in the execution graph
+
+Nesting tells the execution graph which spans belong to a step, not how data moves between steps. The graph draws an arrow between two sibling spans only when one carries a span link to the other, with `from`/`to` attributes naming the direction ([Datadog span links](https://docs.datadoghq.com/llm_observability/instrument/otel_instrumentation/)). Without links, `load-history`, `router`, and the specialist render as unconnected boxes. ddtrace's LangGraph integration links its own nodes, which is why the specialist's `agent → tools → agent` loop already shows arrows.
+
+ddtrace has no public span-link API for manual spans, so `observability/llm_obs.py` wraps the private `LLMObs.annotate(_linked_spans=...)` parameter in one helper, `link_from(span, *upstream)`, which records output → input links. InfraAdvisor links the data that actually flows: the router's decision and the loaded history feed the specialist, and the specialist's messages feed `extract-sources`. `tests/test_llmobs_span_links.py` runs LLMObs for real and fails if a ddtrace upgrade changes the private parameter.
+
+The root stays a `workflow` span. Datadog defines a workflow as a predetermined sequence of operations and an agent as a series of decisions made by an autonomous agent ([span kinds](https://docs.datadoghq.com/llm_observability/terms/)). `query-processing` always runs the same steps; the decisions happen inside the router and specialist, which are `agent` spans.
+
 ## Keep capture intentional
 
 Automatic integrations can capture prompts, completions, model metadata, token counts, and tool inputs or outputs. That is useful for debugging only when the service's data policy allows it.
@@ -100,6 +108,7 @@ InfraAdvisor is a demo environment that relies on Datadog Sensitive Data Scanner
     <li>The trace list shows the user's question as input and the final answer as output for `query-processing` rows.</li>
     <li>No root rows show `read_stream` as their input.</li>
     <li>The router and selected specialist appear as agent operations.</li>
+    <li>The execution graph draws arrows from `router` and `load-history` into the specialist, and from the specialist into `extract-sources`.</li>
     <li>LangChain, OpenAI, and MCP operations nest beneath the explicit orchestration spans.</li>
     <li>Domain and source-count tags are present without secrets or raw provider payloads.</li>
   </ul>

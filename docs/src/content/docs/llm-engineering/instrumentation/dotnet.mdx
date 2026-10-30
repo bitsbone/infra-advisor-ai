@@ -98,6 +98,10 @@ The Agent Observability trace list renders the root span's input and output. Wit
 **Async iterators drop ambient context at every `yield`.** Each `MoveNextAsync` runs with the consumer's `ExecutionContext`, so `Activity.Current` and any `AsyncLocal` set inside an `IAsyncEnumerable` method are gone after its first `yield return`. Spans created later lose their parent, and the ambient `gen_ai.conversation.id` disappears. InfraAdvisor starts the workflow activity and sets the ambient session/targeting context in a thin wrapper iterator. The wrapper captures `ExecutionContext` once and calls `ExecutionContext.Restore(...)` before each step of the inner pipeline.
 </Aside>
 
+## Connect the steps in the execution graph
+
+Nesting under `query-processing` does not tell the execution graph how data moves between steps: it draws an arrow between sibling spans only from an OTel span link with `from`/`to` attributes ([Datadog span links](https://docs.datadoghq.com/llm_observability/instrument/otel_instrumentation/)). Without links, the steps render as unconnected boxes in no particular order. `Observability/ExecutionGraphLinks.cs` is an OpenTelemetry processor, registered ahead of the OTLP exporter, that adds an output → input link to each data step as it ends: `transcribe_audio → retrieve_best_practices → router → specialist`. It works at the end rather than the start because Microsoft Agent Framework has no `invoke_agent` activity of its own: `OpenTelemetryAgent` renames the `chat` activity that `OpenTelemetryChatClient` already started and tags it `invoke_agent` afterwards, so a listener's start callback cannot tell an agent from a plain chat call. `classify_domain` and `ai_guard.evaluate` only tag or gate the request, so they stay unlinked. Agents invoked inside another step are left to that step's own graph.
+
 ## Decide whether content should be captured
 
 Microsoft.Extensions.AI can emit prompt and completion content when sensitive-data capture is enabled. Without it, timing, tokens, model details, and operation structure remain observable while message bodies are omitted.
@@ -108,6 +112,7 @@ Choose that setting from the service's data policy, not from a desire to maximiz
   <ul>
     <li>Agent, chat, tool, and application task activities share one W3C trace ID.</li>
     <li>Router and specialist `invoke_agent` spans nest beneath `query-processing`, whose trace-list row shows the question and answer.</li>
+    <li>The execution graph draws arrows from `retrieve_best_practices` to the router and from the router to the specialist.</li>
     <li>Resource attributes identify the service, environment, version, and OTel source.</li>
     <li>MCP server operations continue beneath the client tool span.</li>
     <li>Agent Observability and APM show the same request boundary.</li>
