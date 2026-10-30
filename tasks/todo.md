@@ -252,3 +252,17 @@ The execution graph rendered `query-processing`'s steps as unconnected boxes in 
 ### Review
 
 agent-api: 116 passed. agent-api-dotnet.Tests: 62 passed, 1 skipped. Docs build: 71 pages. The new Python test initially passed alone but failed in the suite because other modules set `DD_LLMOBS_ENABLED=false`, which makes `LLMObs.enable()` a silent no-op; the fixture now sets it to `true`. Not yet verified in Datadog. First dev check: Python linked correctly; .NET drew no edges (trace `12661284964323713940`). MAF renames the `chat` activity started by `OpenTelemetryChatClient` into `invoke_agent` after start (`OpenTelemetryAgent.UpdateCurrentActivity`), so the start-time listener never recognised the router or specialist; links now move to an `OnEnd` processor. The same start-time check means the Program.cs listener's `prompt.version` tagging never matches `invoke_agent` spans (the dev router span has no `prompt.version`); not fixed here.
+
+## .NET prompt.version tagging (2026-10-27)
+
+The Program.cs ActivityListener tagged `prompt.version` and `_dd.ml_obs.prompt_tracking` only on activities whose `OperationName` was `invoke_agent` or `chat` at start. MAF renames the `chat` activity started by `OpenTelemetryChatClient` into `invoke_agent` after start, and M.E.AI names chat activities `chat <model>`, so neither check matched: dev router span `4862447489483685189` (trace `afb5eb97ba826394`) had no `prompt.version`.
+
+- [x] Move the tagging into `Observability/PromptTrackingProcessor.cs`, an OTel processor ahead of the OTLP exporter that reads `gen_ai.operation.name` and `gen_ai.agent.id` at span end; drop it from the listener.
+- [x] Tests: `PromptTrackingProcessorTests.cs` reproduces MAF's rename-after-start.
+- [x] Docs: prompt-tracking page describes the processor and why start-time tagging fails.
+- [ ] Verify on dev: a .NET `invoke_agent router` span carries `prompt.version`.
+- [ ] Follow-up, not in this PR: `AgentSpanContext.Capture` in the same listener has the same start-time check, and its AsyncLocal would not flow back to `AgentService` anyway, so `ScheduleEvaluations` likely skips every .NET external eval.
+
+### Review
+
+agent-api-dotnet.Tests: 62 passed, 1 skipped. Docs build passes. Not yet verified in Datadog.

@@ -1,4 +1,6 @@
+using InfraAdvisor.AgentApi.Services;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 using OpenTelemetry;
@@ -82,6 +84,10 @@ public static class TelemetrySetup
                 // AlwaysOn — keep the agent loop's spans regardless of the
                 // DD bridge's sampling decision on the HTTP parent.
                 .SetSampler(new AlwaysOnSampler())
+
+                // Prompt version/tracking tags; must precede the exporter so
+                // its OnEnd tags each span before it is exported.
+                .AddProcessor(sp => new PromptTrackingProcessor(sp.GetRequiredService<SpecialistRegistry>().PromptHolders))
 
                 // Execution-graph span links; must precede the exporter so
                 // its OnEnd adds them before the span is exported.
