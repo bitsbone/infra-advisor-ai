@@ -86,7 +86,7 @@ These steps need credentials or rights the CI identity doesn't have, so a mainta
 2. **Azure.** Run `make deploy-infra` to create the `chat-media-dev` container.
 3. **Cluster.** Run `make deploy-k8s ENV=dev`, then `make setup-postgres-dbm ENV=dev` with the same `DD_POSTGRES_PASSWORD` as prod (the Datadog Agent has one), then `make seed-dev`.
 4. **Datadog Agent.** Run `make apply-datadog-agent` so dev's `agent-api-dotnet` gets the same App and API Protection injection as prod.
-5. **CI identity.** Run `make setup-dev-deploy-identity` to create the namespace-scoped deploy identity and the GitHub `dev` environment. It uses your own `gh` login, not the `GITHUB_TOKEN` that `.env` may set for GHCR, because a registry-scoped token can't create environments.
+5. **CI identity.** Run `make setup-dev-deploy-identity` to create the namespace-scoped deploy identity and the GitHub `dev` environment. It uses your own `gh` login and clears any `GITHUB_TOKEN`/`GH_TOKEN` in your shell, because a narrowly scoped token can't create environments.
 6. **DNS.** In Cloudflare, add a proxied A record `infra-advisor-ai-dev` pointing at the dev UI Service's external IP (`kubectl get svc ui -n infra-advisor-dev`). It's a first-level subdomain of `bitsbone.com`, so Universal SSL covers it.
 7. **Synthetics.** Create the `BASE_URL`, `SYNTHETIC_USER_EMAIL`, and secure `SYNTHETIC_USER_PASSWORD` global variables, put their ids in the test JSON, run `make create-synthetic-user ENV=prod`, and set the repo variable `SYNTHETICS_CONSULTANT_FLOW_ID` to the test's public id.
 

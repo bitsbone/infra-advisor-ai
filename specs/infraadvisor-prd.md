@@ -1578,9 +1578,9 @@ AZURE_SEARCH_API_KEY=
 AZURE_SEARCH_INDEX_NAME=infra-advisor-knowledge
 
 # GitHub Container Registry
+GHCR_USERNAME=                         # Your GitHub username — used by make create-ghcr-secret
 GHCR_PAT=                              # GitHub PAT with read:packages scope — used by make create-ghcr-secret
 GITHUB_EMAIL=                          # Your GitHub account email — used by make create-ghcr-secret
-GHCR_IMAGE_PREFIX=ghcr.io/kyletaylored/infra-advisor-ai
 
 # Datadog
 DD_API_KEY=
